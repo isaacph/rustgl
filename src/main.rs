@@ -415,12 +415,11 @@ fn main() {
 
         let axisangle = Vector3::z() * std::f32::consts::FRAC_PI_4;
         let sim = Similarity3::<f32>::new(
-            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(100.0, 100.0, 0.0),
             axisangle,
-            1.5
+            100.0
         );
-        let x = sim.to_homogeneous();
-        context.matrix = x;
+        context.matrix = game.ortho.as_matrix() * sim.to_homogeneous();
         context.color = Vector4::<f32>::new(1.0, 1.0, 1.0, 1.0);
         context.range = game::graphics::VertexRange::Full;
         render(&context);
