@@ -2,17 +2,17 @@ extern crate glfw;
 
 use std::{ffi::CStr};
 use glfw::{Action, Context, Key};
-use nalgebra::{Matrix4, Vector4};
+use nalgebra::{Matrix4, Vector4, Similarity2, Translation2, Rotation2, Scale, Scale2, Scale1, Matrix4x3, Matrix3x4, Similarity3, Translation3, Rotation3, Vector3};
 use ogl33::*;
 
 mod game {
-    use nalgebra::{Vector2, Matrix4};
+    use nalgebra::{Vector2, Matrix4, Orthographic3};
     use ogl33::glViewport;
 
     pub mod graphics {
         use ogl33::*;
         use std::{ffi::CString};
-        use nalgebra::{Vector4, Matrix4};
+        use nalgebra::{Vector4, Matrix4, Matrix3, Matrix4x3, Matrix3x4};
         use std::mem::size_of;
 
         type RenderFunction = Box<dyn FnMut(&Context) -> ()>;
@@ -91,6 +91,10 @@ mod game {
             }
         }
 
+        trait Homo4D<T> {
+            fn to4d(&self) -> Matrix4<T>;
+        }
+
         pub mod simple {
             use nalgebra::Vector2;
 
@@ -125,8 +129,9 @@ mod game {
                 const VERT_SHADER: &str = r#"
                     #version 330
                     in vec2 pos;
+                    uniform mat4 matrix;
                     void main() {
-                        gl_Position = vec4(pos.x, pos.y, 0.0, 1.0);
+                        gl_Position = matrix * vec4(pos.x, pos.y, 0.0, 1.0);
                     }
                 "#;
                 const FRAG_SHADER: &str = r#"
@@ -343,14 +348,14 @@ mod game {
 
     pub struct Game {
         pub window_size: Vector2<i32>,
-        pub proj: Matrix4<f32>
+        pub ortho: Orthographic3<f32>
     }
 
     impl Game {
         pub fn new(width: i32, height: i32) -> Game {
             let mut obj = Game {
                 window_size: Vector2::<i32>::new(width, height),
-                proj: Matrix4::<f32>::identity()
+                ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0)
             };
             obj.window_size(width, height);
             obj
@@ -359,13 +364,8 @@ mod game {
         pub fn window_size(&mut self, width: i32, height: i32) {
             self.window_size.x = width;
             self.window_size.y = height;
-            self.proj = Matrix4::new_orthographic(
-                0.0,
-                width as f32,
-                height as f32,
-                0.0,
-                0.0,
-                1.0);
+            self.ortho.set_right(width as f32);
+            self.ortho.set_bottom(height as f32);
             unsafe {
                 glViewport(0, 0, width, height);
             }
@@ -397,87 +397,13 @@ fn main() {
             window.get_proc_address(&str)
         });
     }
-
-
-    // type Vertex = [f32; 3];
-    // const VERTICES: [Vertex; 3] =
-    //     [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.0, 0.5, 0.0]];
-    // let (vao, vbo) =
-    // unsafe {
-    //     let mut vao = 0;
-    //     let mut vbo = 0;
-    //     glGenVertexArrays(1, &mut vao);
-    //     glGenBuffers(1, &mut vbo);
-
-    //     glBindVertexArray(vao);
-    //     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-    //     glBufferData(
-    //         GL_ARRAY_BUFFER,
-    //         size_of_val(&VERTICES) as isize,
-    //         VERTICES.as_ptr().cast(),
-    //         GL_STATIC_DRAW,
-    //     );
-        
-    //     glEnableVertexAttribArray(0);
-    //     glVertexAttribPointer(
-    //         0, 3, GL_FLOAT, GL_FALSE,
-    //         size_of::<Vertex>().try_into().unwrap(),
-    //         0 as *const _,
-    //     );
-    //     (vao, vbo)
-    // };
-
-    // const VERT_SHADER: &str = r#"
-    //     #version 330
-    //     in vec3 pos;
-    //     void main() {
-    //         gl_Position = vec4(pos.x, pos.y, pos.z, 1.0);
-    //     }
-    // "#;
-    // const FRAG_SHADER: &str = r#"
-    //     #version 330
-    //     out vec4 final_color;
-    //     void main() {
-    //         final_color = vec4(1.0, 0.5, 0.2, 1.0);
-    //     }
-    // "#;
-    // let vertex_shader = game::graphics::make_shader(VERT_SHADER, GL_VERTEX_SHADER);
-    // let fragment_shader = game::graphics::make_shader(FRAG_SHADER, GL_FRAGMENT_SHADER);
-    // let shader_program = game::graphics::shader_program(&mut context, &vec![vertex_shader, fragment_shader], &vec![game::graphics::Attribute::Position]);
-    // unsafe {
-    //     let shader_program = glCreateProgram();
-    //     glAttachShader(shader_program, vertex_shader);
-    //     glAttachShader(shader_program, fragment_shader);
-    //     glLinkProgram(shader_program);
-    //     let mut success = 0;
-    //     glGetProgramiv(shader_program, GL_LINK_STATUS, &mut success);
-    //     if success == 0 {
-    //         let mut v: Vec<u8> = Vec::with_capacity(1024);
-    //         let mut log_len = 0_i32;
-    //         glGetProgramInfoLog(shader_program, 1024, &mut log_len, v.as_mut_ptr().cast());
-    //         v.set_len(log_len.try_into().unwrap());
-    //         panic!("Program Link Error: {}", String::from_utf8_lossy(&v));
-    //     }
-    //     glUseProgram(shader_program);
-    // }
-    // use game::graphics::simple::Vertex;
-    // let vertices: [Vertex; 3] =
-    //         [Vertex::new(-0.5, -0.5, 0.0),
-    //         Vertex::new(0.5, -0.5, 0.0),
-    //         Vertex::new(0.0, 0.5, 0.0)];
-    // let mut render_vao = context.vao(
-    //     vertices.to_vec(),
-    //     vec![(game::graphics::Attribute::Position, 3)],
-    //     GL_STATIC_DRAW
-    // );
-    // let mut use_shader = game::graphics::simple::shader(
-    //     &mut context
-    // );
+    
     let mut game = game::Game::new(width, height);
 
     let mut context = game::graphics::Context::new();
     let mut render = game::graphics::simple::renderer(&mut context);
+
+    let mut view = Matrix4::<f32>::identity();
 
     unsafe {
         glClearColor(0.2, 0.3, 0.3, 1.0);
@@ -485,17 +411,20 @@ fn main() {
     while !window.should_close() {
         unsafe {
             glClear(GL_COLOR_BUFFER_BIT);
-            // glUseProgram(shader_program);
-            // glBindVertexArray(vao);
-            // glDrawArrays(GL_TRIANGLES, 0, 3);
         }
-        // use_shader(&context);
-        // render_vao(&context);
-        context.matrix = Matrix4::<f32>::identity();
+
+        let axisangle = Vector3::z() * std::f32::consts::FRAC_PI_4;
+        let sim = Similarity3::<f32>::new(
+            Vector3::new(0.0, 0.0, 0.0),
+            axisangle,
+            1.5
+        );
+        let x = sim.to_homogeneous();
+        context.matrix = x;
         context.color = Vector4::<f32>::new(1.0, 1.0, 1.0, 1.0);
         context.range = game::graphics::VertexRange::Full;
         render(&context);
-        
+
         window.swap_buffers();
         glfw.poll_events();
         for (_, event) in glfw::flush_messages(&events) {
