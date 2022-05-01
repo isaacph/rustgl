@@ -2,10 +2,12 @@ extern crate glfw;
 
 use std::{ffi::CStr};
 use glfw::{Action, Context, Key};
-use nalgebra::{Matrix4, Vector4, Similarity2, Translation2, Rotation2, Scale, Scale2, Scale1, Matrix4x3, Matrix3x4, Similarity3, Translation3, Rotation3, Vector3};
+use nalgebra::{Matrix4, Vector4, Similarity2, Translation2, Rotation2, Scale, Scale2, Scale1, Matrix4x3, Matrix3x4, Similarity3, Translation3, Rotation3, Vector3, Vector2};
 use ogl33::*;
 
 use crate::graphics::*;
+
+use image::io::Reader as ImageReader;
 
 pub mod graphics;
 
@@ -67,9 +69,11 @@ fn main() {
     
     let mut game = game::Game::new(width, height);
     let mut context = graphics::Context::new();
-    let mut simple_render = graphics::simple::renderer(&mut context);
+    let mut render = graphics::textured::square_renderer(&mut context);
 
     let mut view = Matrix4::<f32>::identity();
+
+    let texture = context.make_texture("tree.png");
 
     unsafe {
         glClearColor(0.2, 0.3, 0.3, 1.0);
@@ -79,16 +83,16 @@ fn main() {
             glClear(GL_COLOR_BUFFER_BIT);
         }
 
-        let axisangle = Vector3::z() * std::f32::consts::FRAC_PI_4;
         let sim = Similarity3::<f32>::new(
             Vector3::new(100.0, 100.0, 0.0),
-            axisangle,
+            Vector3::z() * std::f32::consts::FRAC_PI_4,
             100.0
         );
         context.matrix = game.ortho.as_matrix() * sim.to_homogeneous();
         context.color = Vector4::<f32>::new(1.0, 1.0, 1.0, 1.0);
         context.range = graphics::VertexRange::Full;
-        simple_render(&context);
+        texture.bind();
+        render(&context);
 
         window.swap_buffers();
         glfw.poll_events();

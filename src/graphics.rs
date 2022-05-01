@@ -1,9 +1,14 @@
 use ogl33::*;
-use std::{ffi::CString};
+use std::{ffi::CString, collections::HashMap, hash::Hash};
 use nalgebra::{Vector4, Matrix4, Matrix3, Matrix4x3, Matrix3x4};
 use std::mem::size_of;
 
+use image::io::Reader as ImageReader;
+
 type RenderFunction = Box<dyn FnMut(&Context) -> ()>;
+
+pub mod simple;
+pub mod textured;
 
 #[derive(Copy, Clone)]
 pub enum Attribute {
@@ -45,7 +50,8 @@ impl Context {
                 programs: Vec::new(),
                 shaders: Vec::new(),
                 vbos: Vec::new(),
-                vaos: Vec::new()
+                vaos: Vec::new(),
+                textures: HashMap::new()
             }
         }
     }
@@ -79,99 +85,12 @@ impl ToCharPtr for str {
     }
 }
 
-trait Homo4D<T> {
-    fn to4d(&self) -> Matrix4<T>;
-}
-
-pub mod simple {
-    use nalgebra::Vector2;
-
-    use super::*;
-    pub struct Vertex {
-        position: Vector2<f32>
-    }
-
-    impl ToVec<f32> for Vertex {
-        fn to_vec(&self) -> Vec<f32> {
-            vec![self.position.x, self.position.y]
-        } 
-    }
-
-    impl Vertex {
-        pub fn new(x: f32, y: f32) -> Vertex {
-            Vertex {
-                position: Vector2::<f32>::new(x, y)
-            }
-        }
-    }
-
-    impl Clone for Vertex {
-        fn clone(&self) -> Self {
-            Vertex {
-                position: self.position.clone()
-            }
-        }
-    }
-
-    pub fn shader(context: &mut Context) -> RenderFunction {
-        const VERT_SHADER: &str = r#"
-            #version 330
-            in vec2 pos;
-            uniform mat4 matrix;
-            void main() {
-                gl_Position = matrix * vec4(pos.x, pos.y, 0.0, 1.0);
-            }
-        "#;
-        const FRAG_SHADER: &str = r#"
-            #version 330
-            uniform vec4 color;
-            out vec4 final_color;
-            void main() {
-                final_color = color;
-            }
-        "#;
-        let shader_program = context.shader_program(
-            &vec![
-                context.make_shader(VERT_SHADER, GL_VERTEX_SHADER),
-                context.make_shader(FRAG_SHADER, GL_FRAGMENT_SHADER)],
-            &vec![Attribute::Position]);
-        let u_color = context.get_uniform(shader_program, "color");
-        let u_matrix = context.get_uniform(shader_program, "matrix");
-        Box::new(move |context: &Context| {
-            unsafe {
-                glUseProgram(shader_program);
-                glUniformMatrix4fv(u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
-                glUniform4f(u_color, context.color.x, context.color.y, context.color.z, context.color.w);
-            }
-        })
-    }
-
-    pub fn renderer(context: &mut Context) -> RenderFunction {
-        let vertices =
-                [Vertex::new(-0.5, -0.5),
-                Vertex::new(0.5, -0.5),
-                Vertex::new(0.5, 0.5),
-                Vertex::new(0.5, 0.5),
-                Vertex::new(-0.5, 0.5),
-                Vertex::new(-0.5, -0.5)];
-        let mut render_vao = context.vao(
-            vertices.to_vec(),
-            vec![(Attribute::Position, 2)],
-            GL_STATIC_DRAW
-        );
-        let mut use_shader = shader(context);
-        Box::new(move |context: &Context| {
-            use_shader(&context);
-            render_vao(&context);
-        })
-    }
-}
-
 struct PersistentObjects {
     programs: Vec<GLuint>,
     shaders: Vec<GLuint>,
     vbos: Vec<GLuint>,
-    vaos: Vec<GLuint>
+    vaos: Vec<GLuint>,
+    textures: HashMap<String, GLuint>
 }
 
 impl Drop for PersistentObjects {
@@ -189,6 +108,9 @@ impl Drop for PersistentObjects {
             for &v in self.vaos.iter() {
                 glDeleteVertexArrays(1, &v);
             }
+            for (_, &v) in self.textures.iter() {
+                glDeleteTextures(1, &v);
+            }
         }
     }
 }
@@ -203,8 +125,32 @@ impl<T, U: ToVec<T>> ToVec<T> for Vec<U> {
     }
 }
 
+pub struct Texture {
+    handle: GLuint
+}
+
+impl Texture {
+    fn new(handle: GLuint) -> Texture {
+        Texture {
+            handle: handle
+        }
+    }
+
+    // fine if I never end up using more than GL_TEXTURE0
+    pub fn bind(&self) {
+        self.bind_to(0);
+    }
+
+    pub fn bind_to(&self, location: GLuint) {
+        unsafe {
+            glActiveTexture(GL_TEXTURE0 + location);
+            glBindTexture(GL_TEXTURE_2D, self.handle);
+        }
+    }
+}
+
 impl Context {
-    pub fn vao<T: ToVec<f32>>(self: &mut Context, vertices: T, desc: Vec<(Attribute, usize)>, usage: GLenum) -> RenderFunction {
+    pub fn vao<T: ToVec<f32>>(self: &mut Context, vertices: &T, desc: Vec<(Attribute, usize)>, usage: GLenum) -> RenderFunction {
         let desc_length = desc.iter().fold(0, |s, n| s + n.1);
         let (vao, vertex_count) =
         unsafe {
@@ -329,6 +275,41 @@ impl Context {
             } else {
                 vertex_shader
             }
+        }
+    }
+
+    pub fn make_texture(&mut self, source: &str) -> Texture {
+        match self.persistent_objects.textures.get(source) {
+            Some(&handle) => Texture::new(handle),
+            None => Texture::new({
+                let img_obj = ImageReader::open(source).unwrap().decode().unwrap();
+                let img = img_obj.as_rgba8().unwrap();
+                let handle = unsafe {
+                    let mut handle: GLuint = 0;
+                    let img_data = img.as_raw();
+                    glGenTextures(1, &mut handle);
+                    glBindTexture(GL_TEXTURE_2D, handle);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as GLint);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
+                    glGenerateMipmap(GL_TEXTURE_2D);
+                    glTexImage2D(
+                        GL_TEXTURE_2D,
+                        0,
+                        GL_RGBA as GLint,
+                        img.width() as GLsizei,
+                        img.height() as GLsizei,
+                        0,
+                        GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        img_data.as_ptr() as *const c_void
+                    );
+                    handle
+                };
+                self.persistent_objects.textures.insert(source.to_string(), handle);
+                handle
+            })
         }
     }
 }
