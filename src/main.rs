@@ -76,7 +76,9 @@ fn main() {
     let texture = context.make_texture("tree.png");
 
     unsafe {
-        glClearColor(0.2, 0.3, 0.3, 1.0);
+        glClearColor(0.0, 0.0, 0.0, 1.0);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     }
     while !window.should_close() {
         unsafe {
@@ -89,7 +91,7 @@ fn main() {
             100.0
         );
         context.matrix = game.ortho.as_matrix() * sim.to_homogeneous();
-        context.color = Vector4::<f32>::new(1.0, 1.0, 1.0, 1.0);
+        context.color = Vector4::new(1.0, 1.0, 1.0, 1.0);
         context.range = graphics::VertexRange::Full;
         texture.bind();
         render(&context);

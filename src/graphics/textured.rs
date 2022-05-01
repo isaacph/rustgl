@@ -43,7 +43,8 @@ pub fn shader(context: &mut Context) -> RenderFunction {
         in vec2 midtex;
         out vec4 final_color;
         void main() {
-            final_color = texture(sampler, midtex) * color;
+            vec4 v = texture(sampler, midtex);
+            final_color = color * vec4(v.x, v.y, v.z, 1) * v.w;
         }
     "#;
     let shader_program = context.shader_program(
