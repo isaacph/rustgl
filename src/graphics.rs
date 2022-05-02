@@ -1,14 +1,17 @@
 use ogl33::*;
-use std::{ffi::CString, collections::HashMap, hash::Hash};
-use nalgebra::{Vector4, Matrix4, Matrix3, Matrix4x3, Matrix3x4};
+use std::{ffi::CString, collections::HashMap};
+use nalgebra::{Vector4, Matrix4};
 use std::mem::size_of;
 
 use image::io::Reader as ImageReader;
+
+use self::text::FontLibrary;
 
 type RenderFunction = Box<dyn FnMut(&Context) -> ()>;
 
 pub mod simple;
 pub mod textured;
+pub mod text;
 
 #[derive(Copy, Clone)]
 pub enum Attribute {
@@ -51,7 +54,8 @@ impl Context {
                 shaders: Vec::new(),
                 vbos: Vec::new(),
                 vaos: Vec::new(),
-                textures: HashMap::new()
+                textures: HashMap::new(),
+                font_library: FontLibrary::init()
             }
         }
     }
@@ -90,7 +94,8 @@ struct PersistentObjects {
     shaders: Vec<GLuint>,
     vbos: Vec<GLuint>,
     vaos: Vec<GLuint>,
-    textures: HashMap<String, GLuint>
+    textures: HashMap<String, GLuint>,
+    font_library: FontLibrary
 }
 
 impl Drop for PersistentObjects {

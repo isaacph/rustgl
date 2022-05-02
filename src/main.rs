@@ -2,17 +2,13 @@ extern crate glfw;
 
 use std::{ffi::CStr};
 use glfw::{Action, Context, Key};
-use nalgebra::{Matrix4, Vector4, Similarity2, Translation2, Rotation2, Scale, Scale2, Scale1, Matrix4x3, Matrix3x4, Similarity3, Translation3, Rotation3, Vector3, Vector2};
+use nalgebra::{Matrix4, Vector4, Vector3, Similarity3};
 use ogl33::*;
-
-use crate::graphics::*;
-
-use image::io::Reader as ImageReader;
 
 pub mod graphics;
 
 mod game {
-    use nalgebra::{Vector2, Matrix4, Orthographic3};
+    use nalgebra::{Vector2, Orthographic3};
     use ogl33::glViewport;
 
     pub struct Game {
@@ -41,6 +37,8 @@ mod game {
         }
     }
 }
+
+
 
 fn main() {
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
