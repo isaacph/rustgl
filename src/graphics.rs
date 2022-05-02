@@ -137,7 +137,7 @@ pub struct Texture {
 impl Texture {
     fn new(handle: GLuint) -> Texture {
         Texture {
-            handle: handle
+            handle
         }
     }
 
@@ -298,7 +298,7 @@ impl Context {
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
-                    glGenerateMipmap(GL_TEXTURE_2D);
+                    //glGenerateMipmap(GL_TEXTURE_2D);
                     glTexImage2D(
                         GL_TEXTURE_2D,
                         0,

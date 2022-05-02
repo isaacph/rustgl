@@ -1,8 +1,8 @@
 extern crate glfw;
 
-use std::{ffi::CStr};
+use std::ffi::CStr;
 use glfw::{Action, Context, Key};
-use nalgebra::{Matrix4, Vector4, Vector3, Similarity3};
+use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 
 pub mod graphics;
@@ -39,7 +39,6 @@ mod game {
 }
 
 
-
 fn main() {
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
     let (width, height) = (800, 600);
@@ -69,9 +68,9 @@ fn main() {
     let mut context = graphics::Context::new();
     let mut render = graphics::textured::square_renderer(&mut context);
 
-    let mut view = Matrix4::<f32>::identity();
-
     let texture = context.make_texture("tree.png");
+    let _text = graphics::text::make_font(&mut context, "arial.ttf", 16, graphics::text::default_characters().iter());
+    let _metrics = _text.char_data.get(&' ').unwrap();
 
     unsafe {
         glClearColor(0.0, 0.0, 0.0, 1.0);

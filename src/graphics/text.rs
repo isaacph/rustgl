@@ -2,10 +2,13 @@
 use nalgebra::Vector2;
 
 use crate::graphics::*;
-use freetype_sys::{FT_Library, FT_Init_FreeType, FT_Done_FreeType, FT_Face, FT_New_Face, FT_Set_Pixel_Sizes, FT_Get_Char_Index, FT_UInt, FT_LOAD_DEFAULT, FT_Load_Glyph, FT_GLYPH_FORMAT_BITMAP, FT_Render_Glyph, FT_RENDER_MODE_NORMAL, FT_Glyph_Metrics, FT_Pos};
+use freetype_sys::{FT_Library, FT_Init_FreeType, FT_Done_FreeType, FT_Face, FT_New_Memory_Face, FT_Set_Pixel_Sizes, FT_Get_Char_Index, FT_UInt, FT_LOAD_DEFAULT, FT_Load_Glyph, FT_GLYPH_FORMAT_BITMAP, FT_Render_Glyph, FT_RENDER_MODE_NORMAL, FT_Glyph_Metrics, FT_Pos};
 
 use self::packing::{GlyphSize, GlyphPacking};
 
+pub fn default_characters() -> Vec<char> {
+    (32..127).map(|i| char::from_u32(i).unwrap()).collect()
+}
 
 pub struct FontLibrary {
     ft_library: FT_Library
@@ -71,7 +74,7 @@ fn apply_packing(glyphs: &Vec<GlyphBitmap>, packing: &GlyphPacking<FT_UInt>) -> 
         for y in 0..glyph.height as usize {
             for x in 0..glyph.width as usize {
                 image[(location.y + y) * width + location.x + x] =
-                    glyph.buffer[y * width + x];
+                    glyph.buffer[y * glyph.width as usize + x];
             }
         }
     }
@@ -92,16 +95,22 @@ pub struct FontInfo {
     pub char_data: HashMap<char, GlyphMetrics>
 }
 
-pub fn make_font(context: &mut Context, path: &str, font_size: i32, char_codes: &Vec<char>) -> FontInfo {
+pub fn make_font<'a, T>(context: &mut Context, path: &str, font_size: i32, char_codes: T) -> FontInfo
+        where T: Iterator<Item = &'a char> {
     let library = &mut context.persistent_objects.font_library;
     unsafe {
         let mut face: FT_Face = 0usize as _;
-        let mut char_holder = CharPtrHolder::new();
-        
+
+        let data = match std::fs::read(path) {
+            Result::Ok(data) => data,
+            Result::Err(err) => panic!("Failed to read file {}: {}", path, err)
+        };
+
         // load all glyph data from freetype
-        let error = FT_New_Face(
+        let error = FT_New_Memory_Face(
             library.ft_library,
-            path.to_char_ptr(&mut char_holder),
+            data.as_ptr(),
+            data.len().try_into().unwrap(),
             0,
             &mut face
         );
@@ -117,12 +126,9 @@ pub fn make_font(context: &mut Context, path: &str, font_size: i32, char_codes: 
             panic!("Error setting font size ({}): {}", path, error);
         }
         let load_flags = FT_LOAD_DEFAULT;
-        let glyphs = char_codes.iter().map(|c: &char| {
+        let glyphs = char_codes.map(|c| {
             // load glyph
-            let index = FT_Get_Char_Index(face, match c.to_digit(10) {
-                Option::Some(code) => code,
-                Option::None => panic!("Error finding font glyph ({}): invalid char {}", path, c)
-            });
+            let index = FT_Get_Char_Index(face, (*c) as u64);
             let error = FT_Load_Glyph(
                 face,
                 index,
