@@ -251,14 +251,14 @@ pub fn shader(context: &mut Context) -> RenderFunction {
             final_color = color * v;
         }
     "#;
-    let shader_program = context.shader_program(
+    let shader_program = shader_program(
         &vec![
-            context.make_shader(VERT_SHADER, GL_VERTEX_SHADER),
-            context.make_shader(FRAG_SHADER, GL_FRAGMENT_SHADER)],
+            make_shader(VERT_SHADER, GL_VERTEX_SHADER),
+            make_shader(FRAG_SHADER, GL_FRAGMENT_SHADER)],
         &vec![Attribute::Position, Attribute::Texture]);
-    let u_color = context.get_uniform(shader_program, "color");
-    let u_matrix = context.get_uniform(shader_program, "matrix");
-    let u_sampler = context.get_uniform(shader_program, "sampler");
+    let u_color = get_uniform(shader_program, "color");
+    let u_matrix = get_uniform(shader_program, "matrix");
+    let u_sampler = get_uniform(shader_program, "sampler");
     Box::new(move |context: &mut Context| {
         unsafe {
             glUseProgram(shader_program);
@@ -348,7 +348,7 @@ pub fn renderer(context: &mut Context, info1: FontInfo) -> RenderFunction {
     //     Vertex::new(0.0, 0.0, 0.0, 0.0),
     // ];
 
-    let mut render_vao = context.vao(
+    let vao = VAO::new(
         &vertices,
         vec![(Attribute::Position, 2), (Attribute::Texture, 2)],
         GL_STATIC_DRAW
@@ -378,7 +378,7 @@ pub fn renderer(context: &mut Context, info1: FontInfo) -> RenderFunction {
                     context.matrix = base * trans * scale;
                     context.range = VertexRange::Range { first: *index as i32, count: 6 };
                     use_shader(context); // super shitty - we fix this shit later
-                    render_vao(context);
+                    vao.render(VertexRange::Range { first: *index as i32, count: 6 });
                     trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
                     line_width += metrics.advance;
                 },
