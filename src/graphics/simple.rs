@@ -46,7 +46,7 @@ pub fn shader(context: &mut Context) -> RenderFunction {
         &vec![Attribute::Position]);
     let u_color = context.get_uniform(shader_program, "color");
     let u_matrix = context.get_uniform(shader_program, "matrix");
-    Box::new(move |context: &Context| {
+    Box::new(move |context: &mut Context| {
         unsafe {
             glUseProgram(shader_program);
             glUniformMatrix4fv(u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
@@ -62,9 +62,9 @@ pub fn renderer(context: &mut Context, vertices: &Vec<Vertex>) -> RenderFunction
         GL_STATIC_DRAW
     );
     let mut use_shader = shader(context);
-    Box::new(move |context: &Context| {
-        use_shader(&context);
-        render_vao(&context);
+    Box::new(move |context: &mut Context| {
+        use_shader(context);
+        render_vao(context);
     })
 }
 

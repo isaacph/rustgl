@@ -7,7 +7,7 @@ use image::io::Reader as ImageReader;
 
 use self::text::FontLibrary;
 
-type RenderFunction = Box<dyn FnMut(&Context) -> ()>;
+type RenderFunction = Box<dyn FnMut(&mut Context) -> ()>;
 
 pub mod simple;
 pub mod textured;
@@ -40,6 +40,7 @@ pub struct Context {
     pub range: VertexRange,
     pub matrix: Matrix4<f32>,
     pub color: Vector4<f32>,
+    pub text: String,
     persistent_objects: PersistentObjects
 }
 
@@ -49,6 +50,7 @@ impl Context {
             range: VertexRange::Full,
             matrix: Matrix4::identity(),
             color: Vector4::new(1.0, 1.0, 1.0, 1.0),
+            text: String::new(),
             persistent_objects: PersistentObjects {
                 programs: Vec::new(),
                 shaders: Vec::new(),
@@ -182,11 +184,14 @@ impl Context {
 
             (vao, data.len() / desc_length)
         };
-        Box::new(move |context: &Context| {
+        Box::new(move |context: &mut Context| {
             let (first, count) = match context.range {
                 VertexRange::Full => (0, vertex_count as i32),
                 VertexRange::Range{first, count} => (first, count)
             };
+            if first + count >= vertex_count as i32 {
+                panic!("Invalid vertex range for {} vertices: {}, {}", vertex_count, first, count);
+            }
             unsafe {
                 glBindVertexArray(vao);
                 glDrawArrays(GL_TRIANGLES, first, count);

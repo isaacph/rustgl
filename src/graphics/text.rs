@@ -1,5 +1,5 @@
 
-use nalgebra::Vector2;
+use nalgebra::{Vector2, Similarity3, Vector3, Isometry3, Translation3};
 
 use crate::graphics::*;
 use freetype_sys::{FT_Library, FT_Init_FreeType, FT_Done_FreeType, FT_Face, FT_New_Memory_Face, FT_Set_Pixel_Sizes, FT_Get_Char_Index, FT_UInt, FT_LOAD_DEFAULT, FT_Load_Glyph, FT_GLYPH_FORMAT_BITMAP, FT_Render_Glyph, FT_RENDER_MODE_NORMAL, FT_Glyph_Metrics, FT_Pos};
@@ -87,12 +87,15 @@ pub struct GlyphMetrics {
     pub glyph_pos: Vector2<f32>,
     pub glyph_size: Vector2<f32>,
     pub advance: f32,
-    pub lsb: f32
+    pub lsb: f32, // left side bearing
+    pub tsb: f32, // top side bearing
 }
 
 pub struct FontInfo {
-    pub image: Vec<u8>,
-    pub char_data: HashMap<char, GlyphMetrics>
+    pub image_buffer: Vec<u8>,
+    pub image_size: Vector2<u32>,
+    pub char_data: HashMap<char, GlyphMetrics>,
+    pub font_size: f32
 }
 
 pub fn make_font<'a, T>(context: &mut Context, path: &str, font_size: i32, char_codes: T) -> FontInfo
@@ -128,7 +131,7 @@ pub fn make_font<'a, T>(context: &mut Context, path: &str, font_size: i32, char_
         let load_flags = FT_LOAD_DEFAULT;
         let glyphs = char_codes.map(|c| {
             // load glyph
-            let index = FT_Get_Char_Index(face, (*c) as u64);
+            let index = FT_Get_Char_Index(face, ((*c) as u64).try_into().unwrap());
             let error = FT_Load_Glyph(
                 face,
                 index,
@@ -178,9 +181,14 @@ pub fn make_font<'a, T>(context: &mut Context, path: &str, font_size: i32, char_
             None => panic!("Error loading font {} size {}: could not pack", path, font_size)
         };
 
+        // apparently it's in fractional pixels?
+        let frac_pixels = 1.0 / 64.0;
+        let font_size = font_size as f32;
+
         // create an image and isolate important metrics
         FontInfo {
-            image: apply_packing(&glyphs, &packing),
+            image_buffer: apply_packing(&glyphs, &packing),
+            image_size: Vector2::new(packing.width(), packing.height()),
             char_data: glyphs.iter().map(|glyph| (
                 glyph.char,
                 GlyphMetrics {
@@ -189,10 +197,12 @@ pub fn make_font<'a, T>(context: &mut Context, path: &str, font_size: i32, char_
                         Vector2::new(v.x as f32, v.y as f32)
                     },
                     glyph_size: Vector2::new(glyph.width as f32, glyph.height as f32),
-                    advance: glyph.metrics.horiAdvance as f32,
-                    lsb: glyph.metrics.horiBearingX as f32
+                    advance: glyph.metrics.horiAdvance as f32 * frac_pixels,
+                    lsb: glyph.metrics.horiBearingX as f32 * frac_pixels,
+                    tsb: glyph.metrics.horiBearingY as f32 * frac_pixels
                 }
-            )).collect()
+            )).collect(),
+            font_size: font_size
         }
     }
 }
@@ -237,8 +247,8 @@ pub fn shader(context: &mut Context) -> RenderFunction {
         in vec2 midtex;
         out vec4 final_color;
         void main() {
-            vec4 v = texture(sampler, midtex);
-            final_color = color * vec4(v.x, v.y, v.z, 1) * v.w;
+            float v = texture(sampler, midtex).r;
+            final_color = color * v;
         }
     "#;
     let shader_program = context.shader_program(
@@ -249,7 +259,7 @@ pub fn shader(context: &mut Context) -> RenderFunction {
     let u_color = context.get_uniform(shader_program, "color");
     let u_matrix = context.get_uniform(shader_program, "matrix");
     let u_sampler = context.get_uniform(shader_program, "sampler");
-    Box::new(move |context: &Context| {
+    Box::new(move |context: &mut Context| {
         unsafe {
             glUseProgram(shader_program);
             glUniformMatrix4fv(u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
@@ -259,15 +269,122 @@ pub fn shader(context: &mut Context) -> RenderFunction {
     })
 }
 
-pub fn renderer(context: &mut Context, vertices: &Vec<Vertex>) -> RenderFunction {
+/*
+// all the glyph metrics I think you need to render text correctly
+// units are pixels
+pub struct GlyphMetrics {
+    pub glyph_pos: Vector2<f32>,
+    pub glyph_size: Vector2<f32>,
+    pub advance: f32,
+    pub lsb: f32, // left side bearing
+    pub tsb: f32, // top side bearing
+}
+
+pub struct FontInfo {
+    pub image_buffer: Vec<u8>,
+    pub image_size: Vector2<i32>,
+    pub char_data: HashMap<char, GlyphMetrics>,
+    pub font_size: f32,
+}
+ */
+
+pub fn renderer(context: &mut Context, info1: FontInfo) -> RenderFunction {
+    let info = info1;
+    let image = unsafe {
+        let mut texture: GLuint = 0;
+        glGenTextures(1, &mut texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RED as GLint,
+            info.image_size.x as i32,
+            info.image_size.y as i32,
+            0,
+            GL_RED,
+            GL_UNSIGNED_BYTE,
+            info.image_buffer.as_ptr() as *const _);
+        texture
+    };
+    let (vertices, index_map): (Vec<Vertex>, HashMap<char, usize>) = {
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let mut index_map: HashMap<char, usize> = HashMap::new();
+        let mut index_counter = 0;
+        for (c, data) in &info.char_data {
+            let index = index_counter;
+            index_map.insert(*c, index);
+
+            let min_u = data.glyph_pos.x / info.image_size.x as f32;
+            let min_v = data.glyph_pos.y / info.image_size.y as f32;
+            let max_u = min_u + data.glyph_size.x / info.image_size.x as f32;
+            let max_v = min_v + data.glyph_size.y / info.image_size.y as f32;
+            let min_x = 0.0;
+            let min_y = 0.0;
+            let max_x = min_x + data.glyph_size.x;
+            let max_y = min_y + data.glyph_size.y;
+            let mut v = vec![
+                Vertex::new(min_x, min_y, min_u, min_v),
+                Vertex::new(min_x, max_y, min_u, max_v),
+                Vertex::new(max_x, max_y, max_u, max_v),
+                Vertex::new(max_x, max_y, max_u, max_v),
+                Vertex::new(max_x, min_y, max_u, min_v),
+                Vertex::new(min_x, min_y, min_u, min_v),
+            ];
+            index_counter += v.len();
+            vertices.append(&mut v);
+        }
+        (vertices, index_map)
+    };
+    // let vertices = vec![
+    //     Vertex::new(0.0, 0.0, 0.0, 0.0),
+    //     Vertex::new(0.0, 1.0, 0.0, 1.0),
+    //     Vertex::new(1.0, 1.0, 1.0, 1.0),
+    //     Vertex::new(1.0, 1.0, 1.0, 1.0),
+    //     Vertex::new(1.0, 0.0, 1.0, 0.0),
+    //     Vertex::new(0.0, 0.0, 0.0, 0.0),
+    // ];
+
     let mut render_vao = context.vao(
-        vertices,
+        &vertices,
         vec![(Attribute::Position, 2), (Attribute::Texture, 2)],
         GL_STATIC_DRAW
     );
     let mut use_shader = shader(context);
-    Box::new(move |context: &Context| {
-        use_shader(&context);
-        render_vao(&context);
+    Box::new(move |context: &mut Context| {
+        unsafe {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, image);
+        }
+        let base = context.matrix.clone();
+        let mut line_width = 0.0;
+        let line_height = info.font_size; // temp
+        let mut trans = Matrix4::identity();
+        let mut scale = Matrix4::identity();
+        let text = context.text.clone();
+        for c in text.chars() {
+            if c == '\n' {
+                trans *= Translation3::new(-line_width, line_height, 0.0).to_homogeneous();
+                line_width = 0.0;
+                continue;
+            }
+            match (info.char_data.get(&c), index_map.get(&c)) {
+                (Some(metrics), Some(index)) => {
+                    //scale = Matrix4::new_nonuniform_scaling(&Vector3::new(metrics.glyph_size.x, metrics.glyph_size.y, 1.0));
+                    trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
+                    context.matrix = base * trans * scale;
+                    context.range = VertexRange::Range { first: *index as i32, count: 6 };
+                    use_shader(context); // super shitty - we fix this shit later
+                    render_vao(context);
+                    trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
+                    line_width += metrics.advance;
+                },
+                _ => ()
+            }
+        }
+        context.matrix = base;
     })
 }

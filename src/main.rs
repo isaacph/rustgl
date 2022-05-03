@@ -69,8 +69,8 @@ fn main() {
     let mut render = graphics::textured::square_renderer(&mut context);
 
     let texture = context.make_texture("tree.png");
-    let _text = graphics::text::make_font(&mut context, "arial.ttf", 16, graphics::text::default_characters().iter());
-    let _metrics = _text.char_data.get(&' ').unwrap();
+    let text = graphics::text::make_font(&mut context, "arial.ttf", 32, graphics::text::default_characters().iter());
+    let mut text_render = graphics::text::renderer(&mut context, text);
 
     unsafe {
         glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -84,14 +84,16 @@ fn main() {
 
         let sim = Similarity3::<f32>::new(
             Vector3::new(100.0, 100.0, 0.0),
-            Vector3::z() * std::f32::consts::FRAC_PI_4,
-            100.0
+            Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+            1.0
         );
         context.matrix = game.ortho.as_matrix() * sim.to_homogeneous();
         context.color = Vector4::new(1.0, 1.0, 1.0, 1.0);
-        context.range = graphics::VertexRange::Full;
-        texture.bind();
-        render(&context);
+        // context.range = graphics::VertexRange::Full;
+        context.text = String::from("Hihfas dhofhoas dohfaho hoh7o  H&AH&*( (&*DF(&SD(&*F&*(SD^*(F(&^!)*#$^&$^!_$^)$&*)RUHR\"");
+        // texture.bind();
+        text_render(&mut context);
+        // render(&context);
 
         window.swap_buffers();
         glfw.poll_events();

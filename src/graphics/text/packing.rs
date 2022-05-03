@@ -73,22 +73,29 @@ pub fn do_font_packing<ID, T>(glyphs: &Vec<T>) -> Option<GlyphPacking<ID>>
 fn recursive<ID, T>(glyphs: &Vec<T>, min: Coord, max: Coord) -> Option<GlyphPacking<ID>>
         where ID: Eq + Hash + Clone, T: GlyphSize<ID> {
     assert!(min < 32 && max < 32);
-    let log_size = (min + max) / 2;
-    let size = (2 as Coord).pow(log_size);
     if max == min {
         // only one option
+        let size = (2 as Coord).pow(min);
         get_packing(glyphs, size, size)
     } else {
+        let log_size = (min + max + 1) / 2; // ceiling division
+        let size = (2 as Coord).pow(log_size);
         match get_packing(glyphs, size, size) {
             Some(packing) =>
                 // valid try smaller
-                match recursive(glyphs, min, log_size - 1) {
+                match recursive(glyphs, min, cmp::max(log_size - 1, min)) {
                     Some(smaller) => Some(smaller),
                     None => Some(packing)
                 },
             None =>
                 // invalid go bigger
-                recursive(glyphs, log_size + 1, max)
+                if log_size == max {
+                    None // already biggest - this should affect the case
+                         // where the range is 2 sizes. without this,
+                         // if both values are fails, the bigger will calculate twice
+                } else {
+                    recursive(glyphs, cmp::min(log_size + 1, max), max)
+                }
         }
     }
 }
