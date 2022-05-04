@@ -9,7 +9,9 @@ use freetype_sys::{FT_Library, FT_Init_FreeType, FT_Done_FreeType, FT_Face, FT_N
 use self::packing::{GlyphSize, GlyphPacking};
 
 pub fn default_characters() -> Vec<char> {
-    (32..127).map(|i| char::from_u32(i).unwrap()).collect()
+    let mut chars = vec![0];
+    chars.append(&mut (32..127).collect::<Vec<u32>>());
+    chars.iter().map(|i| char::from_u32(*i).unwrap()).collect()
 }
 
 pub struct FontLibrary {
@@ -47,9 +49,9 @@ impl Drop for FontLibrary {
 }
 
 impl FontLibrary {
-    pub fn make_font<'a, T>(&mut self, path: &str, font_size: i32, char_codes: T) -> Font
+    pub fn make_font<'a, T>(&mut self, path: &str, font_size: i32, char_codes: T, not_found_char: Option<char>) -> Font
             where T: Iterator<Item = &'a char> {
-        let info = make_font(self, path, font_size, char_codes);
+        let info = make_font(self, path, font_size, char_codes, not_found_char);
         Font::new(self, &info)
     }
 }
@@ -113,10 +115,11 @@ pub struct FontInfo {
     pub image_buffer: Vec<u8>,
     pub image_size: Vector2<u32>,
     pub char_data: HashMap<char, GlyphMetrics>,
-    pub font_size: f32
+    pub font_size: f32,
+    pub not_found_char: Option<char>
 }
 
-pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_codes: T) -> FontInfo
+pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_codes: T, not_found_char: Option<char>) -> FontInfo
         where T: Iterator<Item = &'a char> {
     unsafe {
         let mut face: FT_Face = 0usize as _;
@@ -146,8 +149,17 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
             panic!("Error setting font size ({}): {}", path, error);
         }
         let load_flags = FT_LOAD_DEFAULT;
+        let mut found_not_found_char = false;
         let glyphs = char_codes.map(|c| {
             // load glyph
+            // check if it fulfills the not_found_char requirement (if needed)
+            match not_found_char {
+                Some(nfc) =>
+                    if *c == nfc {
+                        found_not_found_char = true;
+                    },
+                _ => ()
+            }
             let index = FT_Get_Char_Index(face, ((*c) as u64).try_into().unwrap());
             let error = FT_Load_Glyph(
                 face,
@@ -191,6 +203,10 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
                 char: *c
             }
         }).collect();
+        match not_found_char {
+            Some(_) => assert!(found_not_found_char),
+            _ => ()
+        }
 
         // pack the glyphs
         let packing = match packing::do_font_packing(&glyphs) {
@@ -219,7 +235,8 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
                     tsb: glyph.metrics.horiBearingY as f32 * frac_pixels
                 }
             )).collect(),
-            font_size
+            font_size,
+            not_found_char: not_found_char
         }
     }
 }
@@ -294,11 +311,16 @@ pub struct Font {
     char_data: HashMap<char, GlyphMetrics>,
     font_size: f32,
     index_map: HashMap<char, usize>, // maps each character to its index on the font VBO
-    texture: GLuint
+    texture: GLuint,
+    not_found_char: Option<char>
 }
 
 impl Font {
     fn new(library: &FontLibrary, info: &FontInfo) -> Font {
+        match info.not_found_char {
+            Some(c) => assert!(info.char_data.contains_key(&c)),
+            None => ()
+        }
         let image = unsafe {
             let mut texture: GLuint = 0;
             glGenTextures(1, &mut texture);
@@ -361,7 +383,8 @@ impl Font {
             char_data: info.char_data.clone(),
             font_size: info.font_size,
             index_map,
-            texture: image 
+            texture: image,
+            not_found_char: info.not_found_char
         }
     }
 
@@ -377,26 +400,34 @@ impl Font {
         let mut line_width = 0.0;
         let line_height = self.font_size; // temp
         let mut trans = Matrix4::identity();
+        // gather 'not found char' info if it exists
+        let not_found_option = match self.not_found_char {
+            Some(c) => match (self.char_data.get(&c), self.index_map.get(&c)) {
+                    (Some(metrics), Some(index)) => Some((metrics, index)),
+                    _ => None
+            },
+            None => None
+        };  
         for c in text.chars() {
             if c == '\n' {
                 trans *= Translation3::new(-line_width, line_height, 0.0).to_homogeneous();
                 line_width = 0.0;
                 continue;
             }
-            match (self.char_data.get(&c), self.index_map.get(&c)) {
-                (Some(metrics), Some(index)) => {
-                    trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
-                    let matrix = base * trans;
-                    let range = VertexRange::Range { first: *index as i32, count: 6 };
-                    unsafe {
-                        glUniformMatrix4fv(self.shader.u_matrix, 1, GL_FALSE, matrix.as_slice().as_ptr());
-                    }
-                    self.vao.render(range);
-                    trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
-                    line_width += metrics.advance;
-                },
-                _ => ()
+            let (metrics, index) = match (self.char_data.get(&c), self.index_map.get(&c), not_found_option) {
+                (Some(metrics), Some(index), _) => (metrics, index),
+                (_, _, Some((metrics, index))) => (metrics, index),
+                _ => continue // no char just skip
+            };
+            trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
+            let matrix = base * trans;
+            let range = VertexRange::Range { first: *index as i32, count: 6 };
+            unsafe {
+                glUniformMatrix4fv(self.shader.u_matrix, 1, GL_FALSE, matrix.as_slice().as_ptr());
             }
+            self.vao.render(range);
+            trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
+            line_width += metrics.advance;
         }
     }
 
