@@ -67,10 +67,13 @@ fn main() {
     let mut game = game::Game::new(width, height);
     let render = graphics::textured::Renderer::new_square();
 
-    let mut texture_library = graphics::TextureLibrary::new();
-    let texture = texture_library.make_texture("tree.png");
+//    let mut texture_library = graphics::TextureLibrary::new();
+//    let texture = texture_library.make_texture("tree.png");
     let mut font_library = graphics::text::FontLibrary::new();
     let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter());
+
+    let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter());
+    let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
 
     unsafe {
         glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -83,7 +86,7 @@ fn main() {
         }
 
         let sim = Similarity3::<f32>::new(
-            Vector3::new(100.0, 100.0, 0.0),
+            Vector3::new(100.0, 500.0, 0.0),
             Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
             1.0
         );
@@ -93,14 +96,14 @@ fn main() {
         text.render(&matrix, msg.as_str(), &color);
 
         let sim = Similarity3::<f32>::new(
-            Vector3::new(100.0, 100.0, 0.0),
-            Vector3::z() * std::f32::consts::FRAC_PI_4 * 1.0,
-            100.0
+            Vector3::new(400.0, 400.0, 0.0),
+            Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+            800.0
         );
         render.render(
             game.ortho.as_matrix() * sim.to_homogeneous(),
             Vector4::new(1.0, 1.0, 1.0, 1.0),
-            &texture,
+            &font_texture,
             graphics::VertexRange::Full
         );
 

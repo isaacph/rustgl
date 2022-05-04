@@ -71,13 +71,15 @@ impl<T, U: ToVec<T>> ToVec<T> for Vec<U> {
 }
 
 pub struct Texture {
-    handle: GLuint
+    handle: GLuint,
+    owning: bool,
 }
 
 impl Texture {
-    fn new(handle: GLuint) -> Texture {
+    fn new(handle: GLuint, owning: bool) -> Texture {
         Texture {
-            handle
+            handle,
+            owning
         }
     }
 
@@ -94,8 +96,49 @@ impl Texture {
     }
 }
 
+impl Drop for Texture {
+    fn drop(&mut self) {
+        if self.owning {
+            unsafe {
+                glDeleteTextures(1, &self.handle);
+            }
+        }
+    }
+}
+
 pub struct TextureLibrary {
     textures: HashMap<String, GLuint>,
+}
+
+pub fn make_texture(width: i32, height: i32, pixels: &Vec<u8>) -> Texture {
+    assert!(pixels.len() == (width * height * 4) as usize);
+    make_texture_impl(width, height, pixels.as_ptr() as *const c_void, true)
+}
+
+// makes an rgba texture
+fn make_texture_impl(width: i32, height: i32, pixels: *const c_void, owning: bool) -> Texture {
+    Texture::new(unsafe {
+        let mut handle: GLuint = 0;
+        glGenTextures(1, &mut handle);
+        glBindTexture(GL_TEXTURE_2D, handle);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
+        //glGenerateMipmap(GL_TEXTURE_2D);
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA as GLint,
+            width,
+            height,
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            pixels
+        );
+        handle
+    }, owning)
 }
 
 impl TextureLibrary {
@@ -107,36 +150,19 @@ impl TextureLibrary {
 
     pub fn make_texture(&mut self, source: &str) -> Texture {
         match self.textures.get(source) {
-            Some(&handle) => Texture::new(handle),
-            None => Texture::new({
+            Some(&handle) => Texture::new(handle, false),
+            None => {
                 let img_obj = ImageReader::open(source).unwrap().decode().unwrap();
                 let img = img_obj.as_rgba8().unwrap();
-                let handle = unsafe {
-                    let mut handle: GLuint = 0;
-                    let img_data = img.as_raw();
-                    glGenTextures(1, &mut handle);
-                    glBindTexture(GL_TEXTURE_2D, handle);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as GLint);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
-                    //glGenerateMipmap(GL_TEXTURE_2D);
-                    glTexImage2D(
-                        GL_TEXTURE_2D,
-                        0,
-                        GL_RGBA as GLint,
-                        img.width() as GLsizei,
-                        img.height() as GLsizei,
-                        0,
-                        GL_RGBA,
-                        GL_UNSIGNED_BYTE,
-                        img_data.as_ptr() as *const c_void
-                    );
-                    handle
-                };
-                self.textures.insert(source.to_string(), handle);
-                handle
-            })
+                let img_data = img.as_raw();
+                let texture = make_texture_impl(
+                    img.width() as i32,
+                    img.height() as i32,
+                    img_data.as_ptr() as *const c_void,
+                    false);
+                self.textures.insert(source.to_string(), texture.handle);
+                texture
+            }
         }
     }
 }

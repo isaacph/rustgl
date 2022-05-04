@@ -1,5 +1,5 @@
 
-use std::{rc::Rc};
+use std::rc::Rc;
 
 use nalgebra::{Vector2, Translation3};
 
@@ -219,7 +219,7 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
                     tsb: glyph.metrics.horiBearingY as f32 * frac_pixels
                 }
             )).collect(),
-            font_size: font_size
+            font_size
         }
     }
 }
@@ -356,11 +356,11 @@ impl Font {
         );
         let shader = library.shader.clone();
         Font {
-            shader: shader,
-            vao: vao,
+            shader,
+            vao,
             char_data: info.char_data.clone(),
             font_size: info.font_size,
-            index_map: index_map,
+            index_map,
             texture: image 
         }
     }
@@ -432,4 +432,12 @@ impl Drop for Shader {
             glDeleteProgram(self.handle);
         }
     }
+}
+
+pub fn convert_r_to_rgba(r: &Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::<u8>::new();
+    for b in r {
+        out.append(&mut vec![*b, *b, *b, *b]);
+    }
+    out
 }
