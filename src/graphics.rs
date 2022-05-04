@@ -7,8 +7,6 @@ use image::io::Reader as ImageReader;
 
 use self::text::FontLibrary;
 
-type RenderFunction = Box<dyn FnMut(&mut Context) -> ()>;
-
 pub mod simple;
 pub mod textured;
 pub mod text;
@@ -33,33 +31,6 @@ pub enum VertexRange {
     Range {
         first: i32,
         count: i32
-    }
-}
-
-pub struct Context {
-    pub range: VertexRange,
-    pub matrix: Matrix4<f32>,
-    pub color: Vector4<f32>,
-    pub text: String,
-    persistent_objects: PersistentObjects
-}
-
-impl Context {
-    pub fn new() -> Context {
-        Context{
-            range: VertexRange::Full,
-            matrix: Matrix4::identity(),
-            color: Vector4::new(1.0, 1.0, 1.0, 1.0),
-            text: String::new(),
-            persistent_objects: PersistentObjects {
-                programs: Vec::new(),
-                shaders: Vec::new(),
-                vbos: Vec::new(),
-                vaos: Vec::new(),
-                textures: HashMap::new(),
-                font_library: FontLibrary::init()
-            }
-        }
     }
 }
 

@@ -65,13 +65,12 @@ fn main() {
     }
     
     let mut game = game::Game::new(width, height);
-    let mut context = graphics::Context::new();
     let render = graphics::textured::Renderer::new_square();
 
     let mut texture_library = graphics::TextureLibrary::new();
     let texture = texture_library.make_texture("tree.png");
-    let text = graphics::text::make_font(&mut context, "arial.ttf", 32, graphics::text::default_characters().iter());
-    let mut text_render = graphics::text::renderer(&mut context, text);
+    let mut font_library = graphics::text::FontLibrary::new();
+    let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter());
 
     unsafe {
         glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -88,11 +87,10 @@ fn main() {
             Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
             1.0
         );
-        context.matrix = game.ortho.as_matrix() * sim.to_homogeneous();
-        context.color = Vector4::new(1.0, 1.0, 1.0, 1.0);
-        context.text = String::from("Hihfas dhofhoas dohfaho hoh7o  H&AH&*( (&*DF(&SD(&*F&*(SD^*(F(&^!)*#$^&$^!_$^)$&*)RUHR\"");
-        text_render(&mut context);
-
+        let matrix = game.ortho.as_matrix() * sim.to_homogeneous();
+        let msg = String::from("Hihfas dhofhoas dohfaho hoh7o  H&AH&*( (&*DF(&SD(&*F&*(SD^*(F(&^!)*#$^&$^!_$^)$&*)RUHR\"");
+        let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
+        text.render(&matrix, msg.as_str(), &color);
 
         let sim = Similarity3::<f32>::new(
             Vector3::new(100.0, 100.0, 0.0),

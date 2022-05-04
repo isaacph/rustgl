@@ -1,4 +1,6 @@
 
+use std::{rc::Rc, cmp};
+
 use nalgebra::{Vector2, Similarity3, Vector3, Isometry3, Translation3};
 
 use crate::graphics::*;
@@ -11,14 +13,16 @@ pub fn default_characters() -> Vec<char> {
 }
 
 pub struct FontLibrary {
-    ft_library: FT_Library
+    ft_library: FT_Library,
+    shader: Rc<Shader>
 }
 
 impl FontLibrary {
-    pub fn init() -> FontLibrary {
+    pub fn new() -> FontLibrary {
         unsafe {
             let mut font_library = FontLibrary{
-                ft_library: 0usize as _
+                ft_library: 0usize as _,
+                shader: Rc::new(shader())
             };
             let error = FT_Init_FreeType(&mut font_library.ft_library);
             if error != 0 {
@@ -29,11 +33,24 @@ impl FontLibrary {
     }
 }
 
+// It's ok to drop the FontLibrary before all fonts are dropped because:
+// - Rc will ensure the shader isn't dropped
+// - The FT_Library is only needed to instantiate new fonts.
+//   Since it is not needed for existing fonts, the FT_Library can safely be dropped
+//   before all fonts are dropped
 impl Drop for FontLibrary {
     fn drop(&mut self) {
         unsafe {
             FT_Done_FreeType(self.ft_library);
         }
+    }
+}
+
+impl FontLibrary {
+    pub fn make_font<'a, T>(&mut self, path: &str, font_size: i32, char_codes: T) -> Font
+            where T: Iterator<Item = &'a char> {
+        let info = make_font(self, path, font_size, char_codes);
+        Font::new(self, &info)
     }
 }
 
@@ -83,6 +100,7 @@ fn apply_packing(glyphs: &Vec<GlyphBitmap>, packing: &GlyphPacking<FT_UInt>) -> 
 
 // all the glyph metrics I think you need to render text correctly
 // units are pixels
+#[derive(Clone)]
 pub struct GlyphMetrics {
     pub glyph_pos: Vector2<f32>,
     pub glyph_size: Vector2<f32>,
@@ -98,9 +116,8 @@ pub struct FontInfo {
     pub font_size: f32
 }
 
-pub fn make_font<'a, T>(context: &mut Context, path: &str, font_size: i32, char_codes: T) -> FontInfo
+pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_codes: T) -> FontInfo
         where T: Iterator<Item = &'a char> {
-    let library = &mut context.persistent_objects.font_library;
     unsafe {
         let mut face: FT_Face = 0usize as _;
 
@@ -228,7 +245,14 @@ impl Vertex {
     }
 }
 
-pub fn shader(context: &mut Context) -> RenderFunction {
+struct Shader {
+    handle: GLuint,
+    u_color: GLint,
+    u_matrix: GLint,
+    u_sampler: GLint,
+}
+
+fn shader() -> Shader {
     const VERT_SHADER: &str = r#"
         #version 330
         in vec2 pos;
@@ -256,17 +280,23 @@ pub fn shader(context: &mut Context) -> RenderFunction {
             make_shader(VERT_SHADER, GL_VERTEX_SHADER),
             make_shader(FRAG_SHADER, GL_FRAGMENT_SHADER)],
         &vec![Attribute::Position, Attribute::Texture]);
-    let u_color = get_uniform(shader_program, "color");
-    let u_matrix = get_uniform(shader_program, "matrix");
-    let u_sampler = get_uniform(shader_program, "sampler");
-    Box::new(move |context: &mut Context| {
-        unsafe {
-            glUseProgram(shader_program);
-            glUniformMatrix4fv(u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
-            glUniform4f(u_color, context.color.x, context.color.y, context.color.z, context.color.w);
-            glUniform1i(u_sampler, 0);
-        }
-    })
+    Shader {
+        handle: shader_program,
+        u_color: get_uniform(shader_program, "color"),
+        u_matrix: get_uniform(shader_program, "matrix"),
+        u_sampler: get_uniform(shader_program, "sampler")
+    }
+    // let u_color = get_uniform(shader_program, "color");
+    // let u_matrix = get_uniform(shader_program, "matrix");
+    // let u_sampler = get_uniform(shader_program, "sampler");
+    // Box::new(move |context: &mut Context| {
+    //     unsafe {
+    //         glUseProgram(shader_program);
+    //         glUniformMatrix4fv(u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
+    //         glUniform4f(u_color, context.color.x, context.color.y, context.color.z, context.color.w);
+    //         glUniform1i(u_sampler, 0);
+    //     }
+    // })
 }
 
 /*
@@ -288,103 +318,196 @@ pub struct FontInfo {
 }
  */
 
-pub fn renderer(context: &mut Context, info1: FontInfo) -> RenderFunction {
-    let info = info1;
-    let image = unsafe {
-        let mut texture: GLuint = 0;
-        glGenTextures(1, &mut texture);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as GLint);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
-        glTexImage2D(
-            GL_TEXTURE_2D,
-            0,
-            GL_RED as GLint,
-            info.image_size.x as i32,
-            info.image_size.y as i32,
-            0,
-            GL_RED,
-            GL_UNSIGNED_BYTE,
-            info.image_buffer.as_ptr() as *const _);
-        texture
-    };
-    let (vertices, index_map): (Vec<Vertex>, HashMap<char, usize>) = {
-        let mut vertices: Vec<Vertex> = Vec::new();
-        let mut index_map: HashMap<char, usize> = HashMap::new();
-        let mut index_counter = 0;
-        for (c, data) in &info.char_data {
-            let index = index_counter;
-            index_map.insert(*c, index);
+pub struct Font {
+    shader: Rc<Shader>,
+    vao: VAO,
+    image_size: Vector2<u32>,
+    char_data: HashMap<char, GlyphMetrics>,
+    font_size: f32,
+    index_map: HashMap<char, usize>, // maps each character to its index on the font VBO
+    texture: GLuint
+}
 
-            let min_u = data.glyph_pos.x / info.image_size.x as f32;
-            let min_v = data.glyph_pos.y / info.image_size.y as f32;
-            let max_u = min_u + data.glyph_size.x / info.image_size.x as f32;
-            let max_v = min_v + data.glyph_size.y / info.image_size.y as f32;
-            let min_x = 0.0;
-            let min_y = 0.0;
-            let max_x = min_x + data.glyph_size.x;
-            let max_y = min_y + data.glyph_size.y;
-            let mut v = vec![
-                Vertex::new(min_x, min_y, min_u, min_v),
-                Vertex::new(min_x, max_y, min_u, max_v),
-                Vertex::new(max_x, max_y, max_u, max_v),
-                Vertex::new(max_x, max_y, max_u, max_v),
-                Vertex::new(max_x, min_y, max_u, min_v),
-                Vertex::new(min_x, min_y, min_u, min_v),
-            ];
-            index_counter += v.len();
-            vertices.append(&mut v);
+impl Font {
+    fn new(library: &FontLibrary, info: &FontInfo) -> Font {
+        let image = unsafe {
+            let mut texture: GLuint = 0;
+            glGenTextures(1, &mut texture);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as GLint);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
+            glTexImage2D(
+                GL_TEXTURE_2D,
+                0,
+                GL_RED as GLint,
+                info.image_size.x as i32,
+                info.image_size.y as i32,
+                0,
+                GL_RED,
+                GL_UNSIGNED_BYTE,
+                info.image_buffer.as_ptr() as *const _);
+            texture
+        };
+        let (vertices, index_map): (Vec<Vertex>, HashMap<char, usize>) = {
+            let mut vertices: Vec<Vertex> = Vec::new();
+            let mut index_map: HashMap<char, usize> = HashMap::new();
+            let mut index_counter = 0;
+            for (c, data) in &info.char_data {
+                let index = index_counter;
+                index_map.insert(*c, index);
+
+                let min_u = data.glyph_pos.x / info.image_size.x as f32;
+                let min_v = data.glyph_pos.y / info.image_size.y as f32;
+                let max_u = min_u + data.glyph_size.x / info.image_size.x as f32;
+                let max_v = min_v + data.glyph_size.y / info.image_size.y as f32;
+                let min_x = 0.0;
+                let min_y = 0.0;
+                let max_x = min_x + data.glyph_size.x;
+                let max_y = min_y + data.glyph_size.y;
+                let mut v = vec![
+                    Vertex::new(min_x, min_y, min_u, min_v),
+                    Vertex::new(min_x, max_y, min_u, max_v),
+                    Vertex::new(max_x, max_y, max_u, max_v),
+                    Vertex::new(max_x, max_y, max_u, max_v),
+                    Vertex::new(max_x, min_y, max_u, min_v),
+                    Vertex::new(min_x, min_y, min_u, min_v),
+                ];
+                index_counter += v.len();
+                vertices.append(&mut v);
+            }
+            (vertices, index_map)
+        };
+        // let vertices = vec![
+        //     Vertex::new(0.0, 0.0, 0.0, 0.0),
+        //     Vertex::new(0.0, 1.0, 0.0, 1.0),
+        //     Vertex::new(1.0, 1.0, 1.0, 1.0),
+        //     Vertex::new(1.0, 1.0, 1.0, 1.0),
+        //     Vertex::new(1.0, 0.0, 1.0, 0.0),
+        //     Vertex::new(0.0, 0.0, 0.0, 0.0),
+        // ];
+
+        let vao = VAO::new(
+            &vertices,
+            vec![(Attribute::Position, 2), (Attribute::Texture, 2)],
+            GL_STATIC_DRAW
+        );
+        let shader = library.shader.clone();
+        Font {
+            shader: shader,
+            vao: vao,
+            image_size: info.image_size,
+            char_data: info.char_data.clone(),
+            font_size: info.font_size,
+            index_map: index_map,
+            texture: image 
         }
-        (vertices, index_map)
-    };
-    // let vertices = vec![
-    //     Vertex::new(0.0, 0.0, 0.0, 0.0),
-    //     Vertex::new(0.0, 1.0, 0.0, 1.0),
-    //     Vertex::new(1.0, 1.0, 1.0, 1.0),
-    //     Vertex::new(1.0, 1.0, 1.0, 1.0),
-    //     Vertex::new(1.0, 0.0, 1.0, 0.0),
-    //     Vertex::new(0.0, 0.0, 0.0, 0.0),
-    // ];
+        // Box::new(move |context: &mut Context| {
+        //     unsafe {
+        //         glActiveTexture(GL_TEXTURE0);
+        //         glBindTexture(GL_TEXTURE_2D, image);
+        //         glUseProgram(shader.handle);
+        //         glUniformMatrix4fv(shader.u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
+        //         glUniform4f(shader.u_color, context.color.x, context.color.y, context.color.z, context.color.w);
+        //         glUniform1i(shader.u_sampler, 0);
+        //     }
+        //     let base = context.matrix.clone();
+        //     let mut line_width = 0.0;
+        //     let line_height = info.font_size; // temp
+        //     let mut trans = Matrix4::identity();
+        //     let mut scale = Matrix4::identity();
+        //     let text = context.text.clone();
+        //     for c in text.chars() {
+        //         if c == '\n' {
+        //             trans *= Translation3::new(-line_width, line_height, 0.0).to_homogeneous();
+        //             line_width = 0.0;
+        //             continue;
+        //         }
+        //         match (info.char_data.get(&c), index_map.get(&c)) {
+        //             (Some(metrics), Some(index)) => {
+        //                 //scale = Matrix4::new_nonuniform_scaling(&Vector3::new(metrics.glyph_size.x, metrics.glyph_size.y, 1.0));
+        //                 trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
+        //                 context.matrix = base * trans * scale;
+        //                 context.range = VertexRange::Range { first: *index as i32, count: 6 };
+        //                 use_shader(context); // super shitty - we fix this shit later
+        //                 vao.render(VertexRange::Range { first: *index as i32, count: 6 });
+        //                 trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
+        //                 line_width += metrics.advance;
+        //             },
+        //             _ => ()
+        //         }
+        //     }
+        //     context.matrix = base;
+        // })
+    }
 
-    let vao = VAO::new(
-        &vertices,
-        vec![(Attribute::Position, 2), (Attribute::Texture, 2)],
-        GL_STATIC_DRAW
-    );
-    let mut use_shader = shader(context);
-    Box::new(move |context: &mut Context| {
+    pub fn render(&self, matrix: &Matrix4<f32>, text: &str, color: &Vector4<f32>) {
         unsafe {
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, image);
+            glBindTexture(GL_TEXTURE_2D, self.texture);
+            glUseProgram(self.shader.handle);
+            glUniform4f(self.shader.u_color, color.x, color.y, color.z, color.w);
+            glUniform1i(self.shader.u_sampler, 0);
         }
-        let base = context.matrix.clone();
+        let base = matrix.clone();
         let mut line_width = 0.0;
-        let line_height = info.font_size; // temp
+        let line_height = self.font_size; // temp
         let mut trans = Matrix4::identity();
         let mut scale = Matrix4::identity();
-        let text = context.text.clone();
         for c in text.chars() {
             if c == '\n' {
                 trans *= Translation3::new(-line_width, line_height, 0.0).to_homogeneous();
                 line_width = 0.0;
                 continue;
             }
-            match (info.char_data.get(&c), index_map.get(&c)) {
+            match (self.char_data.get(&c), self.index_map.get(&c)) {
                 (Some(metrics), Some(index)) => {
-                    //scale = Matrix4::new_nonuniform_scaling(&Vector3::new(metrics.glyph_size.x, metrics.glyph_size.y, 1.0));
                     trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
-                    context.matrix = base * trans * scale;
-                    context.range = VertexRange::Range { first: *index as i32, count: 6 };
-                    use_shader(context); // super shitty - we fix this shit later
-                    vao.render(VertexRange::Range { first: *index as i32, count: 6 });
+                    let matrix = base * trans * scale;
+                    let range = VertexRange::Range { first: *index as i32, count: 6 };
+                    unsafe {
+                        glUniformMatrix4fv(self.shader.u_matrix, 1, GL_FALSE, matrix.as_slice().as_ptr());
+                    }
+                    self.vao.render(VertexRange::Range { first: *index as i32, count: 6 });
                     trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
                     line_width += metrics.advance;
                 },
                 _ => ()
             }
         }
-        context.matrix = base;
-    })
+    }
+
+    pub fn text_width(&self, text: &str) -> f32{
+        struct W {cur_adv: f32, longest: f32}
+        text.chars().fold(W {cur_adv: 0.0, longest: 0.0}, |sum: W, c| match self.char_data.get(&c) {
+            None => sum, // ignore non-characters
+            Some(metrics) =>
+                match c {
+                    '\n' => W {cur_adv: 0.0, longest: sum.longest}, // new line
+                    c => W {
+                        cur_adv: sum.cur_adv + metrics.advance,
+                        longest: f32::max(sum.cur_adv + metrics.lsb + metrics.glyph_size.x, sum.longest)
+                        // true size of line is the first argument of longest: last character's advance plus
+                        // current character's lsb + width
+                    }
+                }
+        }).longest
+    }
+}
+
+impl Drop for Font {
+    fn drop(&mut self) {
+        unsafe {
+            glDeleteTextures(1, &self.texture);
+        }
+    }
+}
+
+impl Drop for Shader {
+    fn drop(&mut self) {
+        unsafe {
+            glDeleteProgram(self.handle);
+        }
+    }
 }

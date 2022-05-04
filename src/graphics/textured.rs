@@ -132,10 +132,10 @@ impl Renderer {
     }
 }
 
-impl Drop for Renderer {
+impl Drop for Shader {
     fn drop(&mut self) {
         unsafe {
-            glDeleteProgram(self.shader.handle);
+            glDeleteProgram(self.handle);
         }
     }
 }
