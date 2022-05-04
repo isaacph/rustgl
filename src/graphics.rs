@@ -5,8 +5,6 @@ use std::mem::size_of;
 
 use image::io::Reader as ImageReader;
 
-use self::text::FontLibrary;
-
 pub mod simple;
 pub mod textured;
 pub mod text;
@@ -59,37 +57,6 @@ impl ToCharPtr for str {
         let cstr = CString::new(self).unwrap();
         holder.strs.push(cstr);
         holder.strs.last().unwrap().as_ptr() as *const i8
-    }
-}
-
-struct PersistentObjects {
-    programs: Vec<GLuint>,
-    shaders: Vec<GLuint>,
-    vbos: Vec<GLuint>,
-    vaos: Vec<GLuint>,
-    textures: HashMap<String, GLuint>,
-    font_library: FontLibrary
-}
-
-impl Drop for PersistentObjects {
-    fn drop(&mut self) {
-        unsafe {
-            for &p in self.programs.iter() {
-                glDeleteProgram(p);
-            }
-            for &s in self.shaders.iter() {
-                glDeleteShader(s);
-            }
-            for &v in self.vbos.iter() {
-                glDeleteBuffers(1, &v);
-            }
-            for &v in self.vaos.iter() {
-                glDeleteVertexArrays(1, &v);
-            }
-            for (_, &v) in self.textures.iter() {
-                glDeleteTextures(1, &v);
-            }
-        }
     }
 }
 
@@ -235,19 +202,6 @@ impl VAO {
 
             VAO { handle: vao, vertex_count: data.len() / desc_length, buffers_to_delete: buffers }
         }
-        // Box::new(move |context: &mut Context| {
-        //     let (first, count) = match context.range {
-        //         VertexRange::Full => (0, vertex_count as i32),
-        //         VertexRange::Range{first, count} => (first, count)
-        //     };
-        //     if first + count > vertex_count as i32 {
-        //         panic!("Invalid vertex range for {} vertices: {}, {}", vertex_count, first, count);
-        //     }
-        //     unsafe {
-        //         glBindVertexArray(vao);
-        //         glDrawArrays(GL_TRIANGLES, first, count);
-        //     }
-        // })
     }
 
     pub fn render(&self, range: VertexRange) {

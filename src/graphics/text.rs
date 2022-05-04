@@ -1,7 +1,7 @@
 
-use std::{rc::Rc, cmp};
+use std::{rc::Rc};
 
-use nalgebra::{Vector2, Similarity3, Vector3, Isometry3, Translation3};
+use nalgebra::{Vector2, Translation3};
 
 use crate::graphics::*;
 use freetype_sys::{FT_Library, FT_Init_FreeType, FT_Done_FreeType, FT_Face, FT_New_Memory_Face, FT_Set_Pixel_Sizes, FT_Get_Char_Index, FT_UInt, FT_LOAD_DEFAULT, FT_Load_Glyph, FT_GLYPH_FORMAT_BITMAP, FT_Render_Glyph, FT_RENDER_MODE_NORMAL, FT_Glyph_Metrics, FT_Pos};
@@ -286,42 +286,11 @@ fn shader() -> Shader {
         u_matrix: get_uniform(shader_program, "matrix"),
         u_sampler: get_uniform(shader_program, "sampler")
     }
-    // let u_color = get_uniform(shader_program, "color");
-    // let u_matrix = get_uniform(shader_program, "matrix");
-    // let u_sampler = get_uniform(shader_program, "sampler");
-    // Box::new(move |context: &mut Context| {
-    //     unsafe {
-    //         glUseProgram(shader_program);
-    //         glUniformMatrix4fv(u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
-    //         glUniform4f(u_color, context.color.x, context.color.y, context.color.z, context.color.w);
-    //         glUniform1i(u_sampler, 0);
-    //     }
-    // })
 }
-
-/*
-// all the glyph metrics I think you need to render text correctly
-// units are pixels
-pub struct GlyphMetrics {
-    pub glyph_pos: Vector2<f32>,
-    pub glyph_size: Vector2<f32>,
-    pub advance: f32,
-    pub lsb: f32, // left side bearing
-    pub tsb: f32, // top side bearing
-}
-
-pub struct FontInfo {
-    pub image_buffer: Vec<u8>,
-    pub image_size: Vector2<i32>,
-    pub char_data: HashMap<char, GlyphMetrics>,
-    pub font_size: f32,
-}
- */
 
 pub struct Font {
     shader: Rc<Shader>,
     vao: VAO,
-    image_size: Vector2<u32>,
     char_data: HashMap<char, GlyphMetrics>,
     font_size: f32,
     index_map: HashMap<char, usize>, // maps each character to its index on the font VBO
@@ -379,14 +348,6 @@ impl Font {
             }
             (vertices, index_map)
         };
-        // let vertices = vec![
-        //     Vertex::new(0.0, 0.0, 0.0, 0.0),
-        //     Vertex::new(0.0, 1.0, 0.0, 1.0),
-        //     Vertex::new(1.0, 1.0, 1.0, 1.0),
-        //     Vertex::new(1.0, 1.0, 1.0, 1.0),
-        //     Vertex::new(1.0, 0.0, 1.0, 0.0),
-        //     Vertex::new(0.0, 0.0, 0.0, 0.0),
-        // ];
 
         let vao = VAO::new(
             &vertices,
@@ -397,49 +358,11 @@ impl Font {
         Font {
             shader: shader,
             vao: vao,
-            image_size: info.image_size,
             char_data: info.char_data.clone(),
             font_size: info.font_size,
             index_map: index_map,
             texture: image 
         }
-        // Box::new(move |context: &mut Context| {
-        //     unsafe {
-        //         glActiveTexture(GL_TEXTURE0);
-        //         glBindTexture(GL_TEXTURE_2D, image);
-        //         glUseProgram(shader.handle);
-        //         glUniformMatrix4fv(shader.u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
-        //         glUniform4f(shader.u_color, context.color.x, context.color.y, context.color.z, context.color.w);
-        //         glUniform1i(shader.u_sampler, 0);
-        //     }
-        //     let base = context.matrix.clone();
-        //     let mut line_width = 0.0;
-        //     let line_height = info.font_size; // temp
-        //     let mut trans = Matrix4::identity();
-        //     let mut scale = Matrix4::identity();
-        //     let text = context.text.clone();
-        //     for c in text.chars() {
-        //         if c == '\n' {
-        //             trans *= Translation3::new(-line_width, line_height, 0.0).to_homogeneous();
-        //             line_width = 0.0;
-        //             continue;
-        //         }
-        //         match (info.char_data.get(&c), index_map.get(&c)) {
-        //             (Some(metrics), Some(index)) => {
-        //                 //scale = Matrix4::new_nonuniform_scaling(&Vector3::new(metrics.glyph_size.x, metrics.glyph_size.y, 1.0));
-        //                 trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
-        //                 context.matrix = base * trans * scale;
-        //                 context.range = VertexRange::Range { first: *index as i32, count: 6 };
-        //                 use_shader(context); // super shitty - we fix this shit later
-        //                 vao.render(VertexRange::Range { first: *index as i32, count: 6 });
-        //                 trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
-        //                 line_width += metrics.advance;
-        //             },
-        //             _ => ()
-        //         }
-        //     }
-        //     context.matrix = base;
-        // })
     }
 
     pub fn render(&self, matrix: &Matrix4<f32>, text: &str, color: &Vector4<f32>) {
@@ -454,7 +377,6 @@ impl Font {
         let mut line_width = 0.0;
         let line_height = self.font_size; // temp
         let mut trans = Matrix4::identity();
-        let mut scale = Matrix4::identity();
         for c in text.chars() {
             if c == '\n' {
                 trans *= Translation3::new(-line_width, line_height, 0.0).to_homogeneous();
@@ -464,12 +386,12 @@ impl Font {
             match (self.char_data.get(&c), self.index_map.get(&c)) {
                 (Some(metrics), Some(index)) => {
                     trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
-                    let matrix = base * trans * scale;
+                    let matrix = base * trans;
                     let range = VertexRange::Range { first: *index as i32, count: 6 };
                     unsafe {
                         glUniformMatrix4fv(self.shader.u_matrix, 1, GL_FALSE, matrix.as_slice().as_ptr());
                     }
-                    self.vao.render(VertexRange::Range { first: *index as i32, count: 6 });
+                    self.vao.render(range);
                     trans *= Translation3::new(-metrics.lsb + metrics.advance, metrics.tsb, 0.0).to_homogeneous();
                     line_width += metrics.advance;
                 },
@@ -485,7 +407,7 @@ impl Font {
             Some(metrics) =>
                 match c {
                     '\n' => W {cur_adv: 0.0, longest: sum.longest}, // new line
-                    c => W {
+                    _ => W {
                         cur_adv: sum.cur_adv + metrics.advance,
                         longest: f32::max(sum.cur_adv + metrics.lsb + metrics.glyph_size.x, sum.longest)
                         // true size of line is the first argument of longest: last character's advance plus

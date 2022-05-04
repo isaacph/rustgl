@@ -53,13 +53,6 @@ fn shader() -> Shader {
     let u_color = get_uniform(shader_program, "color");
     let u_matrix = get_uniform(shader_program, "matrix");
     Shader { handle: shader_program, u_color: u_color, u_matrix: u_matrix }
-    // Box::new(move |context: &mut Context| {
-    //     unsafe {
-    //         glUseProgram(shader_program);
-    //         glUniformMatrix4fv(u_matrix, 1, GL_FALSE, context.matrix.as_slice().as_ptr());
-    //         glUniform4f(u_color, context.color.x, context.color.y, context.color.z, context.color.w);
-    //     }
-    // })
 }
 
 pub struct Renderer {
@@ -78,16 +71,6 @@ impl Renderer {
             vao: vao,
             shader: shader()
         }
-        // let vao = vao: context.vao(
-        //     vertices,
-        //     vec![(Attribute::Position, 2)],
-        //     GL_STATIC_DRAW
-        // );
-        // let shader = shader(context);
-        // Box::new(move |context: &mut Context| {
-        //     use_shader(context);
-        //     render_vao(context);
-        // })
     }
     
     pub fn new_square() -> Renderer {
