@@ -147,9 +147,9 @@ pub mod networking {
         use std::collections::HashMap;
         use std::fmt::Display;
         use std::io::Result;
-        use std::{mem::MaybeUninit, io::{ErrorKind}};
-        use std::time::{SystemTime};
-        use socket2::{Socket, Domain, Type, Protocol};
+        use std::mem::MaybeUninit;
+        use std::time::SystemTime;
+        use socket2::Socket;
         use std::net::SocketAddr;
 
         use super::make_socket;
@@ -158,7 +158,6 @@ pub mod networking {
         // const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
 
         struct ClientInfo {
-            id: ClientID,
             address: SocketAddr,
             last_message: SystemTime
         }
@@ -212,7 +211,6 @@ pub mod networking {
                 let id = self.generator.generate();
                 self.addr_id_map.insert(*addr, id.clone());
                 self.client_data.insert(id.clone(), ClientInfo {
-                    id: id.clone(),
                     address: *addr,
                     last_message: SystemTime::now()
                 });
@@ -261,7 +259,7 @@ pub mod networking {
                         }
                         Err(v) => {
                             match v.kind() {
-                                ErrorKind::WouldBlock => (),
+                                std::io::ErrorKind::WouldBlock => (),
                                 _ => {
                                     println!("Error reading message: {}", v);
                                 }
@@ -292,7 +290,7 @@ pub mod networking {
                         },
                         Err(e) => {
                             match e.kind() {
-                                ErrorKind::WouldBlock => (),
+                                std::io::ErrorKind::WouldBlock => (),
                                 _ => {
                                     println!("Error writing {} bytes to {}: {}", data.len(), client_data.address, e);
                                     failed.push((id, data));
@@ -303,16 +301,6 @@ pub mod networking {
                     }
                 }
                 self.message_queue.append(&mut failed);
-                // match error {
-                //     None => {
-                //         self.message_queue.clear();
-                //         Ok(())
-                //     },
-                //     Some(err) => {
-                //         self.message_queue = self.message_queue.split_off(stopped);
-                //         Err(err)
-                //     }
-                // }
             }
             pub fn send(&mut self, client: &ClientID, data: Vec<u8>) {
                 self.message_queue.push((*client, data));
@@ -327,13 +315,11 @@ pub mod networking {
     }
 
     pub mod client {
-        use std::collections::HashMap;
-        use std::fmt::Display;
         use std::io::Result;
-        use std::{mem::MaybeUninit, io::{ErrorKind}};
-        use std::time::{SystemTime};
-        use socket2::{Socket, Domain, Type, Protocol, SockAddr};
+        use std::mem::MaybeUninit;
+        use socket2::{Socket, SockAddr};
         use std::net::SocketAddr;
+        use std::io::ErrorKind;
 
         use super::make_socket;
 
@@ -345,12 +331,12 @@ pub mod networking {
         }
 
         impl Connection {
-            pub fn new(server_address: SocketAddr) -> Result<Connection> {
+            pub fn new(server_address: &SocketAddr) -> Result<Connection> {
                 let socket = make_socket(None)?;
                 Ok(Connection {
                     socket,
-                    server_address: server_address.into(),
-                    server_address_socket: server_address,
+                    server_address: (*server_address).into(),
+                    server_address_socket: *server_address,
                     message_queue: Vec::new()
                 })
             }
@@ -434,85 +420,73 @@ pub mod networking {
     }
 }
 
-use std::{io::Result, net::SocketAddr, time::{SystemTime, Duration}};
+use std::{io::Result, net::SocketAddr, time::Duration};
+use std::env;
+use std::thread;
+use std::sync::mpsc;
+use std::sync::mpsc::TryRecvError;
+use std::io;
 
-fn main() -> Result<()> {
-    // game::Game::run();
-    // let args: Vec<String> = env::args().collect();
-    // let port_str = args.get(1).unwrap();
-
-//    let socket = make_socket(None).unwrap();
-//    println!("Local address: {:?}", socket.local_addr().unwrap().as_socket_ipv4().unwrap());
-//
-//    let address: SocketAddr = format!("127.0.0.1:{}", port_str).parse().unwrap();
-//    let address = address.into();
-//    let written = socket.send_to_vectored(&[IoSlice::new(b"Hello world\0")], &address).unwrap();
-//    println!("Bytes written: {}", written);
-
-//    let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
-//    let mut recvd = false;
-//    while !recvd {
-//        let res = socket.recv_from(buffer.as_mut_slice());
-//        match res {
-//            Ok((size, addr)) => {
-//                recvd = true;
-//                let result: &[u8] = unsafe {
-//                    let temp: &[u8; 1024] = std::mem::transmute(&buffer);
-//                    &temp[0..size]
-//                };
-//                println!("Received {} bytes from {:?}", size, addr);
-//                println!("Message: {}", &std::str::from_utf8(result).unwrap());
-//            }
-//            Err(v) => {
-//                match v.kind() {
-//                    ErrorKind::WouldBlock => (),
-//                    _ => println!("Error: {}", v),
-//                }
-//            }
-//        }
-//    }
-
-    let mut server = networking::server::ServerConnection::new(1234)?;
-    let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
-    let mut client = networking::client::Connection::new(server_address)?;
-    let mut start = SystemTime::now();
-    loop {
+fn echo_server(port: u16) -> Result<()> {
+    let mut server = networking::server::ServerConnection::new(port)?;
+    let mut stop = false;
+    while !stop {
         for (id, data) in server.poll() {
             for packet in data {
-                let good = match std::str::from_utf8(packet.as_slice()) {
-                    Ok(s) => {
-                        println!("{} sent valid utf8: {}", server.get_address(&id).unwrap(), s);
-                        if s.starts_with("Hello") {
-                            true
-                        } else if s.starts_with("Stop") {
-                            println!("Stopping");
-                            return Ok(());
-                        } else { false }
-                    },
-                    Err(e) => {
-                        println!("{} sent invalid utf8: {}", server.get_address(&id).unwrap(), e);
-                        false
-                    }
-                };
-                if good {
-                    server.send(&id, Vec::from("Nice message!".as_bytes()));
-                } else {
-                    server.send(&id, Vec::from("Bad message!".as_bytes()));
+                if std::str::from_utf8(packet.as_slice()).unwrap().eq("stop") {
+                    stop = true;
                 }
+                server.send(&id, packet);
             }
         }
         server.flush();
+        std::thread::sleep(Duration::new(0, 1000000 * 500)); // wait 500 ms
+    }
+    Ok(())
+}
 
-        if start.elapsed().unwrap() > Duration::new(5, 0) {
-            client.send(Vec::from("Hello world!"));
-            client.send(Vec::from("Goodbye world!"));
-            start = SystemTime::now();
-        }
-
+fn console_client(address: SocketAddr) -> Result<()> {
+    let mut client = networking::client::Connection::new(&address)?;
+    let stdin_channel = {
+        let (tx, rx) = mpsc::channel::<String>();
+        thread::spawn(move || loop {
+            let mut buffer = String::new();
+            io::stdin().read_line(&mut buffer).unwrap();
+            tx.send(buffer).unwrap();
+        });
+        rx
+    };
+    loop {
         for packet in client.poll() {
-            println!("From server: {}", std::str::from_utf8(packet.as_slice()).unwrap());
+            println!("Received from server: {}", std::str::from_utf8(packet.as_slice()).unwrap());
         }
         client.flush();
+        let message = match stdin_channel.try_recv() {
+            Ok(v) => v,
+            Err(TryRecvError::Empty) => continue,
+            Err(TryRecvError::Disconnected) => break,
+        };
+        client.send(Vec::from(message.as_bytes()));
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    match args[1].as_str() {
+        "server" => {
+            echo_server(1234)
+        },
+        "gclient" => {
+            game::Game::run();
+            Ok(())
+        }
+        _ => { // client
+            let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
+            console_client(server_address)
+        }
     }
 }
 
