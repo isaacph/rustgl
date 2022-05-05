@@ -129,54 +129,179 @@ use socket2::{Socket, Domain, Type, Protocol};
 
 use std::io::Result;
 
-fn make_socket(port: Option<u16>) -> Result<Socket> {
-    let socket: Socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    //socket.set_nonblocking(true)?;
-    socket.set_reuse_address(true)?;
-    let address: SocketAddr = format!("127.0.0.1:{}",
-        match port {Some(port) => port, _ => 0}
-    ).parse().unwrap();
-    let address = address.into();
-    socket.bind(&address)?;
-
-    Ok(socket)
-}
-
 use std::env;
+
+pub mod networking {
+    use socket2::SockAddr;
+    use std::net::SocketAddr;
+
+    pub mod server {
+        use socket2::SockAddr;
+        use std::collections::HashMap;
+        use std::io::Result;
+        use std::io::Error;
+        use std::{mem::MaybeUninit, io::{ErrorKind, IoSlice, Read}};
+        use std::time::{SystemTime, Duration};
+        use socket2::{Socket, Domain, Type, Protocol};
+        use std::net::SocketAddr;
+
+        // the time after the last message after which to declare the client dead
+        const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
+
+        struct ClientInfo {
+            id: ClientID,
+            address: SocketAddr,
+            send_queue: Vec<Vec<u8>>,
+            last_message: SystemTime
+        }
+
+        #[derive(PartialEq, Eq, Hash, Clone)]
+        pub struct ClientID(i32);
+
+        struct ClientIDGenerator {
+            counter: i32
+        }
+
+        impl ClientIDGenerator {
+            fn new() -> Self {
+                Self {
+                    counter: 0
+                }
+            }
+            fn generate(&mut self) -> ClientID {
+                self.counter += 1;
+                ClientID(self.counter - 1)
+            }
+        }
+
+        pub enum PollResult {
+            Ok(HashMap<ClientID, Vec<Vec<u8>>>),
+            Err((HashMap<ClientID, Vec<Vec<u8>>>, Error))
+        }
+
+        struct ServerConnection {
+            socket: Socket,
+            client_data: HashMap<ClientID, ClientInfo>,
+            addr_id_map: HashMap<SockAddr, ClientID>,
+            generator: ClientIDGenerator
+        }
+
+        impl ServerConnection {
+            pub fn new(port: u16) -> Result<ServerConnection> {
+                let socket = make_socket(Some(port))?;
+                Ok(ServerConnection {
+                    socket,
+                    client_data: HashMap::new(),
+                    addr_id_map: HashMap::new(),
+                    generator: ClientIDGenerator::new()
+                })
+            }
+
+            fn new_client(&mut self, addr: &SockAddr) -> ClientID {
+                let id = self.generator.generate();
+                self.addr_id_map.insert(addr, id.clone());
+                self.client_data.insert(id.clone(), ClientInfo {
+                    id: id.clone(),
+                    address: addr,
+                    send_queue: Vec::new(),
+                    last_message: SystemTime::now()
+                });
+                id
+            }
+
+            pub fn poll(&mut self) -> PollResult {
+                let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
+                let mut messages: HashMap<ClientID, Vec<Vec<u8>>> = HashMap::new();
+                let mut error: Option<Error> = None;
+                loop {
+                    match self.socket.recv_from(buffer.as_mut_slice()) {
+                        Ok((size, addr)) => {
+                            let addr: SockAddr = addr.into();
+                            let result: &[u8] = unsafe {
+                                let temp: &[u8; 1024] = std::mem::transmute(&buffer);
+                                &temp[0..size]
+                            };
+                            let id = match self.addr_id_map.get(&addr) {
+                                Some(id) => *id,
+                                None => self.new_client(&addr)
+                            }
+                            println!("Received {} bytes from {:?}", size, addr);
+                            println!("Message: {}", &std::str::from_utf8(result).unwrap());
+                        }
+                        Err(v) => {
+                            match v.kind() {
+                                ErrorKind::WouldBlock => (),
+                                _ => error = Some(v)
+                            }
+                            break;
+                        }
+                    };
+                }
+                match error {
+                    None => PollResult::Ok(messages),
+                    Some(v) => PollResult::Err((messages, v))
+                }
+            }
+            pub fn flush(&mut self) -> Result<()> {
+                Ok(())
+            }
+            pub fn send(&mut self, client: ClientID, data: Vec<u8>) {
+            }
+            pub fn connected(&self, client: ClientID) -> bool {
+                false
+            }
+        }
+
+        fn make_socket(port: Option<u16>) -> Result<Socket> {
+            let socket: Socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+            //socket.set_nonblocking(true)?;
+            socket.set_reuse_address(true)?;
+            let address: SocketAddr = format!("127.0.0.1:{}",
+                match port {Some(port) => port, _ => 0}
+            ).parse().unwrap();
+            let address = address.into();
+            socket.bind(&address)?;
+
+            Ok(socket)
+        }
+    }
+}
 
 fn main() -> Result<()> {
     // game::Game::run();
     let args: Vec<String> = env::args().collect();
+    let port_str = args.get(1).unwrap();
 
-    let socket = make_socket(None).unwrap();
-    println!("Local address: {:?}", socket.local_addr().unwrap().as_socket_ipv4().unwrap());
+//    let socket = make_socket(None).unwrap();
+//    println!("Local address: {:?}", socket.local_addr().unwrap().as_socket_ipv4().unwrap());
+//
+//    let address: SocketAddr = format!("127.0.0.1:{}", port_str).parse().unwrap();
+//    let address = address.into();
+//    let written = socket.send_to_vectored(&[IoSlice::new(b"Hello world\0")], &address).unwrap();
+//    println!("Bytes written: {}", written);
 
-    let address: SocketAddr = format!("127.0.0.1:{}", args[1]).parse().unwrap();
-    let address = address.into();
-    let written = socket.send_to_vectored(&[IoSlice::new(b"Hello world\0")], &address).unwrap();
-    println!("Bytes written: {}", written);
-
-    let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
-    let mut recvd = false;
-    while !recvd {
-        let res = socket.recv_from(buffer.as_mut_slice());
-        match res {
-            Ok((size, addr)) => {
-                recvd = true;
-                let result: &[u8] = unsafe {
-                    let temp: &[u8; 1024] = std::mem::transmute(&buffer);
-                    &temp[0..size]
-                };
-                println!("Received {} bytes from {:?}", size, addr);
-                println!("Message: {}", &std::str::from_utf8(result).unwrap());
-            }
-            Err(v) => {
-                match v.kind() {
-                    ErrorKind::WouldBlock => (),
-                    _ => println!("Error: {}", v),
-                }
-            }
-        }
-    }
+//    let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
+//    let mut recvd = false;
+//    while !recvd {
+//        let res = socket.recv_from(buffer.as_mut_slice());
+//        match res {
+//            Ok((size, addr)) => {
+//                recvd = true;
+//                let result: &[u8] = unsafe {
+//                    let temp: &[u8; 1024] = std::mem::transmute(&buffer);
+//                    &temp[0..size]
+//                };
+//                println!("Received {} bytes from {:?}", size, addr);
+//                println!("Message: {}", &std::str::from_utf8(result).unwrap());
+//            }
+//            Err(v) => {
+//                match v.kind() {
+//                    ErrorKind::WouldBlock => (),
+//                    _ => println!("Error: {}", v),
+//                }
+//            }
+//        }
+//    }
     Ok(())
 }
+
