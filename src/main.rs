@@ -124,7 +124,59 @@ mod game {
     }
 }
 
+use std::{net::{TcpListener, SocketAddr}, mem::MaybeUninit, io::{ErrorKind, IoSlice, Read}};
+use socket2::{Socket, Domain, Type, Protocol};
 
-fn main() {
-    game::Game::run();
+use std::io::Result;
+
+fn make_socket(port: Option<u16>) -> Result<Socket> {
+    let socket: Socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    //socket.set_nonblocking(true)?;
+    socket.set_reuse_address(true)?;
+    let address: SocketAddr = format!("127.0.0.1:{}",
+        match port {Some(port) => port, _ => 0}
+    ).parse().unwrap();
+    let address = address.into();
+    socket.bind(&address)?;
+
+    Ok(socket)
+}
+
+use std::env;
+
+fn main() -> Result<()> {
+    // game::Game::run();
+    let args: Vec<String> = env::args().collect();
+
+    let socket = make_socket(None).unwrap();
+    println!("Local address: {:?}", socket.local_addr().unwrap().as_socket_ipv4().unwrap());
+
+    let address: SocketAddr = format!("127.0.0.1:{}", args[1]).parse().unwrap();
+    let address = address.into();
+    let written = socket.send_to_vectored(&[IoSlice::new(b"Hello world\0")], &address).unwrap();
+    println!("Bytes written: {}", written);
+
+    let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
+    let mut recvd = false;
+    while !recvd {
+        let res = socket.recv_from(buffer.as_mut_slice());
+        match res {
+            Ok((size, addr)) => {
+                recvd = true;
+                let result: &[u8] = unsafe {
+                    let temp: &[u8; 1024] = std::mem::transmute(&buffer);
+                    &temp[0..size]
+                };
+                println!("Received {} bytes from {:?}", size, addr);
+                println!("Message: {}", &std::str::from_utf8(result).unwrap());
+            }
+            Err(v) => {
+                match v.kind() {
+                    ErrorKind::WouldBlock => (),
+                    _ => println!("Error: {}", v),
+                }
+            }
+        }
+    }
+    Ok(())
 }
