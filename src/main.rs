@@ -124,36 +124,53 @@ mod game {
     }
 }
 
-use std::{net::{TcpListener, SocketAddr}, mem::MaybeUninit, io::{ErrorKind, IoSlice, Read}};
-use socket2::{Socket, Domain, Type, Protocol};
-
-use std::io::Result;
-
-use std::env;
-
 pub mod networking {
+    use std::net::SocketAddr;
+
+    use socket2::{Socket, Domain, Type, Protocol};
+    use std::io::Result;
+
+    fn make_socket(port: Option<u16>) -> Result<Socket> {
+        let socket: Socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        socket.set_nonblocking(true)?;
+        socket.set_reuse_address(true)?;
+        let address: SocketAddr = format!("127.0.0.1:{}",
+            match port {Some(port) => port, _ => 0}
+        ).parse().unwrap();
+        let address = address.into();
+        socket.bind(&address)?;
+
+        Ok(socket)
+    }
+    
     pub mod server {
-        use socket2::SockAddr;
         use std::collections::HashMap;
+        use std::fmt::Display;
         use std::io::Result;
-        use std::io::Error;
-        use std::{mem::MaybeUninit, io::{ErrorKind, IoSlice, Read}};
-        use std::time::{SystemTime, Duration};
+        use std::{mem::MaybeUninit, io::{ErrorKind}};
+        use std::time::{SystemTime};
         use socket2::{Socket, Domain, Type, Protocol};
         use std::net::SocketAddr;
 
+        use super::make_socket;
+
         // the time after the last message after which to declare the client dead
-        const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
+        // const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
 
         struct ClientInfo {
             id: ClientID,
             address: SocketAddr,
-            send_queue: Vec<Vec<u8>>,
             last_message: SystemTime
         }
 
-        #[derive(PartialEq, Eq, Hash, Clone)]
+        #[derive(PartialEq, Eq, Hash, Clone, Copy)]
         pub struct ClientID(i32);
+
+        impl Display for ClientID {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
 
         struct ClientIDGenerator {
             counter: i32
@@ -171,16 +188,12 @@ pub mod networking {
             }
         }
 
-        pub enum PollResult {
-            Ok(HashMap<ClientID, Vec<Vec<u8>>>),
-            Err((HashMap<ClientID, Vec<Vec<u8>>>, Error))
-        }
-
-        struct ServerConnection {
+        pub struct ServerConnection {
             socket: Socket,
             client_data: HashMap<ClientID, ClientInfo>,
             addr_id_map: HashMap<SocketAddr, ClientID>,
-            generator: ClientIDGenerator
+            generator: ClientIDGenerator,
+            message_queue: Vec<(ClientID, Vec<u8>)>,
         }
 
         impl ServerConnection {
@@ -190,7 +203,8 @@ pub mod networking {
                     socket,
                     client_data: HashMap::new(),
                     addr_id_map: HashMap::new(),
-                    generator: ClientIDGenerator::new()
+                    generator: ClientIDGenerator::new(),
+                    message_queue: Vec::new()
                 })
             }
 
@@ -200,16 +214,21 @@ pub mod networking {
                 self.client_data.insert(id.clone(), ClientInfo {
                     id: id.clone(),
                     address: *addr,
-                    send_queue: Vec::new(),
                     last_message: SystemTime::now()
                 });
                 id
             }
 
-            pub fn poll(&mut self) -> PollResult {
-                let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
+            pub fn get_address(&self, id: &ClientID) -> Option<SocketAddr> {
+                match self.client_data.get(id) {
+                    Some(data) => Some(data.address),
+                    None => None
+                }
+            }
+
+            pub fn poll(&mut self) -> HashMap<ClientID, Vec<Vec<u8>>> {
+                let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
                 let mut messages: HashMap<ClientID, Vec<Vec<u8>>> = HashMap::new();
-                let mut error: Option<Error> = None;
                 loop {
                     match self.socket.recv_from(buffer.as_mut_slice()) {
                         Ok((size, addr)) => {
@@ -220,70 +239,207 @@ pub mod networking {
                                     continue
                                 }
                             };
-                            let result: &[u8] = unsafe {
+                            let result: Vec<u8> = unsafe {
                                 let temp: &[u8; 1024] = std::mem::transmute(&buffer);
                                 &temp[0..size]
-                            };
+                            }.to_vec();
+                            println!("Received {} bytes from {:?}: {}", size, addr, std::str::from_utf8(&result).unwrap());
                             let id = match self.addr_id_map.get(&addr) {
                                 Some(id) => *id,
                                 None => self.new_client(&addr)
                             };
-                            let msg_list = match messages.get_mut(&id) {
-                                Some(list) => list,
-                                None => match messages.try_insert(id, Vec::new()) {
-                                    Ok(list) => list,
-                                    Err(e) => {
-                                        println!("Error adding new client message");
-                                        continue
-                                    }
+                            match self.client_data.get_mut(&id) {
+                                Some(data) => data.last_message = SystemTime::now(),
+                                None => panic!("Error: client found in address map but not in data map: {}", id)
+                            }
+                            match messages.get_mut(&id) {
+                                Some(list) => list.push(result),
+                                None => {
+                                    messages.insert(id, vec![result]);
                                 }
                             };
-                            println!("Received {} bytes from {:?}", size, addr);
-                            println!("Message: {}", &std::str::from_utf8(result).unwrap());
                         }
                         Err(v) => {
                             match v.kind() {
                                 ErrorKind::WouldBlock => (),
-                                _ => error = Some(v)
+                                _ => {
+                                    println!("Error reading message: {}", v);
+                                }
                             }
                             break;
                         }
                     };
                 }
-                match error {
-                    None => PollResult::Ok(messages),
-                    Some(v) => PollResult::Err((messages, v))
+                messages
+            }
+            pub fn flush(&mut self) {
+                let mut failed: Vec<(ClientID, Vec<u8>)> = Vec::new();
+                for (id, data) in self.message_queue.drain(0..self.message_queue.len()) {
+                    let client_data = match self.client_data.get(&id) {
+                        Some(data) => data,
+                        None => {
+                            println!("Error sending data to unknown client (id={})", id);
+                            continue;
+                        }
+                    };
+                    let addr = client_data.address.into();
+                    let written = self.socket.send_to(data.as_slice(), &addr);
+                    match written {
+                        Ok(written) => {
+                            if written != data.len() {
+                                println!("Error writing {} bytes to {}: {} < {}", data.len(), client_data.address, written, data.len());
+                            }
+                        },
+                        Err(e) => {
+                            match e.kind() {
+                                ErrorKind::WouldBlock => (),
+                                _ => {
+                                    println!("Error writing {} bytes to {}: {}", data.len(), client_data.address, e);
+                                    failed.push((id, data));
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                self.message_queue.append(&mut failed);
+                // match error {
+                //     None => {
+                //         self.message_queue.clear();
+                //         Ok(())
+                //     },
+                //     Some(err) => {
+                //         self.message_queue = self.message_queue.split_off(stopped);
+                //         Err(err)
+                //     }
+                // }
+            }
+            pub fn send(&mut self, client: &ClientID, data: Vec<u8>) {
+                self.message_queue.push((*client, data));
+            }
+            pub fn last_message_time(&self, client: &ClientID) -> Option<SystemTime> {
+                match self.client_data.get(&client) {
+                    Some(data) => Some(data.last_message),
+                    None => None
                 }
             }
-            pub fn flush(&mut self) -> Result<()> {
-                Ok(())
-            }
-            pub fn send(&mut self, client: ClientID, data: Vec<u8>) {
-            }
-            pub fn connected(&self, client: ClientID) -> bool {
-                false
-            }
+        }
+    }
+
+    pub mod client {
+        use std::collections::HashMap;
+        use std::fmt::Display;
+        use std::io::Result;
+        use std::{mem::MaybeUninit, io::{ErrorKind}};
+        use std::time::{SystemTime};
+        use socket2::{Socket, Domain, Type, Protocol, SockAddr};
+        use std::net::SocketAddr;
+
+        use super::make_socket;
+
+        pub struct Connection {
+            socket: Socket,
+            server_address: SockAddr,
+            server_address_socket: SocketAddr,
+            message_queue: Vec<Vec<u8>>
         }
 
-        fn make_socket(port: Option<u16>) -> Result<Socket> {
-            let socket: Socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-            //socket.set_nonblocking(true)?;
-            socket.set_reuse_address(true)?;
-            let address: SocketAddr = format!("127.0.0.1:{}",
-                match port {Some(port) => port, _ => 0}
-            ).parse().unwrap();
-            let address = address.into();
-            socket.bind(&address)?;
+        impl Connection {
+            pub fn new(server_address: SocketAddr) -> Result<Connection> {
+                let socket = make_socket(None)?;
+                Ok(Connection {
+                    socket,
+                    server_address: server_address.into(),
+                    server_address_socket: server_address,
+                    message_queue: Vec::new()
+                })
+            }
 
-            Ok(socket)
+            pub fn get_server_address(&self) -> SocketAddr {
+                self.server_address_socket
+            }
+
+            pub fn poll(&mut self) -> Vec<Vec<u8>> {
+                let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
+                let mut messages: Vec<Vec<u8>> = Vec::new();
+                loop {
+                    match self.socket.recv_from(buffer.as_mut_slice()) {
+                        Ok((size, addr)) => {
+                            let addr: SocketAddr = match addr.as_socket() {
+                                Some(addr) => addr,
+                                None => {
+                                    println!("Error understanding connection address");
+                                    continue
+                                }
+                            };
+                            let result: Vec<u8> = unsafe {
+                                let temp: &[u8; 1024] = std::mem::transmute(&buffer);
+                                &temp[0..size]
+                            }.to_vec();
+                            println!("Received {} bytes from {:?}: {}", size, addr, std::str::from_utf8(&result).unwrap());
+                            messages.push(result);
+                        }
+                        Err(v) => {
+                            match v.kind() {
+                                ErrorKind::WouldBlock => (),
+                                _ => {
+                                    println!("Error reading message: {}", v);
+                                }
+                            }
+                            break;
+                        }
+                    };
+                }
+                messages
+            }
+            pub fn flush(&mut self) {
+                let mut failed: Vec<Vec<u8>> = Vec::new();
+                for data in self.message_queue.drain(0..self.message_queue.len()) {
+                    let addr = &self.server_address;
+                    let written = self.socket.send_to(data.as_slice(), addr);
+                    match written {
+                        Ok(written) => {
+                            if written != data.len() {
+                                println!("Error writing {} bytes to server: {} < {}", data.len(), written, data.len());
+                            }
+                        },
+                        Err(e) => {
+                            match e.kind() {
+                                ErrorKind::WouldBlock => (),
+                                _ => {
+                                    println!("Error writing {} bytes to server: {}", data.len(), e);
+                                    failed.push(data);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                self.message_queue.append(&mut failed);
+                // match error {
+                //     None => {
+                //         self.message_queue.clear();
+                //         Ok(())
+                //     },
+                //     Some(err) => {
+                //         self.message_queue = self.message_queue.split_off(stopped);
+                //         Err(err)
+                //     }
+                // }
+            }
+            pub fn send(&mut self, data: Vec<u8>) {
+                self.message_queue.push(data);
+            }
         }
     }
 }
 
+use std::{io::Result, net::SocketAddr, time::{SystemTime, Duration}};
+
 fn main() -> Result<()> {
     // game::Game::run();
-    let args: Vec<String> = env::args().collect();
-    let port_str = args.get(1).unwrap();
+    // let args: Vec<String> = env::args().collect();
+    // let port_str = args.get(1).unwrap();
 
 //    let socket = make_socket(None).unwrap();
 //    println!("Local address: {:?}", socket.local_addr().unwrap().as_socket_ipv4().unwrap());
@@ -315,6 +471,48 @@ fn main() -> Result<()> {
 //            }
 //        }
 //    }
-    Ok(())
+
+    let mut server = networking::server::ServerConnection::new(1234)?;
+    let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
+    let mut client = networking::client::Connection::new(server_address)?;
+    let mut start = SystemTime::now();
+    loop {
+        for (id, data) in server.poll() {
+            for packet in data {
+                let good = match std::str::from_utf8(packet.as_slice()) {
+                    Ok(s) => {
+                        println!("{} sent valid utf8: {}", server.get_address(&id).unwrap(), s);
+                        if s.starts_with("Hello") {
+                            true
+                        } else if s.starts_with("Stop") {
+                            println!("Stopping");
+                            return Ok(());
+                        } else { false }
+                    },
+                    Err(e) => {
+                        println!("{} sent invalid utf8: {}", server.get_address(&id).unwrap(), e);
+                        false
+                    }
+                };
+                if good {
+                    server.send(&id, Vec::from("Nice message!".as_bytes()));
+                } else {
+                    server.send(&id, Vec::from("Bad message!".as_bytes()));
+                }
+            }
+        }
+        server.flush();
+
+        if start.elapsed().unwrap() > Duration::new(5, 0) {
+            client.send(Vec::from("Hello world!"));
+            client.send(Vec::from("Goodbye world!"));
+            start = SystemTime::now();
+        }
+
+        for packet in client.poll() {
+            println!("From server: {}", std::str::from_utf8(packet.as_slice()).unwrap());
+        }
+        client.flush();
+    }
 }
 
