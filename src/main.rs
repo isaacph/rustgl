@@ -132,9 +132,6 @@ use std::io::Result;
 use std::env;
 
 pub mod networking {
-    use socket2::SockAddr;
-    use std::net::SocketAddr;
-
     pub mod server {
         use socket2::SockAddr;
         use std::collections::HashMap;
@@ -182,7 +179,7 @@ pub mod networking {
         struct ServerConnection {
             socket: Socket,
             client_data: HashMap<ClientID, ClientInfo>,
-            addr_id_map: HashMap<SockAddr, ClientID>,
+            addr_id_map: HashMap<SocketAddr, ClientID>,
             generator: ClientIDGenerator
         }
 
@@ -197,12 +194,12 @@ pub mod networking {
                 })
             }
 
-            fn new_client(&mut self, addr: &SockAddr) -> ClientID {
+            fn new_client(&mut self, addr: &SocketAddr) -> ClientID {
                 let id = self.generator.generate();
-                self.addr_id_map.insert(addr, id.clone());
+                self.addr_id_map.insert(*addr, id.clone());
                 self.client_data.insert(id.clone(), ClientInfo {
                     id: id.clone(),
-                    address: addr,
+                    address: *addr,
                     send_queue: Vec::new(),
                     last_message: SystemTime::now()
                 });
@@ -216,7 +213,13 @@ pub mod networking {
                 loop {
                     match self.socket.recv_from(buffer.as_mut_slice()) {
                         Ok((size, addr)) => {
-                            let addr: SockAddr = addr.into();
+                            let addr: SocketAddr = match addr.as_socket() {
+                                Some(addr) => addr,
+                                None => {
+                                    println!("Error understanding connection address");
+                                    continue
+                                }
+                            };
                             let result: &[u8] = unsafe {
                                 let temp: &[u8; 1024] = std::mem::transmute(&buffer);
                                 &temp[0..size]
@@ -224,7 +227,17 @@ pub mod networking {
                             let id = match self.addr_id_map.get(&addr) {
                                 Some(id) => *id,
                                 None => self.new_client(&addr)
-                            }
+                            };
+                            let msg_list = match messages.get_mut(&id) {
+                                Some(list) => list,
+                                None => match messages.try_insert(id, Vec::new()) {
+                                    Ok(list) => list,
+                                    Err(e) => {
+                                        println!("Error adding new client message");
+                                        continue
+                                    }
+                                }
+                            };
                             println!("Received {} bytes from {:?}", size, addr);
                             println!("Message: {}", &std::str::from_utf8(result).unwrap());
                         }
