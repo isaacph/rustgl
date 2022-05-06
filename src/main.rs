@@ -2,6 +2,35 @@ extern crate glfw;
 
 pub mod graphics;
 
+pub mod chatbox {
+    use crate::graphics::text::*;
+    pub struct Chatbox<'a> {
+        font: &'a Font,
+        lines: i32,
+        history_length: i32,
+        typing: String,
+        history: Vec<String>,
+    }
+
+    impl Chatbox<'_> {
+        pub fn new<'a>(font: &'a Font, lines: i32, history_length: i32) -> Chatbox<'a> {
+            Chatbox::<'a> {
+                font,
+                lines,
+                history_length,
+                typing: String::new(),
+                history: Vec::new()
+            }
+        }
+
+        pub fn println(&mut self, line: &str) {
+            
+            self.history.push(String::from(line));
+
+        }
+    }
+}
+
 mod game {
     use nalgebra::{Vector2, Orthographic3};
     use ogl33::glViewport;
@@ -469,7 +498,6 @@ fn console_client(address: SocketAddr) -> Result<()> {
         client.send(Vec::from(message.as_bytes()));
         std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
-
     Ok(())
 }
 
