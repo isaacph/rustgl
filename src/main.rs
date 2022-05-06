@@ -3,6 +3,8 @@ extern crate glfw;
 pub mod graphics;
 
 pub mod chatbox {
+    use nalgebra::Matrix4;
+
     use crate::graphics::text::*;
     pub struct Chatbox<'a> {
         font: &'a Font,
@@ -10,23 +12,33 @@ pub mod chatbox {
         history_length: i32,
         typing: String,
         history: Vec<String>,
+        width: f32
     }
 
     impl Chatbox<'_> {
-        pub fn new<'a>(font: &'a Font, lines: i32, history_length: i32) -> Chatbox<'a> {
+        pub fn new<'a>(font: &'a Font, lines: i32, history_length: i32, width: f32) -> Chatbox<'a> {
             Chatbox::<'a> {
                 font,
                 lines,
                 history_length,
                 typing: String::new(),
-                history: Vec::new()
+                history: Vec::new(),
+                width
             }
         }
 
         pub fn println(&mut self, line: &str) {
-            
-            self.history.push(String::from(line));
+            let mut lines: Vec<String> = self.font.split_lines(line, Some(self.width));
+            self.history.append(&mut lines);
+        }
 
+        pub fn get_visible_history(&self) -> Vec<String> {
+        }
+
+        pub fn get_typing(&self) -> String {
+        }
+
+        pub fn render(&mut self, proj: Matrix4<f32>) {
         }
     }
 }

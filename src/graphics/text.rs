@@ -400,28 +400,19 @@ impl Font {
         let mut line_width = 0.0;
         let line_height = self.font_size; // temp
         let mut trans = Matrix4::identity();
-        // gather 'not found char' info if it exists
-        let not_found_option = match self.not_found_char {
-            Some(c) => match (self.char_data.get(&c), self.index_map.get(&c)) {
-                    (Some(metrics), Some(index)) => Some((metrics, index)),
-                    _ => None
-            },
-            None => None
-        };  
         for c in text.chars() {
             if c == '\n' {
                 trans *= Translation3::new(-line_width, line_height, 0.0).to_homogeneous();
                 line_width = 0.0;
                 continue;
             }
-            let (metrics, index) = match (self.char_data.get(&c), self.index_map.get(&c), not_found_option) {
-                (Some(metrics), Some(index), _) => (metrics, index),
-                (_, _, Some((metrics, index))) => (metrics, index),
+            let (metrics, index) = match self.get_metrics(c) {
+                Some((metrics, index)) => (metrics, index),
                 _ => continue // no char just skip
             };
             trans *= Translation3::new(metrics.lsb, -metrics.tsb, 0.0).to_homogeneous();
             let matrix = base * trans;
-            let range = VertexRange::Range { first: *index as i32, count: 6 };
+            let range = VertexRange::Range { first: index as i32, count: 6 };
             unsafe {
                 glUniformMatrix4fv(self.shader.u_matrix, 1, GL_FALSE, matrix.as_slice().as_ptr());
             }
@@ -431,11 +422,24 @@ impl Font {
         }
     }
 
+    fn get_metrics(&self, c: char) -> Option<(&GlyphMetrics, usize)> {
+        match (self.char_data.get(&c), self.index_map.get(&c)) {
+            (Some(metrics), Some(index)) => Some((metrics, *index)),
+            _ => match self.not_found_char {
+                Some(c) => match (self.char_data.get(&c), self.index_map.get(&c)) {
+                    (Some(metrics), Some(index)) => Some((metrics, *index)),
+                    _ => panic!("Error finding metrics or index for 'not found char'")
+                },
+                _ => None
+            }
+        }
+    }
+
     pub fn text_width(&self, text: &str) -> f32{
         struct W {cur_adv: f32, longest: f32}
-        text.chars().fold(W {cur_adv: 0.0, longest: 0.0}, |sum: W, c| match self.char_data.get(&c) {
+        text.chars().fold(W {cur_adv: 0.0, longest: 0.0}, |sum: W, c| match self.get_metrics(c) {
             None => sum, // ignore non-characters
-            Some(metrics) =>
+            Some((metrics, _)) =>
                 match c {
                     '\n' => W {cur_adv: 0.0, longest: sum.longest}, // new line
                     _ => W {
@@ -446,6 +450,61 @@ impl Font {
                     }
                 }
         }).longest
+    }
+
+    pub fn split_lines(&self, text: &str, max_length: Option<f32>) -> Vec<String> {
+        let max_length = match max_length {
+            Some(l) => l,
+            None => f32::MAX,
+        };
+        struct W {cur_adv: f32, cur_line: String, cur_line_length: f32, lines: Vec<String>}
+        text.chars().fold(W {
+            cur_adv: 0.0,
+            cur_line: String::new(),
+            cur_line_length: 0.0,
+            lines: Vec::new()
+        }, |cur: W, c| match self.get_metrics(c) {
+            None => cur,
+            Some((metrics, _)) => match c {
+                '\n' => W {
+                    cur_adv: 0.0,
+                    cur_line: String::new(),
+                    cur_line_length: 0.0,
+                    lines: {
+                        cur.lines.push(cur.cur_line);
+                        cur.lines
+                    }
+                },
+                _ => {
+                    let next_length = cur.cur_adv + metrics.lsb + metrics.glyph_size.x;
+                    if next_length > max_length {
+                        W {
+                            cur_adv: metrics.advance,
+                            cur_line: {
+                                let new_line = String::new();
+                                new_line.push(c);
+                                new_line
+                            },
+                            cur_line_length: metrics.lsb + metrics.glyph_size.x,
+                            lines: {
+                                cur.lines.push(cur.cur_line);
+                                cur.lines
+                            }
+                        }
+                    } else {
+                        W {
+                            cur_adv: cur.cur_adv + metrics.advance,
+                            cur_line: cur.cur_line,
+                            cur_line_length: cur.cur_adv + metrics.lsb + metrics.glyph_size.x,
+                            lines: {
+                                cur.cur_line.push(c);
+                                cur.lines
+                            }
+                        }
+                    }
+                }
+            }
+        }).lines
     }
 }
 
