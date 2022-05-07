@@ -3,42 +3,71 @@ extern crate glfw;
 pub mod graphics;
 
 pub mod chatbox {
-    use nalgebra::Matrix4;
+    use std::iter::Rev;
+
+    use nalgebra::{Matrix4, Vector3, Vector4};
 
     use crate::graphics::text::*;
     pub struct Chatbox<'a> {
         font: &'a Font,
-        lines: i32,
+        visible_lines: i32,
         history_length: i32,
         typing: String,
         history: Vec<String>,
-        width: f32
+        width: f32,
+        timer: f32
     }
 
+    pub const BAR_FLICKER_TIME: f32 = 1.0;
+
     impl Chatbox<'_> {
-        pub fn new<'a>(font: &'a Font, lines: i32, history_length: i32, width: f32) -> Chatbox<'a> {
+        pub fn new<'a>(font: &'a Font, visible_lines: i32, history_length: i32, width: f32) -> Chatbox<'a> {
+            assert!(visible_lines >= 0 && history_length >= 0 && width >= 0.0);
             Chatbox::<'a> {
                 font,
-                lines,
+                visible_lines,
                 history_length,
                 typing: String::new(),
                 history: Vec::new(),
-                width
+                width,
+                timer: 0.0
             }
         }
 
         pub fn println(&mut self, line: &str) {
             let mut lines: Vec<String> = self.font.split_lines(line, Some(self.width));
+            let add_len = std::cmp::min(self.history_length as usize, lines.len());
+            lines.drain(0..(lines.len() - add_len));
+            let history_remove = self.history.len() - add_len;
+            self.history.drain(0..history_remove);
             self.history.append(&mut lines);
         }
 
-        pub fn get_visible_history(&self) -> Vec<String> {
+        pub fn get_visible_history(&self) -> Rev<std::slice::Iter<'_, String>> {
+            self.history.as_slice()[(self.history.len() - self.visible_lines as usize)..self.history.len()].iter().rev()
         }
 
-        pub fn get_typing(&self) -> String {
+        pub fn get_typing(&self) -> &String {
+            &self.typing
         }
 
-        pub fn render(&mut self, proj: Matrix4<f32>) {
+        pub fn render(&mut self, proj: Matrix4<f32>, delta_time: f32) {
+            let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
+            let matrix = self.get_visible_history().fold(proj, |matrix, line| {
+                self.font.render(&matrix, line.as_str(), &color);
+                matrix.append_translation(&Vector3::new(0.0, self.font.line_height(), 0.0))
+            });
+
+            self.timer += delta_time;
+            while self.timer > BAR_FLICKER_TIME {
+                self.timer -= BAR_FLICKER_TIME;
+            }
+            let typing_line = if self.timer > BAR_FLICKER_TIME / 2.0 {
+                self.typing.to_owned() + "|"
+            } else {
+                self.typing.to_owned()
+            };
+            self.font.render(&matrix, typing_line.as_str(), &color);
         }
     }
 }

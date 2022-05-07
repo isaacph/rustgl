@@ -398,7 +398,7 @@ impl Font {
         }
         let base = matrix.clone();
         let mut line_width = 0.0;
-        let line_height = self.font_size; // temp
+        let line_height = self.line_height();
         let mut trans = Matrix4::identity();
         for c in text.chars() {
             if c == '\n' {
@@ -452,6 +452,10 @@ impl Font {
         }).longest
     }
 
+    pub fn line_height(&self) -> f32 {
+        self.font_size // temp
+    }
+
     pub fn split_lines(&self, text: &str, max_length: Option<f32>) -> Vec<String> {
         let max_length = match max_length {
             Some(l) => l,
@@ -464,9 +468,9 @@ impl Font {
             cur_line_length: 0.0,
             lines: Vec::new()
         }, |cur: W, c| match self.get_metrics(c) {
-            None => cur,
+            None => cur, // ignore unknown character
             Some((metrics, _)) => match c {
-                '\n' => W {
+                '\n' => W { // force a new line
                     cur_adv: 0.0,
                     cur_line: String::new(),
                     cur_line_length: 0.0,
@@ -477,7 +481,7 @@ impl Font {
                 },
                 _ => {
                     let next_length = cur.cur_adv + metrics.lsb + metrics.glyph_size.x;
-                    if next_length > max_length {
+                    if next_length > max_length { // determine if a new line is needed
                         W {
                             cur_adv: metrics.advance,
                             cur_line: {
