@@ -3,8 +3,6 @@ extern crate glfw;
 pub mod graphics;
 
 pub mod chatbox {
-    use std::iter::Rev;
-
     use nalgebra::{Matrix4, Vector3, Vector4};
 
     use crate::graphics::text::*;
@@ -141,8 +139,9 @@ mod game {
     use glfw::{Action, Context, Key};
     use nalgebra::{Vector4, Vector3, Similarity3};
     use ogl33::*;
+    use std::net::SocketAddr;
 
-    use crate::{graphics, chatbox};
+    use crate::{graphics, chatbox, networking};
 
     #[derive(Clone)]
     pub enum State {
@@ -154,11 +153,12 @@ mod game {
         pub window_size: Vector2<i32>,
         pub ortho: Orthographic3<f32>,
         chatbox: chatbox::Chatbox<'a>,
-        pub state: State
+        pub state: State,
+        connection: networking::client::Connection,
     }
 
     impl Game<'_> {
-        pub fn run() {
+        pub fn run(default_server: &SocketAddr) {
             let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
             let (width, height) = (800, 600);
 
@@ -191,7 +191,8 @@ mod game {
                 window_size: Vector2::<i32>::new(width, height),
                 ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
                 chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
-                state: State::DEFAULT
+                state: State::DEFAULT,
+                connection: networking::client::Connection::new(default_server).unwrap()
             };
             game.window_size(width, height);
             let render = graphics::textured::Renderer::new_square();
@@ -216,6 +217,11 @@ mod game {
                 last_time = current_time;
                 unsafe {
                     glClear(GL_COLOR_BUFFER_BIT);
+                }
+
+                let messages = game.connection.poll();
+                for message in messages {
+                    game.chatbox.println(format!("Server: {}", String::from_utf8(message).unwrap()).as_str());
                 }
 
                 let sim = Similarity3::<f32>::new(
@@ -264,7 +270,7 @@ mod game {
                             let line = game.chatbox.get_typing().clone();
                             if line.len() != 0 {
                                 game.chatbox.erase_typing();
-                                game.chatbox.println(line.as_str());
+                                game.process_chat(line.as_str());
                             } else {
                                 game.state = State::DEFAULT;
                                 game.chatbox.set_typing_flicker(false);
@@ -287,6 +293,19 @@ mod game {
             self.ortho.set_bottom(height as f32);
             unsafe {
                 glViewport(0, 0, width, height);
+            }
+        }
+
+        pub fn process_chat(&mut self, command: &str) {
+            if !command.starts_with('/') {
+                self.process_chat((String::from("/") + command).as_str())
+            } else {
+                match command[1..] {
+                    "send" => {
+                        self.connection.send(
+                    },
+                    _ => self.chatbox.println("Command not found.")
+                }
             }
         }
     }
@@ -513,6 +532,11 @@ pub mod networking {
                 self.server_address_socket
             }
 
+            pub fn set_server_address(&mut self, addr: &SocketAddr) {
+                self.server_address_socket = addr.clone();
+                self.server_address = (*addr).into();
+            }
+
             pub fn poll(&mut self) -> Vec<Vec<u8>> {
                 let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
                 let mut messages: Vec<Vec<u8>> = Vec::new();
@@ -526,6 +550,10 @@ pub mod networking {
                                     continue
                                 }
                             };
+                            if addr != self.server_address_socket {
+                                println!("Error: received packet from non-server address");
+                                continue;
+                            }
                             let result: Vec<u8> = unsafe {
                                 let temp: &[u8; 1024] = std::mem::transmute(&buffer);
                                 &temp[0..size]
@@ -642,16 +670,16 @@ fn console_client(address: SocketAddr) -> Result<()> {
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
     match args[1].as_str() {
         "server" => {
             echo_server(1234)
         },
         "gclient" => {
-            game::Game::run();
+            game::Game::run(&server_address);
             Ok(())
         }
         _ => { // client
-            let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
             console_client(server_address)
         }
     }
