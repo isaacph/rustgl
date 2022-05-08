@@ -461,19 +461,17 @@ impl Font {
             Some(l) => l,
             None => f32::MAX,
         };
-        struct W {cur_adv: f32, cur_line: String, cur_line_length: f32, lines: Vec<String>}
-        text.chars().fold(W {
+        struct W {cur_adv: f32, cur_line: String, lines: Vec<String>}
+        let mut result = text.chars().fold(W {
             cur_adv: 0.0,
             cur_line: String::new(),
-            cur_line_length: 0.0,
             lines: Vec::new()
-        }, |cur: W, c| match self.get_metrics(c) {
+        }, |mut cur: W, c| match self.get_metrics(c) {
             None => cur, // ignore unknown character
             Some((metrics, _)) => match c {
                 '\n' => W { // force a new line
                     cur_adv: 0.0,
                     cur_line: String::new(),
-                    cur_line_length: 0.0,
                     lines: {
                         cur.lines.push(cur.cur_line);
                         cur.lines
@@ -485,11 +483,10 @@ impl Font {
                         W {
                             cur_adv: metrics.advance,
                             cur_line: {
-                                let new_line = String::new();
+                                let mut new_line = String::new();
                                 new_line.push(c);
                                 new_line
                             },
-                            cur_line_length: metrics.lsb + metrics.glyph_size.x,
                             lines: {
                                 cur.lines.push(cur.cur_line);
                                 cur.lines
@@ -498,17 +495,18 @@ impl Font {
                     } else {
                         W {
                             cur_adv: cur.cur_adv + metrics.advance,
-                            cur_line: cur.cur_line,
-                            cur_line_length: cur.cur_adv + metrics.lsb + metrics.glyph_size.x,
-                            lines: {
+                            cur_line: {
                                 cur.cur_line.push(c);
-                                cur.lines
-                            }
+                                cur.cur_line
+                            },
+                            lines: cur.lines
                         }
                     }
                 }
             }
-        }).lines
+        });
+        result.lines.push(result.cur_line);
+        result.lines
     }
 }
 

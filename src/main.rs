@@ -8,66 +8,127 @@ pub mod chatbox {
     use nalgebra::{Matrix4, Vector3, Vector4};
 
     use crate::graphics::text::*;
+    use crate::graphics::*;
     pub struct Chatbox<'a> {
         font: &'a Font,
+        simple_render: &'a simple::Renderer,
         visible_lines: i32,
         history_length: i32,
         typing: String,
         history: Vec<String>,
         width: f32,
-        timer: f32
+        height: f32,
+        flicker_timer: f32,
+        typing_flicker: bool,
+        fade_timer: f32
     }
 
-    pub const BAR_FLICKER_TIME: f32 = 1.0;
+    pub const BAR_FLICKER_TIME: f32 = 0.6;
+    pub const FADE_START_TIME: f32 = 3.0;
+    pub const FADE_TIME: f32 = 1.0;
 
     impl Chatbox<'_> {
-        pub fn new<'a>(font: &'a Font, visible_lines: i32, history_length: i32, width: f32) -> Chatbox<'a> {
+        pub fn new<'a>(font: &'a Font, simple_render: &'a simple::Renderer, visible_lines: i32, history_length: i32, width: f32) -> Chatbox<'a> {
             assert!(visible_lines >= 0 && history_length >= 0 && width >= 0.0);
             Chatbox::<'a> {
                 font,
+                simple_render,
                 visible_lines,
                 history_length,
                 typing: String::new(),
                 history: Vec::new(),
                 width,
-                timer: 0.0
+                height: (visible_lines + 1) as f32 * font.line_height(),
+                flicker_timer: 0.0,
+                typing_flicker: false,
+                fade_timer: 0.0
             }
         }
 
         pub fn println(&mut self, line: &str) {
             let mut lines: Vec<String> = self.font.split_lines(line, Some(self.width));
-            let add_len = std::cmp::min(self.history_length as usize, lines.len());
-            lines.drain(0..(lines.len() - add_len));
-            let history_remove = self.history.len() - add_len;
+            let add_len = std::cmp::min(self.history_length as usize, lines.len()) as i32;
+            lines.drain(0..(std::cmp::max(0, lines.len() as i32 - add_len)) as usize);
+            let history_remove = 
+                std::cmp::max(0, self.history.len() as i32 - (self.history_length - add_len)) as usize;
             self.history.drain(0..history_remove);
             self.history.append(&mut lines);
+            self.fade_timer = 0.0;
         }
 
-        pub fn get_visible_history(&self) -> Rev<std::slice::Iter<'_, String>> {
-            self.history.as_slice()[(self.history.len() - self.visible_lines as usize)..self.history.len()].iter().rev()
+        fn get_visible_history_empty_lines(&self) -> i32 {
+            std::cmp::max(0, self.visible_lines - self.history.len() as i32)
+        }
+
+        pub fn get_visible_history(&self) -> Vec<&str> {
+            let mut vec = Vec::new();
+            for i in (std::cmp::max(0, self.history.len() as i32 - self.visible_lines) as usize)..self.history.len() {
+                vec.push(self.history[i].as_str());
+            }
+            vec
         }
 
         pub fn get_typing(&self) -> &String {
             &self.typing
         }
 
-        pub fn render(&mut self, proj: Matrix4<f32>, delta_time: f32) {
-            let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
-            let matrix = self.get_visible_history().fold(proj, |matrix, line| {
-                self.font.render(&matrix, line.as_str(), &color);
+        pub fn add_typing(&mut self, c: char) {
+            self.typing.push(c);
+        }
+
+        pub fn remove_typing(&mut self, count: i32) {
+            assert!(count >= 0);
+            self.typing.truncate(std::cmp::max(0, self.typing.len() as i32 - count) as usize);
+        }
+
+        pub fn erase_typing(&mut self) {
+            self.typing.clear();
+        }
+
+        pub fn set_typing_flicker(&mut self, typing_flicker: bool) {
+            self.typing_flicker = typing_flicker;
+            self.flicker_timer = 0.0;
+            self.fade_timer = 0.0;
+        }
+
+        pub fn render(&mut self, proj: &Matrix4<f32>, delta_time: f32) {
+            self.fade_timer += delta_time;
+            let is_fade = self.fade_timer > FADE_START_TIME && !self.typing_flicker;
+            let mut fade = 1.0;
+            if is_fade {
+                fade = 1.0 - f32::max(0.0, (self.fade_timer - FADE_START_TIME) / FADE_TIME);
+            }
+
+            let color = Vector4::new(1.0, 1.0, 1.0, 1.0) * fade;
+            let background_color = Vector4::new(0.0, 0.0, 0.0, 0.6) * fade;
+
+            let background_matrix = Matrix4::identity()
+                .prepend_translation(&Vector3::new(self.width / 2.0, self.height / 2.0, 0.0))
+                .prepend_nonuniform_scaling(&Vector3::new(self.width, self.height, 0.0));
+            self.simple_render.render(&(proj * background_matrix), &background_color, VertexRange::Full);
+            
+            let matrix = Matrix4::identity().append_translation(
+                &Vector3::new(
+                    0.0,
+                    (self.get_visible_history_empty_lines() + 1) as f32 * self.font.line_height(),
+                    0.0));
+            let matrix = self.get_visible_history().iter().fold(matrix, |matrix, line| {
+                self.font.render(&(proj * matrix), line, &color);
                 matrix.append_translation(&Vector3::new(0.0, self.font.line_height(), 0.0))
             });
 
-            self.timer += delta_time;
-            while self.timer > BAR_FLICKER_TIME {
-                self.timer -= BAR_FLICKER_TIME;
+            if self.typing_flicker {
+                self.flicker_timer += delta_time;
+                while self.flicker_timer > BAR_FLICKER_TIME {
+                    self.flicker_timer -= BAR_FLICKER_TIME;
+                }
             }
-            let typing_line = if self.timer > BAR_FLICKER_TIME / 2.0 {
+            let typing_line = if self.flicker_timer > BAR_FLICKER_TIME / 2.0 && self.typing_flicker {
                 self.typing.to_owned() + "|"
             } else {
                 self.typing.to_owned()
             };
-            self.font.render(&matrix, typing_line.as_str(), &color);
+            self.font.render(&(proj * matrix), typing_line.as_str(), &color);
         }
     }
 }
@@ -81,14 +142,22 @@ mod game {
     use nalgebra::{Vector4, Vector3, Similarity3};
     use ogl33::*;
 
-    use crate::graphics;
+    use crate::{graphics, chatbox};
 
-    pub struct Game {
-        pub window_size: Vector2<i32>,
-        pub ortho: Orthographic3<f32>
+    #[derive(Clone)]
+    pub enum State {
+        DEFAULT,
+        TYPING
     }
 
-    impl Game {
+    pub struct Game<'a> {
+        pub window_size: Vector2<i32>,
+        pub ortho: Orthographic3<f32>,
+        chatbox: chatbox::Chatbox<'a>,
+        pub state: State
+    }
+
+    impl Game<'_> {
         pub fn run() {
             let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
             let (width, height) = (800, 600);
@@ -103,6 +172,7 @@ mod game {
                     .expect("Failed to create GLFW window.");
 
             window.set_key_polling(true);
+            window.set_char_polling(true);
             window.set_size_polling(true);
             window.make_current();
 
@@ -114,13 +184,21 @@ mod game {
                 });
             }
             
-            let mut game = Game::new(width, height);
+            let mut font_library = graphics::text::FontLibrary::new();
+            let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
+            let simple_render = graphics::simple::Renderer::new_square();
+            let mut game = Game {
+                window_size: Vector2::<i32>::new(width, height),
+                ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
+                chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
+                state: State::DEFAULT
+            };
+            game.window_size(width, height);
             let render = graphics::textured::Renderer::new_square();
 
             // let mut texture_library = graphics::TextureLibrary::new();
             // let texture = texture_library.make_texture("tree.png");
-            let mut font_library = graphics::text::FontLibrary::new();
-            let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
+            game.chatbox.println("Hello");
 
             let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
             let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
@@ -130,7 +208,12 @@ mod game {
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             }
+
+            let mut last_time = glfw.get_time();
             while !window.should_close() {
+                let current_time = glfw.get_time();
+                let delta_time = (current_time - last_time) as f32;
+                last_time = current_time;
                 unsafe {
                     glClear(GL_COLOR_BUFFER_BIT);
                 }
@@ -157,29 +240,44 @@ mod game {
                     graphics::VertexRange::Full
                 );
 
+                game.chatbox.render(game.ortho.as_matrix(), delta_time);
+
                 window.swap_buffers();
                 glfw.poll_events();
                 for (_, event) in glfw::flush_messages(&events) {
-                    match event {
-                        glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
-                            window.set_should_close(true)
+                    match (game.state.clone(), event) {
+                        (_, glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _)) => {
+                            window.set_should_close(true);
+                            game.state = State::DEFAULT;
                         },
-                        glfw::WindowEvent::Size(width, height) => {
+                        (_, glfw::WindowEvent::Size(width, height)) => {
                             game.window_size(width, height);
                         },
+                        (State::TYPING, glfw::WindowEvent::Char(char)) => {
+                            game.chatbox.add_typing(char);
+                        },
+                        (State::TYPING, glfw::WindowEvent::Key(Key::Backspace, _, Action::Press, _)) |
+                        (State::TYPING, glfw::WindowEvent::Key(Key::Backspace, _, Action::Repeat, _)) => {
+                            game.chatbox.remove_typing(1);
+                        },
+                        (State::TYPING, glfw::WindowEvent::Key(Key::Enter, _, Action::Press, _)) => {
+                            let line = game.chatbox.get_typing().clone();
+                            if line.len() != 0 {
+                                game.chatbox.erase_typing();
+                                game.chatbox.println(line.as_str());
+                            } else {
+                                game.state = State::DEFAULT;
+                                game.chatbox.set_typing_flicker(false);
+                            }
+                        },
+                        (State::DEFAULT, glfw::WindowEvent::Key(Key::Enter, _, Action::Press, _)) => {
+                            game.state = State::TYPING;
+                            game.chatbox.set_typing_flicker(true);
+                        }
                         _ => {}
                     }
                 }
             }
-        }
-        
-        pub fn new(width: i32, height: i32) -> Game {
-            let mut game = Game {
-                window_size: Vector2::<i32>::new(width, height),
-                ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0)
-            };
-            game.window_size(width, height);
-            game
         }
 
         pub fn window_size(&mut self, width: i32, height: i32) {
