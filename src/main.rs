@@ -219,9 +219,10 @@ mod game {
                     glClear(GL_COLOR_BUFFER_BIT);
                 }
 
+                game.connection.flush(); // send messages
                 let messages = game.connection.poll();
                 for message in messages {
-                    game.chatbox.println(format!("Server: {}", String::from_utf8(message).unwrap()).as_str());
+                    game.chatbox.println(format!("Server: {}", String::from_utf8_lossy(&message)).as_str());
                 }
 
                 let sim = Similarity3::<f32>::new(
@@ -298,11 +299,15 @@ mod game {
 
         pub fn process_chat(&mut self, command: &str) {
             if !command.starts_with('/') {
-                self.process_chat((String::from("/") + command).as_str())
+                self.process_chat((String::from("/send ") + command).as_str())
             } else {
-                match command[1..] {
-                    "send" => {
-                        self.connection.send(
+                let split: Vec<&str> = command[1..].split(' ').collect();
+                match &split[..] {
+                    ["hello", "world"] => {
+                        self.chatbox.println("Hello world!");
+                    },
+                    ["send", ..] => {
+                        self.connection.send(command[1..].as_bytes().to_vec());
                     },
                     _ => self.chatbox.println("Command not found.")
                 }
@@ -629,14 +634,14 @@ fn echo_server(port: u16) -> Result<()> {
     while !stop {
         for (id, data) in server.poll() {
             for packet in data {
-                if std::str::from_utf8(packet.as_slice()).unwrap().eq("stop") {
+                if String::from_utf8_lossy(packet.as_slice()).eq("stop") {
                     stop = true;
                 }
                 server.send(&id, packet);
             }
         }
         server.flush();
-        std::thread::sleep(Duration::new(0, 1000000 * 500)); // wait 500 ms
+        //std::thread::sleep(Duration::new(0, 1000000 * 500)); // wait 500 ms
     }
     Ok(())
 }
