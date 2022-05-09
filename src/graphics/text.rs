@@ -482,6 +482,10 @@ impl Font {
         self.descent
     }
 
+    pub fn font_size(&self) -> f32 {
+        self.font_size
+    }
+
     // splits lines (word wrap) using maximum line length, new line characters, and white space
     pub fn split_lines(&self, text: &str, max_length: Option<f32>) -> Vec<String> {
         let max_length = match max_length {
