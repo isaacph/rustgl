@@ -116,7 +116,10 @@ pub struct FontInfo {
     pub image_size: Vector2<u32>,
     pub char_data: HashMap<char, GlyphMetrics>,
     pub font_size: f32,
-    pub not_found_char: Option<char>
+    pub not_found_char: Option<char>,
+    pub ascent: f32,
+    pub descent: f32,
+    pub height: f32
 }
 
 pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_codes: T, not_found_char: Option<char>) -> FontInfo
@@ -140,6 +143,10 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
         if error != 0 {
             panic!("Error loading font ({}): {}", path, error);
         }
+
+        // make sure we don't get like a seg fault, instead panic
+        assert!(face != std::ptr::null_mut() && (*face).size != std::ptr::null_mut());
+
         let error = FT_Set_Pixel_Sizes(
             face,
             0,
@@ -236,7 +243,10 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
                 }
             )).collect(),
             font_size,
-            not_found_char: not_found_char
+            not_found_char: not_found_char,
+            ascent: (*(*face).size).metrics.ascender as f32 * frac_pixels,
+            descent: (*(*face).size).metrics.descender as f32 * frac_pixels,
+            height: (*(*face).size).metrics.height as f32 * frac_pixels,
         }
     }
 }
@@ -312,7 +322,10 @@ pub struct Font {
     font_size: f32,
     index_map: HashMap<char, usize>, // maps each character to its index on the font VBO
     texture: GLuint,
-    not_found_char: Option<char>
+    not_found_char: Option<char>,
+    ascent: f32,
+    descent: f32,
+    height: f32,
 }
 
 impl Font {
@@ -384,7 +397,10 @@ impl Font {
             font_size: info.font_size,
             index_map,
             texture: image,
-            not_found_char: info.not_found_char
+            not_found_char: info.not_found_char,
+            ascent: info.ascent,
+            descent: info.descent,
+            height: info.height
         }
     }
 
@@ -453,7 +469,17 @@ impl Font {
     }
 
     pub fn line_height(&self) -> f32 {
-        self.font_size // temp
+        self.height // temp
+    }
+
+    // distance above the baseline that this font goes
+    pub fn ascent(&self) -> f32 {
+        self.ascent
+    }
+
+    // negative distance below the baseline that this font goes
+    pub fn descent(&self) -> f32 {
+        self.descent
     }
 
     // splits lines (word wrap) using maximum line length, new line characters, and white space

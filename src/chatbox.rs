@@ -104,7 +104,7 @@ impl Chatbox<'_> {
         let matrix = Matrix4::identity().append_translation(
             &Vector3::new(
                 0.0,
-                (self.get_visible_history_empty_lines() + 1) as f32 * self.font.line_height(),
+                self.font.ascent() + (self.get_visible_history_empty_lines()) as f32 * self.font.line_height(),
                 0.0));
         let matrix = self.get_visible_history().iter().fold(matrix, |matrix, line| {
             self.font.render(&(proj * matrix), line, &color);
