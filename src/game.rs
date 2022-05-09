@@ -180,7 +180,18 @@ impl Game<'_> {
                 ["send", ..] => {
                     self.connection.send(command[1..].as_bytes().to_vec());
                 },
-                _ => self.chatbox.println("Command not found.")
+                ["server", address] => {
+                    let address: SocketAddr = match address.parse() {
+                        Err(e) => {
+                            self.chatbox.println(format!("Error parsing address: {}", e).as_str());
+                            return;
+                        },
+                        Ok(address) => address
+                    };
+                    self.connection.set_server_address(&address);
+                    self.chatbox.println(format!("Successfully changed server address to {}", address.to_string()).as_str());
+                }
+                _ => self.chatbox.println("Failed to parse command.")
             }
         }
     }
