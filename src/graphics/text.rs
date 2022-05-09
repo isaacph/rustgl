@@ -461,32 +461,35 @@ impl Font {
             Some(l) => l,
             None => f32::MAX,
         };
-        struct W {cur_adv: f32, cur_line: String, lines: Vec<String>}
+        struct W {cur_word: String, cur_word_adv: f32, cur_line: String, cur_line_adv: f32, lines: Vec<String>}
         let mut result = text.chars().fold(W {
-            cur_adv: 0.0,
+            cur_word: String::new(),
+            cur_word_adv: 0.0,
             cur_line: String::new(),
+            cur_line_adv: 0.0,
             lines: Vec::new()
         }, |mut cur: W, c| match self.get_metrics(c) {
             None => cur, // ignore unknown character
             Some((metrics, _)) => match c {
                 '\n' => W { // force a new line
-                    cur_adv: 0.0,
                     cur_line: String::new(),
+                    cur_line_adv: 0.0,
+                    cur_word: String::new(),
+                    cur_word_adv: 0.0,
                     lines: {
+                        cur.cur_line += cur.cur_word.as_str();
                         cur.lines.push(cur.cur_line);
                         cur.lines
                     }
                 },
-                _ => {
-                    let next_length = cur.cur_adv + metrics.lsb + metrics.glyph_size.x;
-                    if next_length > max_length { // determine if a new line is needed
+                ' ' | '\t' => {
+                    let next_length = cur.cur_line_adv + cur.cur_word_adv + metrics.lsb + metrics.glyph_size.x;
+                    if next_length > max_length {
                         W {
-                            cur_adv: metrics.advance,
-                            cur_line: {
-                                let mut new_line = String::new();
-                                new_line.push(c);
-                                new_line
-                            },
+                            cur_word: String::new(),
+                            cur_word_adv: 0.0,
+                            cur_line: String::from(c),
+                            cur_line_adv: metrics.advance,
                             lines: {
                                 cur.lines.push(cur.cur_line);
                                 cur.lines
@@ -494,17 +497,63 @@ impl Font {
                         }
                     } else {
                         W {
-                            cur_adv: cur.cur_adv + metrics.advance,
+                            cur_word: String::new(),
+                            cur_word_adv: 0.0,
                             cur_line: {
+                                cur.cur_line += cur.cur_word.as_str();
                                 cur.cur_line.push(c);
                                 cur.cur_line
                             },
+                            cur_line_adv: cur.cur_line_adv + cur.cur_word_adv + metrics.advance,
+                            lines: cur.lines
+                        }
+                    }
+                },
+                _ => {
+                    let next_length = cur.cur_line_adv + cur.cur_word_adv + metrics.lsb + metrics.glyph_size.x;
+                    if next_length > max_length { // determine if a new line is needed
+                        if cur.cur_line.len() == 0 { // if the current line is empty i.e. it's all one word
+                            W { // split the current word at the current position, the end of the line
+                                cur_word: String::from(c),
+                                cur_word_adv: metrics.advance,
+                                cur_line: cur.cur_line, // was empty anyway
+                                cur_line_adv: 0.0,
+                                lines: {
+                                    cur.lines.push(cur.cur_word);
+                                    cur.lines
+                                }
+                            }
+                        } else {
+                            W {
+                                cur_word: {
+                                    cur.cur_word.push(c);
+                                    cur.cur_word
+                                },
+                                cur_word_adv: cur.cur_word_adv + metrics.advance,
+                                cur_line: String::new(),
+                                cur_line_adv: 0.0,
+                                lines: {
+                                    cur.lines.push(cur.cur_line);
+                                    cur.lines
+                                }
+                            }
+                        }
+                    } else { // the totally regular non-whitespace no new line case
+                        W {
+                            cur_word: {
+                                cur.cur_word.push(c);
+                                cur.cur_word
+                            },
+                            cur_word_adv: cur.cur_word_adv + metrics.advance,
+                            cur_line: cur.cur_line,
+                            cur_line_adv: cur.cur_line_adv,
                             lines: cur.lines
                         }
                     }
                 }
             }
         });
+        result.cur_line += result.cur_word.as_str();
         result.lines.push(result.cur_line);
         result.lines
     }

@@ -180,6 +180,9 @@ impl Game<'_> {
                 ["send", ..] => {
                     self.connection.send(command[1..].as_bytes().to_vec());
                 },
+                ["print", _, ..] => {
+                    self.chatbox.println(&command[("/print ".len())..]);
+                }
                 ["server", address] => {
                     let address: SocketAddr = match address.parse() {
                         Err(e) => {
