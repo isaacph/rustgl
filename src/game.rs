@@ -1,5 +1,6 @@
 use nalgebra::{Vector2, Orthographic3};
 use ogl33::glViewport;
+use serde::{Serialize, Deserialize};
 
 use std::ffi::CStr;
 use glfw::{Action, Context, Key};
@@ -7,7 +8,40 @@ use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use std::net::SocketAddr;
 
-use crate::{graphics, chatbox, networking};
+use crate::{graphics, chatbox, networking::{self, server::ClientID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ClientCommandID, ServerCommand, ServerCommandID, SendClientCommands, ExecuteClientCommands, SendServerCommands}};
+
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EchoMessage {
+    message: String
+}
+
+impl EchoMessage {
+    pub fn new(message: String) -> Self {
+        EchoMessage {
+            message
+        }
+    }
+}
+
+impl<'a> ClientCommand<'a> for EchoMessage {
+    fn id(&self) -> ClientCommandID {
+        ClientCommandID::EchoMessage
+    }
+    fn run(&self, client: &mut Game) {
+        client.chatbox.println(self.message.as_str());
+    }
+}
+
+impl<'a> ServerCommand<'a> for EchoMessage {
+    fn id(&self) -> ServerCommandID {
+        ServerCommandID::EchoMessage
+    }
+    fn run(&self, source: &ClientID, server: &mut Server) {
+        server.connection.send(source, self);
+    }
+}
 
 #[derive(Clone)]
 pub enum State {
@@ -86,10 +120,11 @@ impl Game<'_> {
             }
 
             game.connection.flush(); // send messages
-            let messages = game.connection.poll();
-            for message in messages {
-                game.chatbox.println(format!("Server: {}", String::from_utf8_lossy(&message)).as_str());
-            }
+            let messages = game.connection.poll_raw();
+            game.execute(messages);
+            // for message in messages {
+            //     game.chatbox.println(format!("Server: {}", String::from_utf8_lossy(&message)).as_str());
+            // }
 
             let sim = Similarity3::<f32>::new(
                 Vector3::new(100.0, 500.0, 0.0),
@@ -178,7 +213,10 @@ impl Game<'_> {
                     self.chatbox.println("Hello world!");
                 },
                 ["send", ..] => {
-                    self.connection.send(command[1..].as_bytes().to_vec());
+                    self.connection.send(&EchoMessage::new(String::from(&command[1..])));
+                },
+                ["echo", ..] => {
+                    self.connection.send(&EchoMessage::new(String::from(&command[1..])));
                 },
                 ["print", _, ..] => {
                     self.chatbox.println(&command[("/print ".len())..]);
@@ -193,6 +231,9 @@ impl Game<'_> {
                     };
                     self.connection.set_server_address(&address);
                     self.chatbox.println(format!("Successfully changed server address to {}", address.to_string()).as_str());
+                },
+                ["stopserver"] => {
+                    self.connection.send(&StopServer());
                 }
                 _ => self.chatbox.println("Failed to parse command.")
             }

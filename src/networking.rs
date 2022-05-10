@@ -97,7 +97,7 @@ pub mod server {
             }
         }
 
-        pub fn poll(&mut self) -> HashMap<ClientID, Vec<Vec<u8>>> {
+        pub fn poll_raw(&mut self) -> HashMap<ClientID, Vec<Vec<u8>>> {
             let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
             let mut messages: HashMap<ClientID, Vec<Vec<u8>>> = HashMap::new();
             loop {
@@ -175,7 +175,7 @@ pub mod server {
             }
             self.message_queue.append(&mut failed);
         }
-        pub fn send(&mut self, client: &ClientID, data: Vec<u8>) {
+        pub fn send_raw(&mut self, client: &ClientID, data: Vec<u8>) {
             self.message_queue.push((*client, data));
         }
         pub fn last_message_time(&self, client: &ClientID) -> Option<SystemTime> {
@@ -223,7 +223,7 @@ pub mod client {
             self.server_address = (*addr).into();
         }
 
-        pub fn poll(&mut self) -> Vec<Vec<u8>> {
+        pub fn poll_raw(&mut self) -> Vec<Vec<u8>> {
             let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
             let mut messages: Vec<Vec<u8>> = Vec::new();
             loop {
@@ -295,7 +295,7 @@ pub mod client {
             //     }
             // }
         }
-        pub fn send(&mut self, data: Vec<u8>) {
+        pub fn send_raw(&mut self, data: Vec<u8>) {
             self.message_queue.push(data);
         }
     }

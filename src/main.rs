@@ -3,7 +3,9 @@ extern crate glfw;
 pub mod graphics;
 pub mod chatbox;
 pub mod networking;
+pub mod networking_wrapping;
 pub mod game;
+pub mod server;
 
 use std::{io::Result, net::SocketAddr, time::Duration};
 use std::env;
@@ -16,12 +18,12 @@ fn echo_server(port: u16) -> Result<()> {
     let mut server = networking::server::ServerConnection::new(port)?;
     let mut stop = false;
     while !stop {
-        for (id, data) in server.poll() {
+        for (id, data) in server.poll_raw() {
             for packet in data {
                 if String::from_utf8_lossy(packet.as_slice()).eq("stop") {
                     stop = true;
                 }
-                server.send(&id, packet);
+                server.send_raw(&id, packet);
             }
         }
         server.flush();
@@ -42,7 +44,7 @@ fn console_client(address: SocketAddr) -> Result<()> {
         rx
     };
     loop {
-        for packet in client.poll() {
+        for packet in client.poll_raw() {
             println!("Received from server: {}", std::str::from_utf8(packet.as_slice()).unwrap());
         }
         client.flush();
@@ -51,7 +53,7 @@ fn console_client(address: SocketAddr) -> Result<()> {
             Err(TryRecvError::Empty) => continue,
             Err(TryRecvError::Disconnected) => break,
         };
-        client.send(Vec::from(message.as_bytes()));
+        client.send_raw(Vec::from(message.as_bytes()));
         std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
     Ok(())
@@ -61,15 +63,23 @@ fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
     match args[1].as_str() {
-        "server" => {
+        "echo_server" => {
             echo_server(1234)
+        },
+        "server" => {
+            server::Server::run(1234);
+            Ok(())
         },
         "gclient" => {
             game::Game::run(&server_address);
             Ok(())
         }
-        _ => { // client
+        "client" => { // client
             console_client(server_address)
+        },
+        _ => {
+            println!("Unknown mode");
+            Ok(())
         }
     }
 }
