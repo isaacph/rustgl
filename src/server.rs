@@ -4,16 +4,16 @@ use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
 use crate::networking::server::{ServerConnection, ClientID};
-use crate::networking_wrapping::{ExecuteServerCommands, ServerCommand, ServerCommandID};
+use crate::networking_wrapping::{ExecuteServerCommands, ServerCommand};
 
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StopServer();
 
 impl<'a> ServerCommand<'a> for StopServer {
-    fn id(&self) -> ServerCommandID {
-        ServerCommandID::StopServer
-    }
+    // fn id(&self) -> ServerCommandID {
+    //     ServerCommandID::StopServer
+    // }
     fn run(&self, _: &ClientID, server: &mut Server) {
         server.stop = true;
     }

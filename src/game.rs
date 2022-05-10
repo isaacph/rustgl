@@ -8,7 +8,7 @@ use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use std::net::SocketAddr;
 
-use crate::{graphics, chatbox, networking::{self, server::ClientID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ClientCommandID, ServerCommand, ServerCommandID, SendClientCommands, ExecuteClientCommands, SendServerCommands}};
+use crate::{graphics, chatbox, networking::{self, server::ClientID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}};
 
 
 
@@ -26,18 +26,18 @@ impl EchoMessage {
 }
 
 impl<'a> ClientCommand<'a> for EchoMessage {
-    fn id(&self) -> ClientCommandID {
-        ClientCommandID::EchoMessage
-    }
+    // fn id(&self) -> ClientCommandID {
+    //     ClientCommandID::EchoMessage
+    // }
     fn run(&self, client: &mut Game) {
         client.chatbox.println(self.message.as_str());
     }
 }
 
 impl<'a> ServerCommand<'a> for EchoMessage {
-    fn id(&self) -> ServerCommandID {
-        ServerCommandID::EchoMessage
-    }
+    // fn id(&self) -> ServerCommandID {
+    //     ServerCommandID::EchoMessage
+    // }
     fn run(&self, source: &ClientID, server: &mut Server) {
         server.connection.send(source, self);
     }

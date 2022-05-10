@@ -2,46 +2,107 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use crate::{game::Game, networking::{client::Connection, server::{ClientID, ServerConnection}}, server::Server};
 
-// kinda convulated right now, and implementing code is repetitive
+// kinda convulated right now, and the implementation is super repetitive
 // (TODO: try to generify the code into oblivion)
-// current strategy for new commands:
-//   add a client/server command id enum and then map the enum to
-//   the struct name in corresponding execute_*_command function
+// current strategy for new commands: just add it to the macro list below (ignore the macro definitions)
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub enum ClientCommandID {
-    EchoMessage
-}
-
-fn execute_client_command(client: &mut Game, w: ClientCommandWrapper) {
-    use ClientCommandID::*;
-    match w.0 {
-        EchoMessage => client.run::<crate::game::EchoMessage>(&w)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum ServerCommandID {
-    EchoMessage,
-    StopServer
-}
-
-fn execute_server_command(c: (&mut Server, &ClientID), w: ServerCommandWrapper) {
-    use ServerCommandID::*;
-    match w.0 {
-        EchoMessage => c.run::<crate::game::EchoMessage>(&w),
-        StopServer => c.run::<crate::server::StopServer>(&w),
+macro_rules! client_commands {
+    (@step2 $idx:expr, $client:ident, $w:ident, ) => {
+        panic!("Invalid client command id: {}", $w.0);
+    };
+    (@step2 $idx:expr, $client:ident, $w:ident, $head:tt, $($tail:tt,)*) => {
+        if $w.0 == $idx { // pattern matching won't let me use generated expressions like $idx D:
+            $client.run::<$head>(&$w);
+            return;
+        }
+        client_commands!(@step2 $idx + 1u16, $client, $w, $($tail,)*);
+    };
+    (@step $idx:expr, ) => {};
+    (@step $idx:expr, $head:path, $($tail:path,)*) => {
+        impl ClientCommandID for $head {
+            fn id(&self) -> u16 {
+                $idx
+            }
+        }
+        client_commands!(@step $idx + 1u16, $($tail,)*);
+    };
+    ( $( $x: path ),* ) => {
+        fn execute_client_command(client: &mut Game, w: ClientCommandWrapper) {
+            client_commands!(@step2 0u16, client, w, $($x,)*);
+        }
+        client_commands!(@step 0u16, $($x,)*);
     };
 }
+
+macro_rules! server_commands {
+    (@step2 $_idx:expr, $c:ident, $w:ident, ) => {
+        panic!("Invalid server command id: {}", $w.0)
+    };
+    (@step2 $idx:expr, $c:ident, $w:ident, $head:tt, $($tail:tt,)*) => {
+        if $w.0 == $idx {
+            $c.run::<$head>(&$w);
+            return;
+        }
+        server_commands!(@step2 $idx + 1u16, $c, $w, $($tail,)*);
+    };
+    (@step $idx:expr, ) => {};
+    (@step $idx:expr, $head:path, $($tail:path,)*) => {
+        impl ServerCommandID for $head {
+            fn id(&self) -> u16 {
+                $idx
+            }
+        }
+        server_commands!(@step $idx + 1u16, $($tail,)*);
+    };
+    ( $( $x: path ),* ) => {
+        fn execute_server_command(c: (&mut Server, &ClientID), w: ServerCommandWrapper) {
+            server_commands!(@step2 0u16, c, w, $($x,)*);
+        }
+        server_commands!(@step 0u16, $($x,)*);
+    };
+}
+
+
+client_commands!(crate::game::EchoMessage);
+server_commands!(crate::game::EchoMessage, crate::server::StopServer);
+
+// fn execute_client_command(client: &mut Game, w: ClientCommandWrapper) {
+//     match w.0 {
+//         0 => client.run::<crate::game::EchoMessage>(&w),
+//         _ => panic!("Invalid client command id: {}", w.0)
+//     }
+// }
+
+// impl ClientCommandIDT for crate::game::EchoMessage {
+//     fn id(&self) -> u16 {
+//         0
+//     }
+// }
+
+// #[derive(Serialize, Deserialize, Debug)]
+// pub enum ServerCommandID {
+//     EchoMessage,
+//     StopServer
+// }
+
+// fn execute_server_command(c: (&mut Server, &ClientID), w: ServerCommandWrapper) {
+//     match w.0 {
+//         0 => c.run::<crate::game::EchoMessage>(&w),
+//         1 => c.run::<crate::server::StopServer>(&w),
+//         _ => panic!("Invalid server command id: {}", w.0)
+//     };
+// }
 
 
 
 
 
 // implementation below:
+pub trait ClientCommandID {
+    fn id(&self) -> u16;
+}
 pub trait ClientCommand<'a>: Serialize + Deserialize<'a> {
     fn run(&self, client: &mut Game);
-    fn id(&self) -> ClientCommandID;
 }
 
 trait RunCommandShortenerClient {
@@ -55,7 +116,7 @@ impl RunCommandShortenerClient for &mut Game<'_> {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ClientCommandWrapper(pub ClientCommandID, pub Vec<u8>);
+pub struct ClientCommandWrapper(pub u16, pub Vec<u8>);
 
 pub trait ExecuteClientCommands {
     fn execute(&mut self, commands: Vec<Vec<u8>>);
@@ -71,12 +132,12 @@ impl ExecuteClientCommands for Game<'_> {
 }
 
 pub trait SendServerCommands {
-    fn send<'a, T>(&mut self, command: &T) where T: ServerCommand<'a>;
+    fn send<'a, T>(&mut self, command: &T) where T: ServerCommand<'a> + ServerCommandID;
 }
 
 impl SendServerCommands for Connection {
     fn send<'a, T>(&mut self, command: &T)
-    where T: ServerCommand<'a> {
+    where T: ServerCommand<'a> + ServerCommandID {
         // TODO: remove duplicated serializing
         let data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
         let wrapper = ServerCommandWrapper(command.id(), data);
@@ -96,21 +157,24 @@ impl RunCommandShortenerServer for (&mut Server, &ClientID) {
     }
 }
 
+pub trait ServerCommandID {
+    fn id(&self) -> u16;
+}
+
 pub trait ServerCommand<'a>: Serialize + Deserialize<'a> {
     fn run(&self, source: &ClientID, server: &mut Server);
-    fn id(&self) -> ServerCommandID;
 }
 
 pub trait SendClientCommands {
-    fn send<'a, T>(&mut self, client: &ClientID, command: &T) where T: ClientCommand<'a>;
+    fn send<'a, T>(&mut self, client: &ClientID, command: &T) where T: ClientCommand<'a> + ClientCommandID;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ServerCommandWrapper(pub ServerCommandID, pub Vec<u8>);
+pub struct ServerCommandWrapper(pub u16, pub Vec<u8>);
 
 impl SendClientCommands for ServerConnection {
     fn send<'a, T>(self: &mut ServerConnection, client: &ClientID, command: &T)
-    where T: ClientCommand<'a> {
+    where T: ClientCommand<'a> + ClientCommandID {
         // TODO: remove duplicated serializing
         let data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
         let wrapper = ClientCommandWrapper(command.id(), data);
