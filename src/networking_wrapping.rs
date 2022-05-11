@@ -124,8 +124,10 @@ pub trait ExecuteClientCommands {
 
 impl ExecuteClientCommands for Game<'_> {
     fn execute(&mut self, commands: Vec<Vec<u8>>) {
-        for data in commands {
-            let wrapper: ClientCommandWrapper = bincode::deserialize(data.as_slice()).unwrap();
+        for mut data in commands {
+            let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+            data.truncate(data.len() - 2);
+            let wrapper = ClientCommandWrapper(id, data);
             execute_client_command(self, wrapper);
         }
     }
@@ -139,10 +141,12 @@ impl SendServerCommands for Connection {
     fn send<'a, T>(&mut self, command: &T)
     where T: ServerCommand<'a> + ServerCommandID {
         // TODO: remove duplicated serializing
-        let data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
-        let wrapper = ServerCommandWrapper(command.id(), data);
-        let wrapped: Vec<u8> = bincode::serialize(&wrapper).unwrap(); // TODO: error handling
-        self.send_raw(wrapped);
+        let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
+        let mut id = Vec::from(command.id().to_be_bytes());
+        data.append(&mut id);
+        // let wrapper = ServerCommandWrapper(command.id(), data);
+        // let wrapped: Vec<u8> = bincode::serialize(&wrapper).unwrap(); // TODO: error handling
+        self.send_raw(data);
     }
 }
 
@@ -176,10 +180,12 @@ impl SendClientCommands for ServerConnection {
     fn send<'a, T>(self: &mut ServerConnection, client: &ClientID, command: &T)
     where T: ClientCommand<'a> + ClientCommandID {
         // TODO: remove duplicated serializing
-        let data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
-        let wrapper = ClientCommandWrapper(command.id(), data);
-        let wrapped: Vec<u8> = bincode::serialize(&wrapper).unwrap(); // TODO: error handling
-        self.send_raw(client, wrapped);
+        let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
+        let mut id = Vec::from(command.id().to_be_bytes());
+        data.append(&mut id);
+        // let wrapper = ServerCommandWrapper(command.id(), data);
+        // let wrapped: Vec<u8> = bincode::serialize(&wrapper).unwrap(); // TODO: error handling
+        self.send_raw(client, data);
     }
 }
 
@@ -190,8 +196,10 @@ pub trait ExecuteServerCommands {
 impl ExecuteServerCommands for Server {
     fn execute(&mut self, commands: HashMap<ClientID, Vec<Vec<u8>>>) {
         for (client_id, queue) in commands {
-            for data in queue {
-                let wrapper: ServerCommandWrapper = bincode::deserialize(data.as_slice()).unwrap(); // TODO: error handling
+            for mut data in queue {
+                let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+                data.truncate(data.len() - 2);
+                let wrapper = ServerCommandWrapper(id, data);
                 execute_server_command((self, &client_id), wrapper);
             }
         }
