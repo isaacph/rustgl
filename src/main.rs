@@ -23,7 +23,7 @@ fn echo_server(port: u16) -> Result<()> {
                 if String::from_utf8_lossy(packet.as_slice()).eq("stop") {
                     stop = true;
                 }
-                server.send_raw(&id, packet);
+                server.send_raw(vec![id], packet);
             }
         }
         server.flush();
@@ -60,6 +60,10 @@ fn console_client(address: SocketAddr) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+
+    let test = bincode::serialize(&()).unwrap();
+    println!("{}", test.len());
+
     let args: Vec<String> = env::args().collect();
     let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
     match args[1].as_str() {

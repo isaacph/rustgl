@@ -1,9 +1,9 @@
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Serialize, Deserialize};
 
-use crate::networking::server::{ServerConnection, ClientID};
+use crate::networking::server::{ServerConnection, ConnectionID};
 use crate::networking_wrapping::{ExecuteServerCommands, ServerCommand};
 
 
@@ -11,10 +11,7 @@ use crate::networking_wrapping::{ExecuteServerCommands, ServerCommand};
 pub struct StopServer();
 
 impl<'a> ServerCommand<'a> for StopServer {
-    // fn id(&self) -> ServerCommandID {
-    //     ServerCommandID::StopServer
-    // }
-    fn run(&self, (_, server): (&ClientID, &mut Server)) {
+    fn run(&self, (_, server): (&ConnectionID, &mut Server)) {
         server.stop = true;
     }
 }
@@ -35,6 +32,7 @@ impl Server {
             let messages = server.connection.poll_raw();
             server.execute(messages);
             server.connection.flush();
+            server.connection.prune_dead_connections(SystemTime::now());
             std::thread::sleep(Duration::new(0, 1000000 * 500)); // wait 500 ms
         }
     }

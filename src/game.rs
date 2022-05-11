@@ -8,7 +8,7 @@ use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use std::net::SocketAddr;
 
-use crate::{graphics, chatbox, networking::{self, server::ClientID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}};
+use crate::{graphics, chatbox, networking::{self, server::ConnectionID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}};
 
 
 
@@ -26,20 +26,46 @@ impl EchoMessage {
 }
 
 impl<'a> ClientCommand<'a> for EchoMessage {
-    // fn id(&self) -> ClientCommandID {
-    //     ClientCommandID::EchoMessage
-    // }
     fn run(&self, client: &mut Game) {
         client.chatbox.println(self.message.as_str());
     }
 }
 
 impl<'a> ServerCommand<'a> for EchoMessage {
-    // fn id(&self) -> ServerCommandID {
-    //     ServerCommandID::EchoMessage
-    // }
-    fn run(&self, (source, server): (&ClientID, &mut Server)) {
-        server.connection.send(source, self);
+    fn run(&self, (source, server): (&ConnectionID, &mut Server)) {
+        server.connection.send(vec![*source], self);
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChatMessage {
+    message: String
+}
+
+impl ChatMessage {
+    pub fn new(message: String) -> Self {
+        ChatMessage {
+            message
+        }
+    }
+}
+
+impl<'a> ClientCommand<'a> for ChatMessage {
+    fn run(&self, client: &mut Game) {
+        client.chatbox.println(self.message.as_str());
+    }
+}
+
+impl<'a> ServerCommand<'a> for ChatMessage {
+    fn run(&self, (id, server): (&ConnectionID, &mut Server)) {
+        // reformat this message to include the sender's name
+        // for now we just make the name their address
+        let name = match server.connection.get_address(id) {
+            None => return,
+            Some(addr) => addr.to_string()
+        };
+        let message = format!("<{}> {}", name, self.message);
+        server.connection.send(server.connection.all_connection_ids(), &ChatMessage::new(message));
     }
 }
 
@@ -122,9 +148,6 @@ impl Game<'_> {
             game.connection.flush(); // send messages
             let messages = game.connection.poll_raw();
             game.execute(messages);
-            // for message in messages {
-            //     game.chatbox.println(format!("Server: {}", String::from_utf8_lossy(&message)).as_str());
-            // }
 
             let sim = Similarity3::<f32>::new(
                 Vector3::new(100.0, 500.0, 0.0),
@@ -213,7 +236,7 @@ impl Game<'_> {
                     self.chatbox.println("Hello world!");
                 },
                 ["send", _, ..] => {
-                    self.connection.send(&EchoMessage::new(String::from(&command[("send ".len() + 1)..])));
+                    self.connection.send(&ChatMessage::new(String::from(&command[("send ".len() + 1)..])));
                 },
                 ["echo", _, ..] => {
                     self.connection.send(&EchoMessage::new(String::from(&command[("echo ".len() + 1)..])));

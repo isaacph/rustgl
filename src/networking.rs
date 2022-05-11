@@ -21,51 +21,52 @@ pub mod server {
     use std::fmt::Display;
     use std::io::Result;
     use std::mem::MaybeUninit;
-    use std::time::SystemTime;
+    use std::time::{SystemTime, Duration};
     use socket2::Socket;
     use std::net::SocketAddr;
 
     use super::make_socket;
 
-    // the time after the last message after which to declare the client dead
-    // const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
+    // the time after the last message after which to declare the connection dead
+    const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
 
-    struct ClientInfo {
+    struct ConnectionInfo {
         address: SocketAddr,
         last_message: SystemTime
     }
 
     #[derive(PartialEq, Eq, Hash, Clone, Copy)]
-    pub struct ClientID(i32);
+    pub struct ConnectionID(i32);
 
-    impl Display for ClientID {
+    impl Display for ConnectionID {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{}", self.0)
         }
     }
 
-    struct ClientIDGenerator {
+    struct ConnectionIDGenerator {
         counter: i32
     }
 
-    impl ClientIDGenerator {
+    impl ConnectionIDGenerator {
         fn new() -> Self {
             Self {
                 counter: 0
             }
         }
-        fn generate(&mut self) -> ClientID {
+        fn generate(&mut self) -> ConnectionID {
             self.counter += 1;
-            ClientID(self.counter - 1)
+            ConnectionID(self.counter - 1)
         }
     }
 
     pub struct ServerConnection {
         socket: Socket,
-        client_data: HashMap<ClientID, ClientInfo>,
-        addr_id_map: HashMap<SocketAddr, ClientID>,
-        generator: ClientIDGenerator,
-        message_queue: Vec<(ClientID, Vec<u8>)>,
+        connection_data: HashMap<ConnectionID, ConnectionInfo>,
+        addr_id_map: HashMap<SocketAddr, ConnectionID>,
+        all_connection_ids: Vec<ConnectionID>,
+        generator: ConnectionIDGenerator,
+        message_queue: Vec<(Vec<ConnectionID>, Vec<u8>)>,
     }
 
     impl ServerConnection {
@@ -73,33 +74,58 @@ pub mod server {
             let socket = make_socket(Some(port))?;
             Ok(ServerConnection {
                 socket,
-                client_data: HashMap::new(),
+                connection_data: HashMap::new(),
                 addr_id_map: HashMap::new(),
-                generator: ClientIDGenerator::new(),
+                all_connection_ids: Vec::new(),
+                generator: ConnectionIDGenerator::new(),
                 message_queue: Vec::new()
             })
         }
 
-        fn new_client(&mut self, addr: &SocketAddr) -> ClientID {
+        fn new_connection(&mut self, addr: &SocketAddr) -> ConnectionID {
             let id = self.generator.generate();
             self.addr_id_map.insert(*addr, id.clone());
-            self.client_data.insert(id.clone(), ClientInfo {
+            self.connection_data.insert(id.clone(), ConnectionInfo {
                 address: *addr,
                 last_message: SystemTime::now()
             });
+            self.all_connection_ids.push(id);
             id
         }
 
-        pub fn get_address(&self, id: &ClientID) -> Option<SocketAddr> {
-            match self.client_data.get(id) {
+        pub fn kick(&mut self, id: &ConnectionID) -> bool {
+            match self.connection_data.remove(id) {
+                Some(data) => {
+                    self.addr_id_map.remove(&data.address);
+                    let mut idx = usize::MAX;
+                    for i in 0..self.all_connection_ids.len() {
+                        if self.all_connection_ids[i] == *id {
+                            idx = i;
+                            break;
+                        }
+                    }
+                    if idx != usize::MAX {
+                        self.all_connection_ids.remove(idx);
+                    }
+                    true
+                },
+                None => false
+            }
+        }
+
+        pub fn get_address(&self, id: &ConnectionID) -> Option<SocketAddr> {
+            match self.connection_data.get(id) {
                 Some(data) => Some(data.address),
                 None => None
             }
         }
+        pub fn all_connection_ids(&self) -> Vec<ConnectionID> {
+            self.all_connection_ids.clone()
+        }
 
-        pub fn poll_raw(&mut self) -> HashMap<ClientID, Vec<Vec<u8>>> {
+        pub fn poll_raw(&mut self) -> HashMap<ConnectionID, Vec<Vec<u8>>> {
             let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
-            let mut messages: HashMap<ClientID, Vec<Vec<u8>>> = HashMap::new();
+            let mut messages: HashMap<ConnectionID, Vec<Vec<u8>>> = HashMap::new();
             loop {
                 match self.socket.recv_from(buffer.as_mut_slice()) {
                     Ok((size, addr)) => {
@@ -117,11 +143,11 @@ pub mod server {
                         println!("Received {} bytes from {:?}: {}", size, addr, String::from_utf8_lossy(&result));
                         let id = match self.addr_id_map.get(&addr) {
                             Some(id) => *id,
-                            None => self.new_client(&addr)
+                            None => self.new_connection(&addr)
                         };
-                        match self.client_data.get_mut(&id) {
+                        match self.connection_data.get_mut(&id) {
                             Some(data) => data.last_message = SystemTime::now(),
-                            None => panic!("Error: client found in address map but not in data map: {}", id)
+                            None => panic!("Error: connection found in address map but not in data map: {}", id)
                         }
                         match messages.get_mut(&id) {
                             Some(list) => list.push(result),
@@ -144,42 +170,81 @@ pub mod server {
             messages
         }
         pub fn flush(&mut self) {
-            let mut failed: Vec<(ClientID, Vec<u8>)> = Vec::new();
-            for (id, data) in self.message_queue.drain(0..self.message_queue.len()) {
-                let client_data = match self.client_data.get(&id) {
+            let mut retry: Vec<(Vec<ConnectionID>, Vec<u8>)> = Vec::new();
+            let send_to = |id: &ConnectionID, data: &Vec<u8>| -> bool { // returns whether to retry
+                let con_data = match self.connection_data.get(&id) {
                     Some(data) => data,
                     None => {
                         println!("Error sending data to unknown client (id={})", id);
-                        continue;
+                        return false;
                     }
                 };
-                let addr = client_data.address.into();
+                let addr = con_data.address.into();
                 let written = self.socket.send_to(data.as_slice(), &addr);
                 match written {
                     Ok(written) => {
                         if written != data.len() {
-                            println!("Error writing {} bytes to {}: {} < {}", data.len(), client_data.address, written, data.len());
+                            println!("Error writing {} bytes to {}: {} < {}", data.len(), con_data.address, written, data.len());
                         }
+                        false
                     },
                     Err(e) => {
                         match e.kind() {
-                            std::io::ErrorKind::WouldBlock => (),
+                            std::io::ErrorKind::WouldBlock => true,
                             _ => {
-                                println!("Error writing {} bytes to {}: {}", data.len(), client_data.address, e);
-                                failed.push((id, data));
-                                continue;
+                                println!("Error writing {} bytes to {}: {}", data.len(), con_data.address, e);
+                                return true;
                             }
                         }
                     }
                 }
+            };
+            for (ids, data) in self.message_queue.drain(0..self.message_queue.len()) {
+                let mut retry_list = vec![];
+                for id in ids {
+                    let retry = send_to(&id, &data);
+                    if retry {
+                        retry_list.push(id);
+                    }
+                }
+                if retry_list.len() > 0 {
+                    retry.push((retry_list, data)); // retry all clients it failed to send to
+                }
             }
-            self.message_queue.append(&mut failed);
+            self.message_queue.append(&mut retry);
         }
-        pub fn send_raw(&mut self, client: &ClientID, data: Vec<u8>) {
-            self.message_queue.push((*client, data));
+        pub fn send_raw(&mut self, receivers: Vec<ConnectionID>, data: Vec<u8>) {
+            self.message_queue.push((receivers, data));
         }
-        pub fn last_message_time(&self, client: &ClientID) -> Option<SystemTime> {
-            match self.client_data.get(&client) {
+        pub fn prune_dead_connections(&mut self, check_against: SystemTime) -> Vec<ConnectionID> {
+            let mut kick = vec![];
+            for con_id in &self.all_connection_ids {
+                let con_id = con_id.clone();
+                match self.last_message_time(&con_id) {
+                    Some(time) => {
+                        match check_against.duration_since(time) {
+                            Ok(difference) => {
+                                if difference >= LAST_MESSAGE_DEAD_TIME {
+                                    kick.push(con_id);
+                                }
+                            },
+                            _ => ()
+                        }
+                    },
+                    None => ()
+                }
+            };
+            let mut kicked = vec![];
+            for con_id in kick {
+                match self.kick(&con_id) {
+                    true => kicked.push(con_id.clone()),
+                    _ => ()
+                }
+            }
+            kicked
+        }
+        pub fn last_message_time(&self, connection: &ConnectionID) -> Option<SystemTime> {
+            match self.connection_data.get(&connection) {
                 Some(data) => Some(data.last_message),
                 None => None
             }

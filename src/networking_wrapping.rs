@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use crate::{game::Game, networking::{client::Connection, server::{ClientID, ServerConnection}}, server::Server};
+use crate::{game::Game, networking::{client::Connection, server::{ConnectionID, ServerConnection}}, server::Server};
 
 // command handling macro
 macro_rules! commands {
@@ -48,36 +48,36 @@ commands!(
     ClientCommandID,
     &mut Game,
     // list client commands here:
-    [crate::game::EchoMessage]
+    [crate::game::EchoMessage, crate::game::ChatMessage]
 );
 
 pub trait ServerCommand<'a>: Serialize + Deserialize<'a> {
-    fn run(&self, context: (&ClientID, &mut Server));
+    fn run(&self, context: (&ConnectionID, &mut Server));
 }
 
 commands!(
     execute_server_command,
     ServerCommand,
     ServerCommandID,
-    (&ClientID, &mut Server),
+    (&ConnectionID, &mut Server),
     // list server commands here:
-    [crate::game::EchoMessage, crate::server::StopServer]
+    [crate::game::EchoMessage, crate::server::StopServer, crate::game::ChatMessage]
 );
 
 
 // ----------------------- send/execute function implementations below -----------------------
 
 pub trait SendClientCommands {
-    fn send<'a, T>(&mut self, client: &ClientID, command: &T) where T: ClientCommand<'a> + ClientCommandID;
+    fn send<'a, T>(&mut self, client: Vec<ConnectionID>, command: &T) where T: ClientCommand<'a> + ClientCommandID;
 }
 
 impl SendClientCommands for ServerConnection {
-    fn send<'a, T>(self: &mut ServerConnection, client: &ClientID, command: &T)
+    fn send<'a, T>(self: &mut ServerConnection, clients: Vec<ConnectionID>, command: &T)
     where T: ClientCommand<'a> + ClientCommandID {
         let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
         let mut id = Vec::from(command.id().to_be_bytes());
         data.append(&mut id);
-        self.send_raw(client, data);
+        self.send_raw(clients, data);
     }
 }
 
@@ -110,11 +110,11 @@ impl SendServerCommands for Connection {
 }
 
 pub trait ExecuteServerCommands {
-    fn execute(&mut self, commands: HashMap<ClientID, Vec<Vec<u8>>>);
+    fn execute(&mut self, commands: HashMap<ConnectionID, Vec<Vec<u8>>>);
 }
 
 impl ExecuteServerCommands for Server {
-    fn execute(&mut self, commands: HashMap<ClientID, Vec<Vec<u8>>>) {
+    fn execute(&mut self, commands: HashMap<ConnectionID, Vec<Vec<u8>>>) {
         for (client_id, queue) in commands {
             for mut data in queue {
                 let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
