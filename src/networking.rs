@@ -3,6 +3,8 @@ use std::net::SocketAddr;
 use socket2::{Socket, Domain, Type, Protocol};
 use std::io::Result;
 
+pub const MAX_PACKET_SIZE: usize = 512;
+
 fn make_socket(port: Option<u16>) -> Result<Socket> {
     let socket: Socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_nonblocking(true)?;
@@ -25,7 +27,7 @@ pub mod server {
     use socket2::Socket;
     use std::net::SocketAddr;
 
-    use super::make_socket;
+    use super::{make_socket, MAX_PACKET_SIZE};
 
     // the time after the last message after which to declare the connection dead
     const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
@@ -124,7 +126,7 @@ pub mod server {
         }
 
         pub fn poll_raw(&mut self) -> HashMap<ConnectionID, Vec<Vec<u8>>> {
-            let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
+            let mut buffer = [MaybeUninit::<u8>::uninit(); MAX_PACKET_SIZE];
             let mut messages: HashMap<ConnectionID, Vec<Vec<u8>>> = HashMap::new();
             loop {
                 match self.socket.recv_from(buffer.as_mut_slice()) {
@@ -137,7 +139,7 @@ pub mod server {
                             }
                         };
                         let result: Vec<u8> = unsafe {
-                            let temp: &[u8; 16384] = std::mem::transmute(&buffer);
+                            let temp: &[u8; MAX_PACKET_SIZE] = std::mem::transmute(&buffer);
                             &temp[0..size]
                         }.to_vec();
                         println!("Received {} bytes from {:?}: {}", size, addr, String::from_utf8_lossy(&result));
@@ -259,7 +261,7 @@ pub mod client {
     use std::net::SocketAddr;
     use std::io::ErrorKind;
 
-    use super::make_socket;
+    use super::{make_socket, MAX_PACKET_SIZE};
 
     pub struct Connection {
         socket: Socket,
@@ -289,7 +291,7 @@ pub mod client {
         }
 
         pub fn poll_raw(&mut self) -> Vec<Vec<u8>> {
-            let mut buffer = [MaybeUninit::<u8>::uninit(); 16384];
+            let mut buffer = [MaybeUninit::<u8>::uninit(); MAX_PACKET_SIZE];
             let mut messages: Vec<Vec<u8>> = Vec::new();
             loop {
                 match self.socket.recv_from(buffer.as_mut_slice()) {
@@ -306,7 +308,7 @@ pub mod client {
                             continue;
                         }
                         let result: Vec<u8> = unsafe {
-                            let temp: &[u8; 16384] = std::mem::transmute(&buffer);
+                            let temp: &[u8; MAX_PACKET_SIZE] = std::mem::transmute(&buffer);
                             &temp[0..size]
                         }.to_vec();
                         println!("Received {} bytes from {:?}: {}", size, addr, String::from_utf8_lossy(&result));
@@ -363,6 +365,9 @@ pub mod client {
             // }
         }
         pub fn send_raw(&mut self, data: Vec<u8>) {
+            if data.len() > MAX_PACKET_SIZE {
+                panic!("Client attempted to send packet larger than packet size: {} > {}", data.len(), MAX_PACKET_SIZE);
+            }
             self.message_queue.push(data);
         }
     }

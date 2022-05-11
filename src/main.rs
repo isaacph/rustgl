@@ -60,10 +60,6 @@ fn console_client(address: SocketAddr) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-
-    let test = bincode::serialize(&()).unwrap();
-    println!("{}", test.len());
-
     let args: Vec<String> = env::args().collect();
     let server_address: SocketAddr = "127.0.0.1:1234".parse().unwrap();
     match args[1].as_str() {
