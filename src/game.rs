@@ -38,7 +38,7 @@ impl<'a> ServerCommand<'a> for EchoMessage {
     // fn id(&self) -> ServerCommandID {
     //     ServerCommandID::EchoMessage
     // }
-    fn run(&self, source: &ClientID, server: &mut Server) {
+    fn run(&self, (source, server): (&ClientID, &mut Server)) {
         server.connection.send(source, self);
     }
 }
@@ -185,7 +185,7 @@ impl Game<'_> {
                     (State::DEFAULT, glfw::WindowEvent::Key(Key::Slash, _, Action::Press, _)) => {
                         game.state = State::TYPING;
                         game.chatbox.set_typing_flicker(true);
-                        game.chatbox.add_typing('/');
+                        // game.chatbox.add_typing('/'); // this gets added automatically lol
                     }
                     _ => {}
                 }
@@ -212,11 +212,11 @@ impl Game<'_> {
                 ["hello", "world"] => {
                     self.chatbox.println("Hello world!");
                 },
-                ["send", ..] => {
-                    self.connection.send(&EchoMessage::new(String::from(&command[1..])));
+                ["send", _, ..] => {
+                    self.connection.send(&EchoMessage::new(String::from(&command[("send ".len() + 1)..])));
                 },
-                ["echo", ..] => {
-                    self.connection.send(&EchoMessage::new(String::from(&command[1..])));
+                ["echo", _, ..] => {
+                    self.connection.send(&EchoMessage::new(String::from(&command[("echo ".len() + 1)..])));
                 },
                 ["print", _, ..] => {
                     self.chatbox.println(&command[("/print ".len())..]);

@@ -111,10 +111,10 @@ pub mod server {
                             }
                         };
                         let result: Vec<u8> = unsafe {
-                            let temp: &[u8; 1024] = std::mem::transmute(&buffer);
+                            let temp: &[u8; 16384] = std::mem::transmute(&buffer);
                             &temp[0..size]
                         }.to_vec();
-                        println!("Received {} bytes from {:?}: {}", size, addr, std::str::from_utf8(&result).unwrap());
+                        println!("Received {} bytes from {:?}: {}", size, addr, String::from_utf8_lossy(&result));
                         let id = match self.addr_id_map.get(&addr) {
                             Some(id) => *id,
                             None => self.new_client(&addr)
@@ -241,10 +241,10 @@ pub mod client {
                             continue;
                         }
                         let result: Vec<u8> = unsafe {
-                            let temp: &[u8; 1024] = std::mem::transmute(&buffer);
+                            let temp: &[u8; 16384] = std::mem::transmute(&buffer);
                             &temp[0..size]
                         }.to_vec();
-                        println!("Received {} bytes from {:?}: {}", size, addr, std::str::from_utf8(&result).unwrap());
+                        println!("Received {} bytes from {:?}: {}", size, addr, String::from_utf8_lossy(&result));
                         messages.push(result);
                     }
                     Err(v) => {

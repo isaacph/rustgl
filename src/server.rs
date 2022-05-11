@@ -14,7 +14,7 @@ impl<'a> ServerCommand<'a> for StopServer {
     // fn id(&self) -> ServerCommandID {
     //     ServerCommandID::StopServer
     // }
-    fn run(&self, _: &ClientID, server: &mut Server) {
+    fn run(&self, (_, server): (&ClientID, &mut Server)) {
         server.stop = true;
     }
 }
