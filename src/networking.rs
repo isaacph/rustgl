@@ -338,7 +338,9 @@ pub mod client {
                     },
                     Err(e) => {
                         match e.kind() {
-                            ErrorKind::WouldBlock => (),
+                            ErrorKind::WouldBlock => {
+                                failed.push(data);
+                            },
                             _ => {
                                 println!("Error writing {} bytes to server: {}", data.len(), e);
                                 failed.push(data);
