@@ -8,8 +8,7 @@ use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use std::net::SocketAddr;
 
-use crate::{graphics, chatbox, networking::{self, server::ConnectionID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}};
-
+use crate::{graphics, chatbox, networking::{self, server::ConnectionID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}, world::{World, character::{Hero, CharacterIDGenerator, SerializedCharacter, ContainableInWorld, Character}}};
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -78,9 +77,9 @@ pub enum State {
 pub struct Game<'a> {
     pub window_size: Vector2<i32>,
     pub ortho: Orthographic3<f32>,
-    chatbox: chatbox::Chatbox<'a>,
+    pub chatbox: chatbox::Chatbox<'a>,
     pub state: State,
-    connection: networking::client::Connection,
+    pub connection: networking::client::Connection,
 }
 
 impl Game<'_> {
@@ -129,6 +128,13 @@ impl Game<'_> {
 
         let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
         let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
+
+        let mut idgen = CharacterIDGenerator::new();
+        idgen.generate();
+        let mut c: Box<dyn Character> = Box::new(Hero::new(&mut idgen));
+        let s = SerializedCharacter::serialize(c.as_ref());
+        let mut d = SerializedCharacter::deserialize(&s);
+        let id = d.id();
 
         unsafe {
             glClearColor(0.0, 0.0, 0.0, 1.0);

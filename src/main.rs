@@ -6,6 +6,7 @@ pub mod networking;
 pub mod networking_wrapping;
 pub mod game;
 pub mod server;
+pub mod world;
 
 use std::{io::Result, net::SocketAddr, time::Duration};
 use std::env;
