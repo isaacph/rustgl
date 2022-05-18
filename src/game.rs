@@ -8,7 +8,7 @@ use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use std::net::SocketAddr;
 
-use crate::{graphics, chatbox, networking::{self, server::ConnectionID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}, world::{World, character::{Hero, CharacterIDGenerator, SerializedCharacter, ContainableInWorld, Character}}};
+use crate::{graphics, chatbox, networking::{self, server::ConnectionID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}, world::{World, character::{CharacterIDGenerator, Character, CharacterID}, component::ComponentID}};
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -25,13 +25,13 @@ impl EchoMessage {
 }
 
 impl<'a> ClientCommand<'a> for EchoMessage {
-    fn run(&self, client: &mut Game) {
+    fn run(&mut self, client: &mut Game) {
         client.chatbox.println(self.message.as_str());
     }
 }
 
 impl<'a> ServerCommand<'a> for EchoMessage {
-    fn run(&self, (source, server): (&ConnectionID, &mut Server)) {
+    fn run(&mut self, (source, server): (&ConnectionID, &mut Server)) {
         server.connection.send(vec![*source], self);
     }
 }
@@ -50,13 +50,13 @@ impl ChatMessage {
 }
 
 impl<'a> ClientCommand<'a> for ChatMessage {
-    fn run(&self, client: &mut Game) {
+    fn run(&mut self, client: &mut Game) {
         client.chatbox.println(self.message.as_str());
-    }
+    } 
 }
 
 impl<'a> ServerCommand<'a> for ChatMessage {
-    fn run(&self, (id, server): (&ConnectionID, &mut Server)) {
+    fn run(&mut self, (id, server): (&ConnectionID, &mut Server)) {
         // reformat this message to include the sender's name
         // for now we just make the name their address
         let name = match server.connection.get_address(id) {
@@ -129,12 +129,12 @@ impl Game<'_> {
         let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
         let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
 
-        let mut idgen = CharacterIDGenerator::new();
-        idgen.generate();
-        let mut c: Box<dyn Character> = Box::new(Hero::new(&mut idgen));
-        let s = SerializedCharacter::serialize(c.as_ref());
-        let mut d = SerializedCharacter::deserialize(&s);
-        let id = d.id();
+        // let mut idgen = CharacterIDGenerator::new();
+        // idgen.generate();
+        // let mut c: Box<dyn Character> = Box::new(Hero::new(&mut idgen));
+        // let s = SerializedCharacter::serialize(c.as_ref());
+        // let mut d = SerializedCharacter::deserialize(&s);
+        // let id = d.id();
 
         unsafe {
             glClearColor(0.0, 0.0, 0.0, 1.0);

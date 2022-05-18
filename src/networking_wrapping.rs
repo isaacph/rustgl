@@ -9,8 +9,8 @@ macro_rules! commands {
     };
     ($command_trait_name:ident, @step2 $idx:expr, $context:ident, $cmdid:ident, $cmd:ident, $head:path, $($tail:path,)*) => {
         if $cmdid == $idx {
-            let deserialized: $head = bincode::deserialize(&$cmd).unwrap(); // TODO: error handling
-            $command_trait_name::run(&deserialized, $context);
+            let mut deserialized: $head = bincode::deserialize(&$cmd).unwrap(); // TODO: error handling
+            $command_trait_name::run(&mut deserialized, $context);
             return;
         }
         commands!($command_trait_name, @step2 $idx + 1u16, $context, $cmdid, $cmd, $($tail,)*);
@@ -39,7 +39,7 @@ macro_rules! commands {
 
 
 pub trait ClientCommand<'a>: Serialize + Deserialize<'a> {
-    fn run(&self, client: &mut Game);
+    fn run(&mut self, client: &mut Game);
 }
 
 commands!(
@@ -52,7 +52,7 @@ commands!(
 );
 
 pub trait ServerCommand<'a>: Serialize + Deserialize<'a> {
-    fn run(&self, context: (&ConnectionID, &mut Server));
+    fn run(&mut self, context: (&ConnectionID, &mut Server));
 }
 
 commands!(

@@ -11,7 +11,7 @@ use crate::networking_wrapping::{ExecuteServerCommands, ServerCommand};
 pub struct StopServer();
 
 impl<'a> ServerCommand<'a> for StopServer {
-    fn run(&self, (_, server): (&ConnectionID, &mut Server)) {
+    fn run(&mut self, (_, server): (&ConnectionID, &mut Server)) {
         server.stop = true;
     }
 }
