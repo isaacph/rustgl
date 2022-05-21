@@ -1,16 +1,16 @@
 use std::{collections::HashMap, fmt::Display};
 
-use nalgebra::Vector3;
+use nalgebra::Vector2;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use super::{character::CharacterID};
-
+use super::character::{CharacterID, CharacterType};
+use strum_macros::EnumIter;
 
 pub trait ComponentIdentified {
     fn component_id() -> ComponentID;
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter)]
 pub enum ComponentID {
     Base,
     Health
@@ -18,13 +18,14 @@ pub enum ComponentID {
 
 impl Display for ComponentID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.to_string().as_str())
+        write!(f, "{:?}", self)
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CharacterBase {
-    pub position: Vector3<f32>
+    pub ctype: CharacterType,
+    pub position: Vector2<f32>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -74,3 +75,5 @@ impl<T> ComponentStorageContainer<T> for ComponentStorage<T> where T: Sized + Se
         &mut self.components
     }
 }
+
+

@@ -177,15 +177,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 
 [[package]]
-name = "erased-serde"
-version = "0.3.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad132dd8d0d0b546348d7d86cb3191aad14b34e5f979781fc005c80d4ac67ffd"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "exr"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -290,13 +281,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eabb4a44450da02c90444cf74558da904edde8fb4e9035a9a6a4e15445af0bd7"
 
 [[package]]
+name = "heck"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
+
+[[package]]
 name = "hello_cargo2"
 version = "0.1.0"
 dependencies = [
  "bincode",
  "bytemuck",
  "encode_unicode",
- "erased-serde",
  "freetype-sys",
  "glfw",
  "image",
@@ -305,6 +301,8 @@ dependencies = [
  "ogl33",
  "serde",
  "socket2",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]
@@ -654,6 +652,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustversion"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2cc38e8fa666e2de3c4aba7edeb5ffc5246c1c2ed0e3d17e560aeeba736b23f"
+
+[[package]]
 name = "safe_arch"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -730,6 +734,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c530c2b0d0bf8b69304b39fe2001993e267461948b890cd037d8ad4293fa1a0d"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "strum"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96acfc1b70604b8b2f1ffa4c57e59176c7dbb05d556c71ecd2f5498a1dee7f8"
+
+[[package]]
+name = "strum_macros"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6878079b17446e4d3eba6192bb0a2950d5b14f0ed8424b852310e5a94345d0ef"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn",
 ]
 
 [[package]]

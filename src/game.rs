@@ -8,7 +8,30 @@ use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use std::net::SocketAddr;
 
-use crate::{graphics, chatbox, networking::{self, server::ConnectionID}, server::{Server, StopServer}, networking_wrapping::{ClientCommand, ServerCommand, SendClientCommands, ExecuteClientCommands, SendServerCommands}, world::{World, character::{CharacterIDGenerator, Character, CharacterID}, component::ComponentID}};
+use crate::{
+    graphics,
+    chatbox,
+    networking::{
+        self,
+        server::ConnectionID},
+    server::{
+        Server,
+        StopServer},
+    networking_wrapping::{
+        ClientCommand,
+        ServerCommand,
+        SendClientCommands,
+        ExecuteClientCommands,
+        SendServerCommands},
+    world::{
+        World,
+        GenerateCharacter,
+        character::{
+            CharacterID,
+            CharacterIDGenerator
+        }
+    },
+};
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -80,6 +103,7 @@ pub struct Game<'a> {
     pub chatbox: chatbox::Chatbox<'a>,
     pub state: State,
     pub connection: networking::client::Connection,
+    pub world: World
 }
 
 impl Game<'_> {
@@ -117,7 +141,8 @@ impl Game<'_> {
             ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
             chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
             state: State::DEFAULT,
-            connection: networking::client::Connection::new(default_server).unwrap()
+            connection: networking::client::Connection::new(default_server).unwrap(),
+            world: World::new()
         };
         game.window_size(width, height);
         let render = graphics::textured::Renderer::new_square();
@@ -129,12 +154,10 @@ impl Game<'_> {
         let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
         let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
 
-        // let mut idgen = CharacterIDGenerator::new();
-        // idgen.generate();
-        // let mut c: Box<dyn Character> = Box::new(Hero::new(&mut idgen));
-        // let s = SerializedCharacter::serialize(c.as_ref());
-        // let mut d = SerializedCharacter::deserialize(&s);
-        // let id = d.id();
+        let mut selected_char: Option<CharacterID> = None;
+
+//        let mut temp_id_gen = CharacterIDGenerator::new();
+//        GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
 
         unsafe {
             glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -151,10 +174,30 @@ impl Game<'_> {
                 glClear(GL_COLOR_BUFFER_BIT);
             }
 
+            // update connection
             game.connection.flush(); // send messages
             let messages = game.connection.poll_raw();
             game.execute(messages);
 
+            // update logic
+            let key_dir = {
+                let w = match window.get_key(Key::W) { Action::Press => 1.0, _ => 0.0 };
+                let s = match window.get_key(Key::S) { Action::Press => 1.0, _ => 0.0 };
+                let a = match window.get_key(Key::A) { Action::Press => 1.0, _ => 0.0 };
+                let d = match window.get_key(Key::D) { Action::Press => 1.0, _ => 0.0 };
+                let mut v = Vector2::<f32>::new(d - a, s - w);
+                if v.magnitude_squared() > 0.0 {
+                    v.normalize_mut();
+                }
+                v
+            };
+            if let Some(char_id) = selected_char {
+                if let Some(base) = game.world.base.components.get_mut(&char_id) {
+                    base.position += key_dir * delta_time as f32 * 100.0;
+                }
+            }
+
+            // random text
             let sim = Similarity3::<f32>::new(
                 Vector3::new(100.0, 500.0, 0.0),
                 Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
@@ -165,6 +208,7 @@ impl Game<'_> {
             let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
             text.render(&matrix, msg.as_str(), &color);
 
+            // font spritesheet
             let sim = Similarity3::<f32>::new(
                 Vector3::new(400.0, 400.0, 0.0),
                 Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
@@ -176,6 +220,26 @@ impl Game<'_> {
                 &font_texture,
                 graphics::VertexRange::Full
             );
+
+            // characters
+            for cid in &game.world.characters {
+                if let Some(base) = game.world.base.components.get(cid) {
+                    let sim = Similarity3::<f32>::new(
+                        Vector3::new(base.position.x, base.position.y, 0.0),
+                        Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+                        100.0
+                    );
+                    let color = match Some(*cid) == selected_char {
+                        true => Vector4::new(1.0, 0.0, 0.0, 1.0),
+                        false => Vector4::new(1.0, 1.0, 1.0, 1.0)
+                    };
+                    simple_render.render(
+                        &(game.ortho.as_matrix() * sim.to_homogeneous()),
+                        &color,
+                        graphics::VertexRange::Full
+                    );
+                }
+            }
 
             game.chatbox.render(game.ortho.as_matrix(), delta_time);
 
@@ -215,7 +279,37 @@ impl Game<'_> {
                         game.state = State::TYPING;
                         game.chatbox.set_typing_flicker(true);
                         // game.chatbox.add_typing('/'); // this gets added automatically lol
-                    }
+                    },
+                    (State::DEFAULT, glfw::WindowEvent::Key(Key::G, _, Action::Press, _)) => {
+                        game.world.characters.iter().map(
+                            |id| game.world.make_cmd_update_character(*id)
+                        ).for_each(|cmd| match cmd {
+                            Some(cmd) => game.connection.send(&cmd),
+                            _ => ()
+                        });
+                    },
+                    (State::DEFAULT, glfw::WindowEvent::Key(Key::Tab, _, Action::Press, _)) => {
+                        let ids: Vec<&CharacterID> = game.world.characters.iter().collect();
+                        selected_char = match ids.len() {
+                            0 => None,
+                            _ => {
+                                let index = match selected_char {
+                                    None => 0,
+                                    Some(id) => {
+                                        let mut index = 0;
+                                        for i in 0..ids.len() {
+                                            if *ids[i] == id {
+                                                index = (i + 1) % ids.len();
+                                                break;
+                                            }
+                                        }
+                                        index
+                                    }
+                                };
+                                Some(*ids[index])
+                            }
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -263,7 +357,10 @@ impl Game<'_> {
                 },
                 ["stopserver"] => {
                     self.connection.send(&StopServer());
-                }
+                },
+                ["genchar"] => {
+                    self.connection.send(&GenerateCharacter::new());
+                },
                 _ => self.chatbox.println("Failed to parse command.")
             }
         }

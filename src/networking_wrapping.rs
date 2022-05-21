@@ -48,7 +48,7 @@ commands!(
     ClientCommandID,
     &mut Game,
     // list client commands here:
-    [crate::game::EchoMessage, crate::game::ChatMessage]
+    [crate::game::EchoMessage, crate::game::ChatMessage, crate::world::UpdateCharacter]
 );
 
 pub trait ServerCommand<'a>: Serialize + Deserialize<'a> {
@@ -61,7 +61,7 @@ commands!(
     ServerCommandID,
     (&ConnectionID, &mut Server),
     // list server commands here:
-    [crate::game::EchoMessage, crate::server::StopServer, crate::game::ChatMessage]
+    [crate::game::EchoMessage, crate::server::StopServer, crate::game::ChatMessage, crate::world::UpdateCharacter, crate::world::GenerateCharacter]
 );
 
 
