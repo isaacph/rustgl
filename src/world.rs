@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Serialize, de::DeserializeOwned, Deserialize};
 
-use crate::{networking_wrapping::{ServerCommand, ClientCommand, SendClientCommands}, game::Game, networking::server::ConnectionID, server::Server};
+use crate::{networking_wrapping::{ServerCommand, ClientCommand, SerializedClientCommand}, game::Game, networking::server::ConnectionID, server::Server};
 
 use self::{
     player::{
@@ -51,8 +51,9 @@ impl<'a> ClientCommand<'a> for UpdateCharacter {
 
 impl<'a> ServerCommand<'a> for UpdateCharacter {
     fn run(&mut self, (_, server): (&ConnectionID, &mut Server)) {
+        let ser = SerializedClientCommand::from(self);
         self.update_character(&mut server.world);
-        server.connection.send(server.connection.all_connection_ids(), self);
+        server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
     }
 }
 
@@ -81,7 +82,8 @@ impl<'a> ServerCommand<'a> for GenerateCharacter {
     fn run(&mut self, (_, server): (&ConnectionID, &mut Server)) {
         let id = Self::generate_character(&mut server.world, &mut server.character_id_gen);
         let cmd = server.world.make_cmd_update_character(id).unwrap();
-        server.connection.send(server.connection.all_connection_ids(), &cmd);
+        let ser = SerializedClientCommand::from(&cmd);
+        server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
     }
 }
 

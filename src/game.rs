@@ -7,7 +7,6 @@ use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use std::net::SocketAddr;
-
 use crate::{
     graphics,
     chatbox,
@@ -19,17 +18,12 @@ use crate::{
         StopServer},
     networking_wrapping::{
         ClientCommand,
-        ServerCommand,
-        SendClientCommands,
-        ExecuteClientCommands,
-        SendServerCommands},
+        ServerCommand, SerializedClientCommand, SerializedServerCommand,
+	},
     world::{
         World,
         GenerateCharacter,
-        character::{
-            CharacterID,
-            CharacterIDGenerator
-        }
+        character::CharacterID
     },
 };
 
@@ -55,9 +49,11 @@ impl<'a> ClientCommand<'a> for EchoMessage {
 
 impl<'a> ServerCommand<'a> for EchoMessage {
     fn run(&mut self, (source, server): (&ConnectionID, &mut Server)) {
-        server.connection.send(vec![*source], self);
+        let ser = SerializedClientCommand::from(self);
+        server.connection.send_raw(vec![*source], ser.data);
     }
 }
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatMessage {
@@ -87,7 +83,8 @@ impl<'a> ServerCommand<'a> for ChatMessage {
             Some(addr) => addr.to_string()
         };
         let message = format!("<{}> {}", name, self.message);
-        server.connection.send(server.connection.all_connection_ids(), &ChatMessage::new(message));
+        let ser = SerializedClientCommand::from(&ChatMessage::new(message));
+        server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
     }
 }
 
@@ -177,7 +174,10 @@ impl Game<'_> {
             // update connection
             game.connection.flush(); // send messages
             let messages = game.connection.poll_raw();
-            game.execute(messages);
+            for data in messages {
+                let ser_cmd = SerializedClientCommand::new(data);
+                ser_cmd.execute(&mut game);
+            }
 
             // update logic
             let key_dir = {
@@ -284,7 +284,7 @@ impl Game<'_> {
                         game.world.characters.iter().map(
                             |id| game.world.make_cmd_update_character(*id)
                         ).for_each(|cmd| match cmd {
-                            Some(cmd) => game.connection.send(&cmd),
+                            Some(cmd) => game.connection.send_raw(SerializedServerCommand::from(&cmd).data),
                             _ => ()
                         });
                     },
@@ -336,10 +336,12 @@ impl Game<'_> {
                     self.chatbox.println("Hello world!");
                 },
                 ["send", _, ..] => {
-                    self.connection.send(&ChatMessage::new(String::from(&command[("send ".len() + 1)..])));
+                    let ser = SerializedServerCommand::from(&ChatMessage::new(String::from(&command[("send ".len() + 1)..])));
+                    self.connection.send_raw(ser.data);
                 },
                 ["echo", _, ..] => {
-                    self.connection.send(&EchoMessage::new(String::from(&command[("echo ".len() + 1)..])));
+                    let ser = SerializedServerCommand::from(&EchoMessage::new(String::from(&command[("echo ".len() + 1)..])));
+                    self.connection.send_raw(ser.data);
                 },
                 ["print", _, ..] => {
                     self.chatbox.println(&command[("/print ".len())..]);
@@ -356,10 +358,12 @@ impl Game<'_> {
                     self.chatbox.println(format!("Successfully changed server address to {}", address.to_string()).as_str());
                 },
                 ["stopserver"] => {
-                    self.connection.send(&StopServer());
+                    let ser = SerializedServerCommand::from(&StopServer());
+                    self.connection.send_raw(ser.data);
                 },
                 ["genchar"] => {
-                    self.connection.send(&GenerateCharacter::new());
+                    let ser = SerializedServerCommand::from(&GenerateCharacter::new());
+                    self.connection.send_raw(ser.data);
                 },
                 _ => self.chatbox.println("Failed to parse command.")
             }

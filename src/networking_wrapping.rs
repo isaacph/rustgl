@@ -1,8 +1,7 @@
-use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use crate::{game::Game, networking::{client::Connection, server::{ConnectionID, ServerConnection}}, server::Server};
+use crate::{game::Game, networking::server::ConnectionID, server::Server};
 
-// command handling macro
+// command execution macro
 macro_rules! commands {
     ($command_trait_name:ident, @step2 $_idx:expr, $context:ident, $cmdid:ident, $cmd:ident, ) => {
         panic!("Invalid server command id: {}", $cmdid)
@@ -25,7 +24,7 @@ macro_rules! commands {
         commands!($id_trait_name, @step $idx + 1u16, $($tail,)*);
     };
     ($execute_fn_name:ident, $command_trait_name:ident, $id_trait_name:ident, $context_type:ty, [$( $x: path ),*] ) => {
-        fn $execute_fn_name(context: $context_type, cmdid: u16, cmd: Vec<u8>) {
+        fn $execute_fn_name<'a>(context: $context_type, cmdid: u16, cmd: &'a [u8]) {
             commands!($command_trait_name, @step2 0u16, context, cmdid, cmd, $($x,)*);
         }
         pub trait $id_trait_name {
@@ -36,7 +35,6 @@ macro_rules! commands {
 }
 
 // generate handling for client and server commands
-
 
 pub trait ClientCommand<'a>: Serialize + Deserialize<'a> {
     fn run(&mut self, client: &mut Game);
@@ -64,63 +62,109 @@ commands!(
     [crate::game::EchoMessage, crate::server::StopServer, crate::game::ChatMessage, crate::world::UpdateCharacter, crate::world::GenerateCharacter]
 );
 
-
-// ----------------------- send/execute function implementations below -----------------------
-
-pub trait SendClientCommands {
-    fn send<'a, T>(&mut self, client: Vec<ConnectionID>, command: &T) where T: ClientCommand<'a> + ClientCommandID;
+pub struct SerializedServerCommand {
+    pub data: Vec<u8>
 }
 
-impl SendClientCommands for ServerConnection {
-    fn send<'a, T>(self: &mut ServerConnection, clients: Vec<ConnectionID>, command: &T)
-    where T: ClientCommand<'a> + ClientCommandID {
-        let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
-        let mut id = Vec::from(command.id().to_be_bytes());
-        data.append(&mut id);
-        self.send_raw(clients, data);
+pub struct SerializedClientCommand {
+    pub data: Vec<u8>
+}
+
+impl SerializedServerCommand {
+    pub fn new(data: Vec<u8>) -> Self {
+        SerializedServerCommand { data }
     }
-}
-
-pub trait ExecuteClientCommands {
-    fn execute(&mut self, commands: Vec<Vec<u8>>);
-}
-
-impl ExecuteClientCommands for Game<'_> {
-    fn execute(&mut self, commands: Vec<Vec<u8>>) {
-        for mut data in commands {
-            let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
-            data.truncate(data.len() - 2);
-            execute_client_command(self, id, data);
-        }
-    }
-}
-
-pub trait SendServerCommands {
-    fn send<'a, T>(&mut self, command: &T) where T: ServerCommand<'a> + ServerCommandID;
-}
-
-impl SendServerCommands for Connection {
-    fn send<'a, T>(&mut self, command: &T)
+    pub fn from<'a, T>(command: &T) -> Self
     where T: ServerCommand<'a> + ServerCommandID {
         let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
         let mut id = Vec::from(command.id().to_be_bytes());
         data.append(&mut id);
-        self.send_raw(data);
-    }
-}
-
-pub trait ExecuteServerCommands {
-    fn execute(&mut self, commands: HashMap<ConnectionID, Vec<Vec<u8>>>);
-}
-
-impl ExecuteServerCommands for Server {
-    fn execute(&mut self, commands: HashMap<ConnectionID, Vec<Vec<u8>>>) {
-        for (client_id, queue) in commands {
-            for mut data in queue {
-                let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
-                data.truncate(data.len() - 2);
-                execute_server_command((&client_id, self), id, data);
-            }
+        SerializedServerCommand {
+            data
         }
     }
+    pub fn execute(&self, client_id: &ConnectionID, server: &mut Server) {
+        let data = &self.data;
+        let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+        execute_server_command((client_id, server), id, &data.as_slice()[..data.len() - 2]);
+    }
 }
+
+impl SerializedClientCommand {
+    pub fn new(data: Vec<u8>) -> Self {
+        SerializedClientCommand { data }
+    }
+    pub fn from<'a, T>(command: &T) -> Self
+    where T: ClientCommand<'a> + ClientCommandID {
+        let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
+        let mut id = Vec::from(command.id().to_be_bytes());
+        data.append(&mut id);
+        SerializedClientCommand {
+            data
+        }
+    }
+    pub fn execute(&self, client: &mut Game) {
+        let data = &self.data;
+        let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+        execute_client_command(client, id, &data.as_slice()[..data.len() - 2]);
+    }
+}
+//// ----------------------- send/execute function implementations below -----------------------
+//
+//pub trait SendClientCommands {
+//    fn send<'a, T>(&mut self, client: Vec<ConnectionID>, command: &T) where T: ClientCommand<'a> + ClientCommandID;
+//}
+//
+//impl SendClientCommands for ServerConnection {
+//    fn send<'a, T>(self: &mut ServerConnection, clients: Vec<ConnectionID>, command: &T)
+//    where T: ClientCommand<'a> + ClientCommandID {
+//        let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
+//        let mut id = Vec::from(command.id().to_be_bytes());
+//        data.append(&mut id);
+//        self.send_raw(clients, data);
+//    }
+//}
+//
+//pub trait ExecuteClientCommands {
+//    fn execute(&mut self, commands: Vec<Vec<u8>>);
+//}
+//
+//impl ExecuteClientCommands for Game<'_> {
+//    fn execute(&mut self, commands: Vec<Vec<u8>>) {
+//        for mut data in commands {
+//            let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+//            data.truncate(data.len() - 2);
+//            execute_client_command(self, id, data);
+//        }
+//    }
+//}
+//
+//pub trait SendServerCommands {
+//    fn send<'a, T>(&mut self, command: &T) where T: ServerCommand<'a> + ServerCommandID;
+//}
+//
+//impl SendServerCommands for Connection {
+//    fn send<'a, T>(&mut self, command: &T)
+//    where T: ServerCommand<'a> + ServerCommandID {
+//        let mut data: Vec<u8> = bincode::serialize(command).unwrap(); // TODO: error handling
+//        let mut id = Vec::from(command.id().to_be_bytes());
+//        data.append(&mut id);
+//        self.send_raw(data);
+//    }
+//}
+//
+//pub trait ExecuteServerCommands {
+//    fn execute(&mut self, commands: HashMap<ConnectionID, Vec<Vec<u8>>>);
+//}
+//
+//impl ExecuteServerCommands for Server {
+//    fn execute(&mut self, commands: HashMap<ConnectionID, Vec<Vec<u8>>>) {
+//        for (client_id, queue) in commands {
+//            for mut data in queue {
+//                let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+//                data.truncate(data.len() - 2);
+//                execute_server_command((&client_id, self), id, data);
+//            }
+//        }
+//    }
+//}
