@@ -1,12 +1,16 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Serialize, Deserialize};
 
+use crate::game::{Game, ChatMessage};
 use crate::networking::server::{ServerConnection, ConnectionID};
-use crate::networking_wrapping::{ServerCommand, SerializedServerCommand};
+use crate::networking_wrapping::{ServerCommand, SerializedServerCommand, ClientCommand, VecSerializedWrapperDecay, SerializedClientCommand};
 
 use crate::world::World;
 use crate::world::character::CharacterIDGenerator;
+use crate::world::player::PlayerManager;
+
+use self::update_loop::UpdateLoop;
 
 pub mod update_loop {
     use std::time::{SystemTime, Duration};
@@ -25,7 +29,7 @@ pub mod update_loop {
                 update_interval: Duration::new(1, 0)
             }
         }
-        pub fn send_next_update(&mut self, _world: &World) -> Vec<SerializedClientCommand> {
+        pub fn send_next_update(&mut self, world: &World) -> Vec<SerializedClientCommand> {
             let now = SystemTime::now();
             let should_update = match self.last_update {
                 None => true,
@@ -33,19 +37,32 @@ pub mod update_loop {
             };
             match should_update {
                 false => vec![],
-                true => {
-                    vec![]
-                }
+                true =>
+                    world.characters.iter()
+                        .filter_map(|cid| world.make_cmd_update_character(*cid))
+                        .map(|cmd| SerializedClientCommand::from(&cmd))
+                        .collect()
             }
         }
     }
+}
+
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EmptyCommand;
+impl<'a> ServerCommand<'a> for EmptyCommand {
+    fn run(self, _: (&ConnectionID, &mut Server)) {}
+}
+impl<'a> ClientCommand<'a> for EmptyCommand {
+    fn run(self, _: &mut Game) {}
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StopServer();
 
 impl<'a> ServerCommand<'a> for StopServer {
-    fn run(&mut self, (_, server): (&ConnectionID, &mut Server)) {
+    fn run(self, (_, server): (&ConnectionID, &mut Server)) {
         server.stop = true;
     }
 }
@@ -55,16 +72,20 @@ pub struct Server {
     pub stop: bool,
     pub world: World,
     pub character_id_gen: CharacterIDGenerator,
+    pub player_manager: PlayerManager
 }
 
 impl Server {
     pub fn run(port: u16) {
+        let world = World::new();
         let mut server = Server {
             connection: ServerConnection::new(port).unwrap(),
             stop: false,
-            world: World::new(),
-            character_id_gen: CharacterIDGenerator::new()
+            world,
+            character_id_gen: CharacterIDGenerator::new(),
+            player_manager: PlayerManager::new()
         };
+        let mut update_loop = UpdateLoop::init(&server.world);
 
         while !server.stop {
             let messages = server.connection.poll_raw();
@@ -74,8 +95,21 @@ impl Server {
                     ser.execute(&cid, &mut server);
                 }
             }
+            server.connection.send_all(
+                server.connection.all_connection_ids(),
+                update_loop.send_next_update(&server.world).decay()
+            );
             server.connection.flush();
-            //server.connection.prune_dead_connections(SystemTime::now());
+            for con_id in server.connection.prune_dead_connections(SystemTime::now()) {
+                if let Some(player) = server.player_manager.map_existing_player(Some(&con_id), None) {
+                    server.connection.send_raw(
+                        server.connection.all_connection_ids(),
+                        SerializedClientCommand::from(
+                            &ChatMessage::new(format!("{} logged out.", player.name))
+                        ).data
+                    );
+                }
+            }
             std::thread::sleep(Duration::new(0, 1000000 * 500)); // wait 500 ms
         }
     }

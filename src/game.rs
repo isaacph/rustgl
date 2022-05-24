@@ -15,7 +15,7 @@ use crate::{
         server::ConnectionID},
     server::{
         Server,
-        StopServer},
+        StopServer, EmptyCommand},
     networking_wrapping::{
         ClientCommand,
         ServerCommand, SerializedClientCommand, SerializedServerCommand,
@@ -23,7 +23,7 @@ use crate::{
     world::{
         World,
         GenerateCharacter,
-        character::CharacterID
+        character::CharacterID, player::{PlayerLogIn, PlayerLogOut}
     },
 };
 
@@ -42,14 +42,14 @@ impl EchoMessage {
 }
 
 impl<'a> ClientCommand<'a> for EchoMessage {
-    fn run(&mut self, client: &mut Game) {
+    fn run(self, client: &mut Game) {
         client.chatbox.println(self.message.as_str());
     }
 }
 
 impl<'a> ServerCommand<'a> for EchoMessage {
-    fn run(&mut self, (source, server): (&ConnectionID, &mut Server)) {
-        let ser = SerializedClientCommand::from(self);
+    fn run(self, (source, server): (&ConnectionID, &mut Server)) {
+        let ser = SerializedClientCommand::from(&self);
         server.connection.send_raw(vec![*source], ser.data);
     }
 }
@@ -69,21 +69,23 @@ impl ChatMessage {
 }
 
 impl<'a> ClientCommand<'a> for ChatMessage {
-    fn run(&mut self, client: &mut Game) {
+    fn run(self, client: &mut Game) {
         client.chatbox.println(self.message.as_str());
     } 
 }
 
 impl<'a> ServerCommand<'a> for ChatMessage {
-    fn run(&mut self, (id, server): (&ConnectionID, &mut Server)) {
-        // reformat this message to include the sender's name
-        // for now we just make the name their address
-        let name = match server.connection.get_address(id) {
-            None => return,
-            Some(addr) => addr.to_string()
+    fn run(mut self, (id, server): (&ConnectionID, &mut Server)) {
+        // reformat this message to include the sender's name or IP if they aren't signed in
+        let name = match server.player_manager.get_connected_player(id) {
+            None => match server.connection.get_address(id) {
+                None => return,
+                Some(addr) => format!("From {}", addr.to_string())
+            },
+            Some(player) => player.name.clone()
         };
-        let message = format!("<{}> {}", name, self.message);
-        let ser = SerializedClientCommand::from(&ChatMessage::new(message));
+        self.message = format!("<{}> {}", name, self.message);
+        let ser = SerializedClientCommand::from(&self);
         server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
     }
 }
@@ -156,6 +158,9 @@ impl Game<'_> {
 //        let mut temp_id_gen = CharacterIDGenerator::new();
 //        GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
 
+        game.connection.send_raw(SerializedServerCommand::from(&EmptyCommand).data);
+        let mut last_heartbeat = glfw.get_time();
+
         unsafe {
             glClearColor(0.0, 0.0, 0.0, 1.0);
             glEnable(GL_BLEND);
@@ -172,6 +177,11 @@ impl Game<'_> {
             }
 
             // update connection
+            // heartbeat to avoid disconnection
+            if current_time - last_heartbeat > 1.0 {
+                game.connection.send_raw(SerializedServerCommand::from(&EmptyCommand).data);
+                last_heartbeat = current_time;
+            }
             game.connection.flush(); // send messages
             let messages = game.connection.poll_raw();
             for data in messages {
@@ -265,7 +275,11 @@ impl Game<'_> {
                         let line = game.chatbox.get_typing().clone();
                         if line.len() != 0 {
                             game.chatbox.erase_typing();
-                            game.process_chat(line.as_str());
+                            match game.process_chat(line.as_str()) {
+                                Ok(Some(message)) => game.chatbox.println(message.as_str()),
+                                Ok(None) => (),
+                                Err(message) => game.chatbox.println(message.as_str())
+                            }
                         } else {
                             game.state = State::DEFAULT;
                             game.chatbox.set_typing_flicker(false);
@@ -326,46 +340,68 @@ impl Game<'_> {
         }
     }
 
-    pub fn process_chat(&mut self, command: &str) {
+    pub fn process_chat(&mut self, command: &str) -> Result<Option<String>, String> {
         if !command.starts_with('/') {
             self.process_chat((String::from("/send ") + command).as_str())
         } else {
             let split: Vec<&str> = command[1..].split(' ').collect();
             match &split[..] {
-                ["hello", "world"] => {
-                    self.chatbox.println("Hello world!");
-                },
+                ["hello", "world"] => Ok(Some(format!("Hello world!"))),
                 ["send", _, ..] => {
                     let ser = SerializedServerCommand::from(&ChatMessage::new(String::from(&command[("send ".len() + 1)..])));
                     self.connection.send_raw(ser.data);
+                    Ok(None)
                 },
                 ["echo", _, ..] => {
                     let ser = SerializedServerCommand::from(&EchoMessage::new(String::from(&command[("echo ".len() + 1)..])));
                     self.connection.send_raw(ser.data);
+                    Ok(None)
                 },
-                ["print", _, ..] => {
-                    self.chatbox.println(&command[("/print ".len())..]);
-                }
+                ["print", _, ..] => Ok(Some(String::from(&command[("/print ".len())..]))),
                 ["server", address] => {
                     let address: SocketAddr = match address.parse() {
-                        Err(e) => {
-                            self.chatbox.println(format!("Error parsing address: {}", e).as_str());
-                            return;
-                        },
+                        Err(e) => return Err(format!("Error parsing address: {}", e)),
                         Ok(address) => address
                     };
                     self.connection.set_server_address(&address);
-                    self.chatbox.println(format!("Successfully changed server address to {}", address.to_string()).as_str());
+                    Ok(Some(format!("Successfully changed server address to {}", address.to_string())))
                 },
                 ["stopserver"] => {
                     let ser = SerializedServerCommand::from(&StopServer());
                     self.connection.send_raw(ser.data);
+                    Ok(Some(format!("Stop command sent")))
                 },
                 ["genchar"] => {
                     let ser = SerializedServerCommand::from(&GenerateCharacter::new());
                     self.connection.send_raw(ser.data);
+                    Ok(Some(format!("Character gen command sent")))
                 },
-                _ => self.chatbox.println("Failed to parse command.")
+                ["login", typ, ..] => {
+                    self.connection.send_raw(
+                        SerializedServerCommand::from(&PlayerLogIn {
+                            existing: match *typ {
+                                "new" => false,
+                                "old" => true,
+                                _ => return Err(format!(
+                                    "Unknown login type: {}. Options are: new old",
+                                    typ
+                                ))
+                            },
+                            name: match split.len() {
+                                2 => None,
+                                n => Some(String::from(split[2..n].join(" "))),
+                            }
+                        }).data
+                    );
+                    Ok(None)
+                },
+                ["logout"] => {
+                    self.connection.send_raw(
+                        SerializedServerCommand::from(&PlayerLogOut).data
+                    );
+                    Ok(None)
+                }
+                _ => Err(format!("Failed to parse command."))
             }
         }
     }

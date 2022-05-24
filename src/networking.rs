@@ -218,6 +218,9 @@ pub mod server {
         pub fn send_raw(&mut self, receivers: Vec<ConnectionID>, data: Vec<u8>) {
             self.message_queue.push((receivers, data));
         }
+        pub fn send_all(&mut self, receivers: Vec<ConnectionID>, data: Vec<Vec<u8>>) {
+            self.message_queue.extend(data.into_iter().map(|data| (receivers.clone(), data)));
+        }
         pub fn prune_dead_connections(&mut self, check_against: SystemTime) -> Vec<ConnectionID> {
             let mut kick = vec![];
             for con_id in &self.all_connection_ids {

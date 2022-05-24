@@ -8,8 +8,8 @@ macro_rules! commands {
     };
     ($command_trait_name:ident, @step2 $idx:expr, $context:ident, $cmdid:ident, $cmd:ident, $head:path, $($tail:path,)*) => {
         if $cmdid == $idx {
-            let mut deserialized: $head = bincode::deserialize(&$cmd).unwrap(); // TODO: error handling
-            $command_trait_name::run(&mut deserialized, $context);
+            let deserialized: $head = bincode::deserialize(&$cmd).unwrap(); // TODO: error handling
+            $command_trait_name::run(deserialized, $context);
             return;
         }
         commands!($command_trait_name, @step2 $idx + 1u16, $context, $cmdid, $cmd, $($tail,)*);
@@ -32,12 +32,16 @@ macro_rules! commands {
         }
         commands!($id_trait_name, @step 0u16, $($x,)*);
     };
+    // compatibility with trailing comma for client command list:
+    ($execute_fn_name:ident, $command_trait_name:ident, $id_trait_name:ident, $context_type:ty, [$( $x: path, )*] ) => {
+        commands!($execute_fn_name, $command_trait_name, $id_trait_name, $context_type, [$($x),*]);
+    };
 }
 
 // generate handling for client and server commands
 
 pub trait ClientCommand<'a>: Serialize + Deserialize<'a> {
-    fn run(&mut self, client: &mut Game);
+    fn run(self, client: &mut Game);
 }
 
 commands!(
@@ -46,11 +50,17 @@ commands!(
     ClientCommandID,
     &mut Game,
     // list client commands here:
-    [crate::game::EchoMessage, crate::game::ChatMessage, crate::world::UpdateCharacter]
+    [
+        crate::game::EchoMessage,
+        crate::game::ChatMessage,
+        crate::world::UpdateCharacter,
+        crate::server::EmptyCommand,
+        crate::world::player::PlayerDataPayload,
+    ]
 );
 
 pub trait ServerCommand<'a>: Serialize + Deserialize<'a> {
-    fn run(&mut self, context: (&ConnectionID, &mut Server));
+    fn run(self, context: (&ConnectionID, &mut Server));
 }
 
 commands!(
@@ -59,7 +69,16 @@ commands!(
     ServerCommandID,
     (&ConnectionID, &mut Server),
     // list server commands here:
-    [crate::game::EchoMessage, crate::server::StopServer, crate::game::ChatMessage, crate::world::UpdateCharacter, crate::world::GenerateCharacter]
+    [
+        crate::game::EchoMessage,
+        crate::server::StopServer,
+        crate::game::ChatMessage,
+        crate::world::UpdateCharacter,
+        crate::world::GenerateCharacter,
+        crate::server::EmptyCommand,
+        crate::world::player::PlayerLogIn,
+        crate::world::player::PlayerLogOut,
+    ]
 );
 
 pub struct SerializedServerCommand {
@@ -107,6 +126,32 @@ impl SerializedClientCommand {
         let data = &self.data;
         let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
         execute_client_command(client, id, &data.as_slice()[..data.len() - 2]);
+    }
+}
+
+pub trait SerializedWrapperDecay {
+    fn decay(self) -> Vec<u8>;
+}
+
+impl SerializedWrapperDecay for SerializedServerCommand {
+    fn decay(self) -> Vec<u8> {
+        self.data
+    }
+}
+
+impl SerializedWrapperDecay for SerializedClientCommand {
+    fn decay(self) -> Vec<u8> {
+        self.data
+    }
+}
+
+pub trait VecSerializedWrapperDecay {
+    fn decay(self) -> Vec<Vec<u8>>;
+}
+
+impl<T> VecSerializedWrapperDecay for Vec<T> where T: SerializedWrapperDecay {
+    fn decay(self) -> Vec<Vec<u8>> {
+        self.into_iter().map(|ser| ser.decay()).collect()
     }
 }
 //// ----------------------- send/execute function implementations below -----------------------

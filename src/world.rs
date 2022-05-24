@@ -9,9 +9,7 @@ use crate::{networking_wrapping::{ServerCommand, ClientCommand, SerializedClient
 use self::{
     player::{
         TeamID,
-        PlayerID,
-        Team,
-        Player
+        Team, PlayerData
     },
     character::{CharacterID, CharacterIDGenerator},
     component::{
@@ -28,6 +26,22 @@ pub mod player;
 pub mod character;
 pub mod component;
 
+pub trait WorldCommand<'a>: Serialize + Deserialize<'a> {
+    fn run(self, world: &mut World);
+}
+
+impl<'a, T> ClientCommand<'a> for T where T: WorldCommand<'a> {
+    fn run(self, client: &mut Game) {
+        self.run(&mut client.world)
+    }
+}
+
+impl<'a, T> ServerCommand<'a> for T where T: WorldCommand<'a> {
+    fn run(self, (_, server): (&ConnectionID, &mut Server)) {
+        self.run(&mut server.world)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateCharacter {
     id: CharacterID,
@@ -35,23 +49,23 @@ pub struct UpdateCharacter {
 }
 
 impl UpdateCharacter {
-    pub fn update_character(&mut self, world: &mut World) {
+    pub fn update_character(mut self, world: &mut World) {
         world.characters.insert(self.id);
-        for (cid, data) in self.components.clone().drain() {
+        for (cid, data) in self.components.drain() {
             world.update_component(&self.id, &cid, data);
         }
     }
 }
 
 impl<'a> ClientCommand<'a> for UpdateCharacter {
-    fn run(&mut self, client: &mut Game) {
+    fn run(self, client: &mut Game) {
         self.update_character(&mut client.world);
     } 
 }
 
 impl<'a> ServerCommand<'a> for UpdateCharacter {
-    fn run(&mut self, (_, server): (&ConnectionID, &mut Server)) {
-        let ser = SerializedClientCommand::from(self);
+    fn run(self, (_, server): (&ConnectionID, &mut Server)) {
+        let ser = SerializedClientCommand::from(&self);
         self.update_character(&mut server.world);
         server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
     }
@@ -79,7 +93,7 @@ impl GenerateCharacter {
 }
 
 impl<'a> ServerCommand<'a> for GenerateCharacter {
-    fn run(&mut self, (_, server): (&ConnectionID, &mut Server)) {
+    fn run(self, (_, server): (&ConnectionID, &mut Server)) {
         let id = Self::generate_character(&mut server.world, &mut server.character_id_gen);
         let cmd = server.world.make_cmd_update_character(id).unwrap();
         let ser = SerializedClientCommand::from(&cmd);
@@ -89,8 +103,8 @@ impl<'a> ServerCommand<'a> for GenerateCharacter {
 
 pub struct World {
     pub teams: HashMap<TeamID, Team>,
-    pub players: HashMap<PlayerID, Player>,
     pub characters: HashSet<CharacterID>,
+    pub players: PlayerData,
 
     pub base: ComponentStorage<CharacterBase>,
     pub health: ComponentStorage<CharacterHealth>,
@@ -100,8 +114,8 @@ impl World {
     pub fn new() -> World {
         World {
             teams: HashMap::new(),
-            players: HashMap::new(),
             characters: HashSet::new(),
+            players: PlayerData { players: HashMap::new() },
             base: ComponentStorage::<CharacterBase>::new(),
             health: ComponentStorage::<CharacterHealth>::new(),
         }
