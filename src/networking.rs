@@ -3,9 +3,10 @@ use std::net::SocketAddr;
 use socket2::{Socket, Domain, Type, Protocol};
 use std::io::Result;
 
+// what we're assuming for MTU size
 pub const MAX_PACKET_SIZE: usize = 512;
 
-fn make_socket(port: Option<u16>) -> Result<Socket> {
+fn make_udp_socket(port: Option<u16>) -> Result<Socket> {
     let socket: Socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
@@ -18,6 +19,31 @@ fn make_socket(port: Option<u16>) -> Result<Socket> {
     Ok(socket)
 }
 
+fn make_tcp_socket(port: Option<u16>) -> Result<Socket> {
+    let socket: Socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_nonblocking(false)?;
+    socket.set_reuse_address(true)?;
+    let address: SocketAddr = format!("127.0.0.1:{}",
+        match port {Some(port) => port, _ => 0}
+    ).parse().unwrap();
+    let address = address.into();
+    socket.bind(&address)?;
+    socket.listen(128)?;
+
+    Ok(socket)
+}
+
+pub mod tcp {
+    use std::net::SocketAddr;
+
+    pub enum Packet {
+        ToClient(SocketAddr, Vec<u8>),
+        Stop
+    }
+    pub fn server(port: u16) {
+    }
+}
+
 pub mod server {
     use std::collections::HashMap;
     use std::fmt::Display;
@@ -27,7 +53,7 @@ pub mod server {
     use socket2::Socket;
     use std::net::SocketAddr;
 
-    use super::{make_socket, MAX_PACKET_SIZE};
+    use super::{make_udp_socket, MAX_PACKET_SIZE};
 
     // the time after the last message after which to declare the connection dead
     const LAST_MESSAGE_DEAD_TIME: Duration = Duration::new(10, 0);
@@ -73,7 +99,7 @@ pub mod server {
 
     impl ServerConnection {
         pub fn new(port: u16) -> Result<ServerConnection> {
-            let socket = make_socket(Some(port))?;
+            let socket = make_udp_socket(Some(port))?;
             Ok(ServerConnection {
                 socket,
                 connection_data: HashMap::new(),
@@ -116,10 +142,7 @@ pub mod server {
         }
 
         pub fn get_address(&self, id: &ConnectionID) -> Option<SocketAddr> {
-            match self.connection_data.get(id) {
-                Some(data) => Some(data.address),
-                None => None
-            }
+            self.connection_data.get(id).map(|data| data.address)
         }
         pub fn all_connection_ids(&self) -> Vec<ConnectionID> {
             self.all_connection_ids.clone()
@@ -264,7 +287,7 @@ pub mod client {
     use std::net::SocketAddr;
     use std::io::ErrorKind;
 
-    use super::{make_socket, MAX_PACKET_SIZE};
+    use super::{make_udp_socket, MAX_PACKET_SIZE};
 
     pub struct Connection {
         socket: Socket,
@@ -275,7 +298,7 @@ pub mod client {
 
     impl Connection {
         pub fn new(server_address: &SocketAddr) -> Result<Connection> {
-            let socket = make_socket(None)?;
+            let socket = make_udp_socket(None)?;
             Ok(Connection {
                 socket,
                 server_address: (*server_address).into(),

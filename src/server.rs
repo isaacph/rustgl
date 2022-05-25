@@ -105,7 +105,7 @@ impl Server {
                     server.connection.send_raw(
                         server.connection.all_connection_ids(),
                         SerializedClientCommand::from(
-                            &ChatMessage::new(format!("{} logged out.", player.name))
+                            &ChatMessage::new(format!("{} was disconnected.", player.name))
                         ).data
                     );
                 }
