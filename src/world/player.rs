@@ -102,7 +102,7 @@ impl<'a> ServerCommand<'a> for PlayerLogIn {
             }
         } {
             Ok(player_name) => {
-                server.connection.send_all(
+                server.connection.send_udp_all(
                     server.connection.all_connection_ids(),
                     vec![
                         SerializedClientCommand::from(
@@ -116,7 +116,7 @@ impl<'a> ServerCommand<'a> for PlayerLogIn {
                 server.world.players = server.player_manager.get_view()
             },
             Err(e) => {
-                server.connection.send_raw(
+                server.connection.send_udp(
                     vec![*con_id],
                     SerializedClientCommand::from(
                         &ChatMessage::new(e)
@@ -133,14 +133,14 @@ pub struct PlayerLogOut;
 impl<'a> ServerCommand<'a> for PlayerLogOut {
     fn run(self, (con_id, server): (&ConnectionID, &mut crate::server::Server)) {
         if let Some(player) = server.player_manager.map_existing_player(Some(con_id), None) {
-            server.connection.send_raw(
+            server.connection.send_udp(
                 server.connection.all_connection_ids(),
                 SerializedClientCommand::from(
                     &ChatMessage::new(format!("{} logged out.", player.name))
                 ).data
             );
         } else {
-            server.connection.send_raw(
+            server.connection.send_udp(
                 vec![*con_id],
                 SerializedClientCommand::from(
                     &ChatMessage::new(format!("Failed to log out, was not logged in"))

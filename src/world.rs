@@ -67,7 +67,7 @@ impl<'a> ServerCommand<'a> for UpdateCharacter {
     fn run(self, (_, server): (&ConnectionID, &mut Server)) {
         let ser = SerializedClientCommand::from(&self);
         self.update_character(&mut server.world);
-        server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
+        server.connection.send_udp(server.connection.all_connection_ids(), ser.data);
     }
 }
 
@@ -97,7 +97,7 @@ impl<'a> ServerCommand<'a> for GenerateCharacter {
         let id = Self::generate_character(&mut server.world, &mut server.character_id_gen);
         let cmd = server.world.make_cmd_update_character(id).unwrap();
         let ser = SerializedClientCommand::from(&cmd);
-        server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
+        server.connection.send_udp(server.connection.all_connection_ids(), ser.data);
     }
 }
 

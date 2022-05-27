@@ -88,21 +88,21 @@ impl Server {
         let mut update_loop = UpdateLoop::init(&server.world);
 
         while !server.stop {
-            let messages = server.connection.poll_raw();
+            let messages = server.connection.poll();
             for (cid, data) in messages {
                 for data in data {
                     let ser = SerializedServerCommand::new(data);
                     ser.execute(&cid, &mut server);
                 }
             }
-            server.connection.send_all(
+            server.connection.send_udp_all(
                 server.connection.all_connection_ids(),
                 update_loop.send_next_update(&server.world).decay()
             );
             server.connection.flush();
             for con_id in server.connection.prune_dead_connections(SystemTime::now()) {
                 if let Some(player) = server.player_manager.map_existing_player(Some(&con_id), None) {
-                    server.connection.send_raw(
+                    server.connection.send_udp(
                         server.connection.all_connection_ids(),
                         SerializedClientCommand::from(
                             &ChatMessage::new(format!("{} was disconnected.", player.name))

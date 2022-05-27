@@ -19,12 +19,12 @@ fn echo_server(port: u16) -> Result<()> {
     let mut server = networking::server::ServerConnection::new(port)?;
     let mut stop = false;
     while !stop {
-        for (id, data) in server.poll_raw() {
+        for (id, data) in server.poll() {
             for packet in data {
                 if String::from_utf8_lossy(packet.as_slice()).eq("stop") {
                     stop = true;
                 }
-                server.send_raw(vec![id], packet);
+                server.send_udp(vec![id], packet);
             }
         }
         server.flush();
@@ -34,7 +34,7 @@ fn echo_server(port: u16) -> Result<()> {
 }
 
 fn console_client(address: SocketAddr) -> Result<()> {
-    let mut client = networking::client::Connection::new(&address)?;
+    let mut client = networking::client::Connection::new(&address);
     let stdin_channel = {
         let (tx, rx) = mpsc::channel::<String>();
         thread::spawn(move || loop {
@@ -45,7 +45,7 @@ fn console_client(address: SocketAddr) -> Result<()> {
         rx
     };
     loop {
-        for packet in client.poll_raw() {
+        for packet in client.poll() {
             println!("Received from server: {}", std::str::from_utf8(packet.as_slice()).unwrap());
         }
         client.flush();
@@ -54,7 +54,7 @@ fn console_client(address: SocketAddr) -> Result<()> {
             Err(TryRecvError::Empty) => continue,
             Err(TryRecvError::Disconnected) => break,
         };
-        client.send_raw(Vec::from(message.as_bytes()));
+        client.send_udp(Vec::from(message.as_bytes()));
         std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
     Ok(())

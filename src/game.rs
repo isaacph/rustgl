@@ -50,7 +50,7 @@ impl<'a> ClientCommand<'a> for EchoMessage {
 impl<'a> ServerCommand<'a> for EchoMessage {
     fn run(self, (source, server): (&ConnectionID, &mut Server)) {
         let ser = SerializedClientCommand::from(&self);
-        server.connection.send_raw(vec![*source], ser.data);
+        server.connection.send_udp(vec![*source], ser.data);
     }
 }
 
@@ -86,7 +86,7 @@ impl<'a> ServerCommand<'a> for ChatMessage {
         };
         self.message = format!("<{}> {}", name, self.message);
         let ser = SerializedClientCommand::from(&self);
-        server.connection.send_raw(server.connection.all_connection_ids(), ser.data);
+        server.connection.send_udp(server.connection.all_connection_ids(), ser.data);
     }
 }
 
@@ -140,7 +140,10 @@ impl Game<'_> {
             ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
             chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
             state: State::DEFAULT,
-            connection: networking::client::Connection::new(default_server).unwrap(),
+            connection: {
+                let (c, _) = networking::client::Connection::new(default_server);
+                c
+            },
             world: World::new()
         };
         game.window_size(width, height);
@@ -158,7 +161,7 @@ impl Game<'_> {
 //        let mut temp_id_gen = CharacterIDGenerator::new();
 //        GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
 
-        game.connection.send_raw(SerializedServerCommand::from(&EmptyCommand).data);
+        game.connection.send_udp(SerializedServerCommand::from(&EmptyCommand).data);
         let mut last_heartbeat = glfw.get_time();
 
         unsafe {
@@ -179,11 +182,11 @@ impl Game<'_> {
             // update connection
             // heartbeat to avoid disconnection
             if current_time - last_heartbeat > 1.0 {
-                game.connection.send_raw(SerializedServerCommand::from(&EmptyCommand).data);
+                game.connection.send_udp(SerializedServerCommand::from(&EmptyCommand).data);
                 last_heartbeat = current_time;
             }
             game.connection.flush(); // send messages
-            let messages = game.connection.poll_raw();
+            let messages = game.connection.poll();
             for data in messages {
                 let ser_cmd = SerializedClientCommand::new(data);
                 ser_cmd.execute(&mut game);
@@ -298,7 +301,7 @@ impl Game<'_> {
                         game.world.characters.iter().map(
                             |id| game.world.make_cmd_update_character(*id)
                         ).for_each(|cmd| match cmd {
-                            Some(cmd) => game.connection.send_raw(SerializedServerCommand::from(&cmd).data),
+                            Some(cmd) => game.connection.send_udp(SerializedServerCommand::from(&cmd).data),
                             _ => ()
                         });
                     },
@@ -349,12 +352,12 @@ impl Game<'_> {
                 ["hello", "world"] => Ok(Some(format!("Hello world!"))),
                 ["send", _, ..] => {
                     let ser = SerializedServerCommand::from(&ChatMessage::new(String::from(&command[("send ".len() + 1)..])));
-                    self.connection.send_raw(ser.data);
+                    self.connection.send_udp(ser.data);
                     Ok(None)
                 },
                 ["echo", _, ..] => {
                     let ser = SerializedServerCommand::from(&EchoMessage::new(String::from(&command[("echo ".len() + 1)..])));
-                    self.connection.send_raw(ser.data);
+                    self.connection.send_udp(ser.data);
                     Ok(None)
                 },
                 ["print", _, ..] => Ok(Some(String::from(&command[("/print ".len())..]))),
@@ -368,16 +371,16 @@ impl Game<'_> {
                 },
                 ["stopserver"] => {
                     let ser = SerializedServerCommand::from(&StopServer());
-                    self.connection.send_raw(ser.data);
+                    self.connection.send_udp(ser.data);
                     Ok(Some(format!("Stop command sent")))
                 },
                 ["genchar"] => {
                     let ser = SerializedServerCommand::from(&GenerateCharacter::new());
-                    self.connection.send_raw(ser.data);
+                    self.connection.send_udp(ser.data);
                     Ok(Some(format!("Character gen command sent")))
                 },
                 ["login", typ, ..] => {
-                    self.connection.send_raw(
+                    self.connection.send_udp(
                         SerializedServerCommand::from(&PlayerLogIn {
                             existing: match *typ {
                                 "new" => false,
@@ -396,7 +399,7 @@ impl Game<'_> {
                     Ok(None)
                 },
                 ["logout"] => {
-                    self.connection.send_raw(
+                    self.connection.send_udp(
                         SerializedServerCommand::from(&PlayerLogOut).data
                     );
                     Ok(None)
