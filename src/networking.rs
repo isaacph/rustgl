@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, collections::VecDeque};
+use std::{net::SocketAddr, collections::VecDeque, mem::MaybeUninit, cmp};
 
 use socket2::{Socket, Domain, Type, Protocol, SockAddr};
 use std::io::Result;
@@ -43,6 +43,78 @@ struct TcpRecvState {
     buffer: [u8; MAX_TCP_MESSAGE_SIZE],
     length: usize,
     remaining: usize,
+    failure: Option<String>
+}
+
+impl TcpRecvState {
+    pub fn receive(&mut self, data: &[MaybeUninit<u8>]) -> Vec<Vec<u8>> {
+        let mut messages: Vec<Vec<u8>> = vec![];
+
+        let mut extension_read_start = 0;
+        let extension: &[u8] = unsafe {
+            std::mem::transmute(data)
+        };
+
+        // work until reaching the end of the current extension of data
+        while extension_read_start < extension.len() {
+            // we need to find another remaining number of bytes to process
+            if self.remaining == 0 {
+                if self.length + extension.len() - extension_read_start < 4 {
+                    // copy the rest of extension in
+                    let copy_len = extension.len() - extension_read_start;
+                    self.buffer[self.length..self.length + copy_len]
+                        .copy_from_slice(&extension[extension_read_start..]);
+                        self.length += copy_len;
+                    //extension_read_start += copy_len; // will not be read again
+                    break;
+
+                } else if self.length >= 4 {
+                    // this shouldn't happen
+                    panic!("Logic error decoding TCP message!");
+
+                } else {
+                    // we have enough bytes to find message length
+                    // remove remaining message length bytes from extension
+                    let copy_len = 4 - self.length;
+                    self.buffer[self.length..self.length + copy_len].copy_from_slice(
+                        &extension[extension_read_start..extension_read_start + copy_len]);
+                    //self.length += extend_by; // will be cleared anyway
+                    extension_read_start += copy_len;
+
+                    // find full message length
+                    let remaining_in_bytes: [u8; 4] = self.buffer[0..4].try_into().unwrap();
+                    self.remaining = u32::from_be_bytes(remaining_in_bytes) as usize;
+
+                    // clear message buffer (should have only 4 bytes)
+                    self.length = 0;
+                }
+            }
+            if self.remaining > MAX_TCP_MESSAGE_SIZE {
+                self.failure = Some(format!("Client attempted to send message that was too big: {}", self.remaining));
+                break;
+            }
+            if self.remaining > 0 {
+                // copy either remaining message bytes, or all new bytes, whichever is smaller
+                let copy_len = cmp::min(self.remaining, extension.len() - extension_read_start);
+                self.buffer[self.length..self.length + copy_len]
+                    .copy_from_slice(&extension[extension_read_start..]);
+                    self.length += copy_len;
+                    self.remaining -= copy_len;
+                extension_read_start += copy_len;
+
+                // if we copied all remaining message bytes
+                if self.remaining == 0 {
+                    // we finished a packet!
+                    // store the finished message
+                    let finished_message = self.buffer[0..self.length].to_vec();
+                    messages.push(finished_message);
+                    // clear the message
+                    self.length = 0;
+                }
+            }
+        }
+        messages
+    }
 }
 
 struct TcpSendState {
@@ -53,8 +125,42 @@ struct TcpSendState {
     position: usize
 }
 
+impl TcpSendState {
+    pub fn next_send(&self) -> Option<&[u8]> {
+        if self.position < self.length {
+            Some(&self.buffer[self.position..self.length])
+        } else {
+            None
+        }
+    }
+    pub fn update_buffer(&mut self, sent: usize) {
+        self.position += sent;
+        if self.position >= self.length {
+            if let Some(next) = self.queue.pop_front() {
+                let length: [u8; 4] = u32::to_be_bytes(next.len() as u32);
+                self.buffer[0..4].copy_from_slice(&length);
+                self.buffer[4..4 + next.len()].copy_from_slice(next.as_slice());
+                self.position = 0;
+                self.length = next.len();
+                self.queue_size -= next.len();
+            }
+        }
+    }
+    pub fn enqueue(&mut self, packet: Vec<u8>) -> std::result::Result<(), String> {
+        if packet.len() + 4 > MAX_TCP_MESSAGE_SIZE {
+            Err(format!("Tried to send message that was too big: {} > {}", packet.len() + 4, MAX_TCP_MESSAGE_SIZE))
+        } else if self.queue_size + packet.len() > MAX_TCP_MESSAGE_QUEUE_SIZE {
+            Err(format!("Exceeded maximum message queue size for client"))
+        } else {
+            self.queue_size += packet.len();
+            self.queue.push_back(packet);
+            self.update_buffer(0);
+            Ok(())
+        }
+    }
+}
+
 pub mod server {
-    use std::cmp;
     use std::collections::{HashMap, VecDeque};
     use std::fmt::Display;
     use std::io::Result;
@@ -136,7 +242,8 @@ pub mod server {
                 tcp_recv: TcpRecvState {
                     buffer: [0; MAX_TCP_MESSAGE_SIZE],
                     length: 0,
-                    remaining: 0
+                    remaining: 0,
+                    failure: None
                 },
                 tcp_send: TcpSendState {
                     buffer: [0; MAX_TCP_MESSAGE_SIZE],
@@ -259,81 +366,21 @@ pub mod server {
                             // no data left
                             break;
                         } else {
-                            // process the packets out of the socket
-
-                            // convert current chunk to readable array
-                            // read_start is where we are currently at in processing
-                            let mut extension_read_start = 0;
-                            let extension: &[u8] = unsafe {
-                                std::mem::transmute(&self.read_buffer[0..size])
-                            };
-
-                            // work until reaching the end of the current extension of data
                             let msg = &mut info.tcp_recv;
-                            while extension_read_start < extension.len() {
-                                // we need to find another remaining number of bytes to process
-                                if msg.remaining == 0 {
-                                    if msg.length + extension.len() - extension_read_start < 4 {
-                                        // copy the rest of extension in
-                                        let copy_len = extension.len() - extension_read_start;
-                                        msg.buffer[msg.length..msg.length + copy_len]
-                                            .copy_from_slice(&extension[extension_read_start..]);
-                                        msg.length += copy_len;
-                                        //extension_read_start += copy_len; // will not be read again
-                                        break;
-
-                                    } else if msg.length >= 4 {
-                                        // this shouldn't happen
-                                        panic!("Logic error decoding TCP message!");
-
-                                    } else {
-                                        // we have enough bytes to find message length
-                                        // remove remaining message length bytes from extension
-                                        let copy_len = 4 - msg.length;
-                                        msg.buffer[msg.length..msg.length + copy_len].copy_from_slice(
-                                            &extension[extension_read_start..extension_read_start + copy_len]);
-                                        //msg.length += extend_by; // will be cleared anyway
-                                        extension_read_start += copy_len;
-
-                                        // find full message length
-                                        let remaining_in_bytes: [u8; 4] = msg.buffer[0..4].try_into().unwrap();
-                                        msg.remaining = u32::from_be_bytes(remaining_in_bytes) as usize;
-
-                                        // clear message buffer (should have only 4 bytes)
-                                        msg.length = 0;
+                            // process the packets out of the socket
+                            let mut packets = msg.receive(&self.read_buffer[0..size]);
+                            if !packets.is_empty() {
+                                match messages.get_mut(id) {
+                                    Some(list) => list.append(&mut packets),
+                                    None => {
+                                        messages.insert(*id, packets);
                                     }
-                                }
-                                if msg.remaining > MAX_TCP_MESSAGE_SIZE {
-                                    should_kick = true;
-                                    println!("Client attempted to send message that was too big: {}", msg.remaining);
-                                    break;
-                                }
-                                if msg.remaining > 0 {
-                                    // copy either remaining message bytes, or all new bytes, whichever is smaller
-                                    let copy_len = cmp::min(msg.remaining, extension.len() - extension_read_start);
-                                    msg.buffer[msg.length..msg.length + copy_len]
-                                        .copy_from_slice(&extension[extension_read_start..]);
-                                    msg.length += copy_len;
-                                    msg.remaining -= copy_len;
-                                    extension_read_start += copy_len;
-
-                                    // if we copied all remaining message bytes
-                                    if msg.remaining == 0 {
-                                        // we finished a packet!
-                                        // store the finished message
-                                        let finished_message = msg.buffer[0..msg.length].to_vec();
-                                        match messages.get_mut(id) {
-                                            Some(list) => list.push(finished_message),
-                                            None => {
-                                                messages.insert(*id, vec![finished_message]);
-                                            }
-                                        };
-                                        // clear the message
-                                        msg.length = 0;
-                                    }
-                                }
+                                };
                             }
-                            // reached end of current extension of data
+                            if let Some(err) = &msg.failure {
+                                should_kick = true;
+                                println!("Kicking client: {}", err);
+                            }
                         },
                         Err(v) => match v.kind() {
                             std::io::ErrorKind::WouldBlock => break,
@@ -407,10 +454,10 @@ pub mod server {
                 let data = &mut info.tcp_send;
                 loop {
                     // send as many bytes of previous unsent message
-                    while data.position < data.length {
-                        match info.tcp_socket.send(&data.buffer[data.position..data.length]) {
+                    if let Some(buffer) = data.next_send() {
+                        match info.tcp_socket.send(buffer) {
                             Ok(sent) => {
-                                data.position += sent;
+                                data.update_buffer(sent);
                             },
                             Err(v) => match v.kind() {
                                 std::io::ErrorKind::WouldBlock => break,
@@ -425,19 +472,6 @@ pub mod server {
                             }
                         }
                     }
-                    // choose new message if there are none currently being sent
-                    if data.position >= data.length {
-                        if let Some(next) = data.queue.pop_front() {
-                            data.buffer[0..next.len()].copy_from_slice(next.as_slice());
-                            data.position = 0;
-                            data.length = next.len();
-                            data.queue_size -= next.len();
-                        } else {
-                            break;
-                        }
-                    } else { // can happen if error on prev loop
-                        break;
-                    }
                 }
             }
         }
@@ -450,6 +484,7 @@ pub mod server {
         pub fn send_tcp(&mut self, receivers: Vec<ConnectionID>, data: &Vec<u8>) {
             assert!(data.len() <= MAX_TCP_MESSAGE_SIZE);
             // eventually: reuse the same data to send to each receiver
+            let mut to_kick = vec![];
             for id in receivers {
                 let info = match self.connection_data.get_mut(&id) {
                     Some(info) => info,
@@ -458,8 +493,16 @@ pub mod server {
                         break
                     }
                 };
-                info.tcp_send.queue.push_back(data.clone());
-                info.tcp_send.queue_size += data.len();
+                match info.tcp_send.enqueue(data.clone()) {
+                    Ok(()) => (),
+                    Err(err) => {
+                        println!("Kicking client: {}", err);
+                        to_kick.push(id);
+                    }
+                }
+            }
+            for id in to_kick {
+                self.kick(&id);
             }
         }
 
@@ -542,11 +585,11 @@ pub mod client {
                 }
             };
             let mut connection = Connection {
-                server_address: server_address_obj,
+                server_address: (*server_address).into(),
                 server_address_socket: *server_address,
                 message_queue: Vec::new(),
-                udp_socket: None,
-                tcp_socket: None,
+                udp_socket,
+                tcp_socket,
                 tcp_send: TcpSendState {
                     queue: VecDeque::new(),
                     queue_size: 0,
@@ -557,20 +600,22 @@ pub mod client {
                 tcp_recv: TcpRecvState {
                     buffer: [0; MAX_TCP_MESSAGE_SIZE],
                     length: 0,
-                    remaining: 0
+                    remaining: 0,
+                    failure: None
                 },
                 read_buffer: [MaybeUninit::zeroed(); 1<<20]
             };
-            let error = match connection.connect() {
-                Ok(()) => None,
-                Err(e) => Some(e)
+            let error = match (error, connection.connect()) {
+                (Some(e), _) => Some(e),
+                (None, Ok(())) => None,
+                (None, Err(e)) => Some(e)
             };
             (connection, error)
         }
 
         pub fn connect(&mut self) -> Result<()> {
             let mut error = None;
-            (self.udp_socket, self.tcp_socket) = match (make_udp_socket(None), make_tcp_socket(None, Some(self.server_address))) {
+            (self.udp_socket, self.tcp_socket) = match (make_udp_socket(None), make_tcp_socket(None, Some(self.server_address_socket.into()))) {
                 (Ok(udp_socket), Ok(tcp_socket)) => (Some(udp_socket), Some(tcp_socket)),
                 (Err(e1), _) => {
                     error = Some(e1);
@@ -588,6 +633,7 @@ pub mod client {
         }
 
         pub fn disconnect(&mut self) {
+            println!("Disconnecting from server");
             (self.udp_socket, self.tcp_socket) = (None, None);
         }
 
@@ -602,7 +648,8 @@ pub mod client {
 
         pub fn poll(&mut self) -> Vec<Vec<u8>> {
             let mut messages: Vec<Vec<u8>> = Vec::new();
-            if let (Some(udp_socket), Some(tcp_socket)) = (self.udp_socket, self.tcp_socket) {
+            if let (Some(udp_socket), Some(tcp_socket)) = (&self.udp_socket, &self.tcp_socket) {
+                // get udp packets
                 loop {
                     match udp_socket.recv_from(&mut self.read_buffer) {
                         Ok((size, addr)) => {
@@ -635,20 +682,34 @@ pub mod client {
                         }
                     };
                 }
+                // get tcp packets
+                let mut quit = None;
                 loop {
                     match tcp_socket.recv(&mut self.read_buffer) {
-                        Ok(size) => {
-
+                        Ok(size) => if size == 0 {
+                            break;
+                        } else {
+                            let mut packets = self.tcp_recv.receive(&self.read_buffer[0..size]);
+                            messages.append(&mut packets);
+                            if let Some(err) = &self.tcp_recv.failure {
+                                quit = Some(err.clone());
+                                break;
+                            }
                         },
                         Err(v) => {
                             match v.kind() {
                                 ErrorKind::WouldBlock => (),
                                 _ => {
-                                    println!("Error reading TCP message: {}", v);
+                                    quit = Some(v.to_string());
+                                    break;
                                 }
                             }
                         }
                     }
+                }
+                if let Some(err) = quit {
+                    println!("Error on TCP stream: {}", err);
+                    self.disconnect();
                 }
             }
             messages
@@ -656,7 +717,7 @@ pub mod client {
     
         pub fn flush(&mut self) {
             let mut failed: Vec<Vec<u8>> = Vec::new();
-            if let Some(udp_socket) = self.udp_socket {
+            if let (Some(udp_socket), Some(tcp_socket)) = (&mut self.udp_socket, &mut self.tcp_socket) {
                 for data in self.message_queue.drain(0..self.message_queue.len()) {
                     let addr = &self.server_address;
                     let written = udp_socket.send_to(data.as_slice(), addr);
@@ -680,18 +741,30 @@ pub mod client {
                         }
                     }
                 }
+                self.message_queue.append(&mut failed);
+
+                // send tcp messages
+                let mut quit = None;
+                loop {
+                    if let Some(buffer) = self.tcp_send.next_send() {
+                        match tcp_socket.send(buffer) {
+                            Ok(sent) => {
+                                self.tcp_send.update_buffer(sent);
+                            },
+                            Err(err) => {
+                                quit = Some(err);
+                                break;
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(err) = quit {
+                    println!("Error on TCP send: {}", err);
+                    self.disconnect();
+                }
             }
-            self.message_queue.append(&mut failed);
-            // match error {
-            //     None => {
-            //         self.message_queue.clear();
-            //         Ok(())
-            //     },
-            //     Some(err) => {
-            //         self.message_queue = self.message_queue.split_off(stopped);
-            //         Err(err)
-            //     }
-            // }
         }
 
         pub fn send_udp(&mut self, data: Vec<u8>) {
@@ -702,11 +775,7 @@ pub mod client {
         }
 
         pub fn send_tcp(&mut self, data: Vec<u8>) {
-            if data.len() > MAX_TCP_MESSAGE_SIZE {
-                panic!("Client attempted to send packet larger than TCP packet size: {} > {}", data.len(), MAX_TCP_MESSAGE_SIZE);
-            }
-            self.tcp_send.queue_size += data.len();
-            self.tcp_send.queue.push_back(data);
+            self.tcp_send.enqueue(data).unwrap();
         }
     }
 }

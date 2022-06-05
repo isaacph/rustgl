@@ -135,16 +135,20 @@ impl Game<'_> {
         let mut font_library = graphics::text::FontLibrary::new();
         let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
         let simple_render = graphics::simple::Renderer::new_square();
+        let (connection, option_error) = networking::client::Connection::new(default_server);
         let mut game = Game {
             window_size: Vector2::<i32>::new(width, height),
             ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
             chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
             state: State::DEFAULT,
-            connection: {
-                let (c, _) = networking::client::Connection::new(default_server);
-                c
-            },
+            connection: connection,
             world: World::new()
+        };
+        match option_error {
+            Some(error) => {
+                game.chatbox.println(format!("Error initializing connection: {:?}", error).as_str());
+            },
+            None => ()
         };
         game.window_size(width, height);
         let render = graphics::textured::Renderer::new_square();

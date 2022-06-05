@@ -34,7 +34,10 @@ fn echo_server(port: u16) -> Result<()> {
 }
 
 fn console_client(address: SocketAddr) -> Result<()> {
-    let mut client = networking::client::Connection::new(&address);
+    let (mut client, err) = networking::client::Connection::new(&address);
+    if let Some(err) = err {
+        return Err(err);
+    }
     let stdin_channel = {
         let (tx, rx) = mpsc::channel::<String>();
         thread::spawn(move || loop {
