@@ -25,22 +25,28 @@ fn make_tcp_socket(port: Option<u16>, addr: Option<SockAddr>) -> Result<Socket> 
     let socket: Socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
-    let address: SocketAddr = format!("127.0.0.1:{}",
+    let address: SocketAddr = format!("0.0.0.0:{}",
         match port {Some(port) => port, _ => 0}
     ).parse().unwrap();
     let address = address.into();
     socket.bind(&address)?;
-    socket.listen(128)?;
     match addr {
-        Some(addr) => socket.connect(&addr)?,
-        None => ()
-    };
-
-    Ok(socket)
+        Some(addr) => match socket.connect(&addr) {
+            Ok(()) => Ok(socket),
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::WouldBlock => Ok(socket), // this is what will happen
+                _ => Err(err),
+            }
+        },
+        None => {
+            socket.listen(128)?;
+            Ok(socket)
+        }
+    }
 }
 
 struct TcpRecvState {
-    buffer: [u8; MAX_TCP_MESSAGE_SIZE],
+    buffer: Box<[u8]>,
     length: usize,
     remaining: usize,
     failure: Option<String>
@@ -120,7 +126,7 @@ impl TcpRecvState {
 struct TcpSendState {
     queue: VecDeque<Vec<u8>>,
     queue_size: usize,
-    buffer: [u8; MAX_TCP_MESSAGE_SIZE],
+    buffer: Box<[u8]>,
     length: usize,
     position: usize
 }
@@ -209,26 +215,26 @@ pub mod server {
 
     pub struct ServerConnection {
         udp_socket: Socket,
-        tcp_socket: Socket,
+        // tcp_socket: Socket,
         connection_data: HashMap<ConnectionID, ConnectionInfo>,
         addr_id_map: HashMap<SocketAddr, ConnectionID>,
         all_connection_ids: Vec<ConnectionID>,
         generator: ConnectionIDGenerator,
         udp_message_queue: Vec<(Vec<ConnectionID>, Vec<u8>)>,
-        read_buffer: [MaybeUninit<u8>; 1<<20]
+        read_buffer: Box<[MaybeUninit<u8>]>
     }
 
     impl ServerConnection {
-        pub fn new(port: u16) -> Result<ServerConnection> {
+        pub fn new(port_udp: u16, port_tcp: u16) -> Result<ServerConnection> {
             Ok(ServerConnection {
-                udp_socket: make_udp_socket(Some(port))?,
-                tcp_socket: make_tcp_socket(Some(port), None)?,
+                udp_socket: make_udp_socket(Some(port_udp))?,
+                // tcp_socket: make_tcp_socket(Some(port_tcp), None)?,
                 connection_data: HashMap::new(),
                 addr_id_map: HashMap::new(),
                 all_connection_ids: Vec::new(),
                 generator: ConnectionIDGenerator::new(),
                 udp_message_queue: Vec::new(),
-                read_buffer: [MaybeUninit::<u8>::uninit(); 1<<20]
+                read_buffer: vec![MaybeUninit::<u8>::uninit()].into_boxed_slice()
             })
         }
 
@@ -240,13 +246,13 @@ pub mod server {
                 last_message: SystemTime::now(),
                 tcp_socket,
                 tcp_recv: TcpRecvState {
-                    buffer: [0; MAX_TCP_MESSAGE_SIZE],
+                    buffer: vec![0u8; MAX_TCP_MESSAGE_SIZE].into_boxed_slice(),
                     length: 0,
                     remaining: 0,
                     failure: None
                 },
                 tcp_send: TcpSendState {
-                    buffer: [0; MAX_TCP_MESSAGE_SIZE],
+                    buffer: vec![0; MAX_TCP_MESSAGE_SIZE].into_boxed_slice(),
                     length: 0,
                     position: 0,
                     queue: VecDeque::new(),
@@ -258,6 +264,7 @@ pub mod server {
         }
 
         pub fn kick(&mut self, id: &ConnectionID) -> bool {
+            println!("Connection was kicked: {}", id);
             match self.connection_data.remove(id) {
                 Some(data) => {
                     self.addr_id_map.remove(&data.address);
@@ -271,6 +278,7 @@ pub mod server {
                     if idx != usize::MAX {
                         self.all_connection_ids.remove(idx);
                     }
+                    println!("Connection was kicked: {}", id);
                     true
                 },
                 None => false
@@ -288,8 +296,9 @@ pub mod server {
             // udp polling
             let mut messages: HashMap<ConnectionID, Vec<Vec<u8>>> = HashMap::new();
             loop {
-                match self.udp_socket.recv_from(&mut self.read_buffer) {
+                match self.udp_socket.recv_from(self.read_buffer.as_mut()) {
                     Ok((size, addr)) => {
+                        println!("Tentatively received {}", size);
                         let addr: SocketAddr = match addr.as_socket() {
                             Some(addr) => addr,
                             None => {
@@ -332,74 +341,74 @@ pub mod server {
                 };
             }
 
-            // tcp polling
-            // accept new clients
-            loop {
-                match self.tcp_socket.accept() {
-                    Ok((tcp_socket, addr)) => {
-                        let addr: SocketAddr = match addr.as_socket() {
-                            Some(addr) => addr,
-                            None => {
-                                println!("Error understanding connection address");
-                                continue
-                            }
-                        };
-                        self.new_connection(&addr, tcp_socket);
-                    },
-                    Err(v) => match v.kind() {
-                        std::io::ErrorKind::WouldBlock => break,
-                        _ => {
-                            println!("Error reading TCP message: {}", v);
-                        }
-                    }
-                }
-            }
+            // // tcp polling
+            // // accept new clients
+            // loop {
+            //     match self.tcp_socket.accept() {
+            //         Ok((tcp_socket, addr)) => {
+            //             let addr: SocketAddr = match addr.as_socket() {
+            //                 Some(addr) => addr,
+            //                 None => {
+            //                     println!("Error understanding connection address");
+            //                     continue
+            //                 }
+            //             };
+            //             self.new_connection(&addr, tcp_socket);
+            //         },
+            //         Err(v) => match v.kind() {
+            //             std::io::ErrorKind::WouldBlock => break,
+            //             _ => {
+            //                 println!("Error reading TCP message: {}", v);
+            //             }
+            //         }
+            //     }
+            // }
 
-            // listen to existing clients on tcp sockets
-            let mut to_kick = vec![];
-            for (id, info) in &mut self.connection_data {
-                let mut should_kick = false;
-                // try to get all of the data
-                while !should_kick {
-                    match info.tcp_socket.recv(&mut self.read_buffer) {
-                        Ok(size) => if size == 0 {
-                            // no data left
-                            break;
-                        } else {
-                            let msg = &mut info.tcp_recv;
-                            // process the packets out of the socket
-                            let mut packets = msg.receive(&self.read_buffer[0..size]);
-                            if !packets.is_empty() {
-                                match messages.get_mut(id) {
-                                    Some(list) => list.append(&mut packets),
-                                    None => {
-                                        messages.insert(*id, packets);
-                                    }
-                                };
-                            }
-                            if let Some(err) = &msg.failure {
-                                should_kick = true;
-                                println!("Kicking client: {}", err);
-                            }
-                        },
-                        Err(v) => match v.kind() {
-                            std::io::ErrorKind::WouldBlock => break,
-                            _ => {
-                                println!("Error reading TCP message: {}", v);
-                                // an error will desync the data stream, so we need the connection to be reset
-                                should_kick = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if should_kick {
-                    to_kick.push(*id);
-                }
-            }
-            for id in to_kick {
-                self.kick(&id);
-            }
+            // // listen to existing clients on tcp sockets
+            // let mut to_kick = vec![];
+            // for (id, info) in &mut self.connection_data {
+            //     let mut should_kick = false;
+            //     // try to get all of the data
+            //     while !should_kick {
+            //         match info.tcp_socket.recv(self.read_buffer.as_mut()) {
+            //             Ok(size) => if size == 0 {
+            //                 // no data left
+            //                 break;
+            //             } else {
+            //                 let msg = &mut info.tcp_recv;
+            //                 // process the packets out of the socket
+            //                 let mut packets = msg.receive(&self.read_buffer[0..size]);
+            //                 if !packets.is_empty() {
+            //                     match messages.get_mut(id) {
+            //                         Some(list) => list.append(&mut packets),
+            //                         None => {
+            //                             messages.insert(*id, packets);
+            //                         }
+            //                     };
+            //                 }
+            //                 if let Some(err) = &msg.failure {
+            //                     should_kick = true;
+            //                     println!("Kicking client: {}", err);
+            //                 }
+            //             },
+            //             Err(v) => match v.kind() {
+            //                 std::io::ErrorKind::WouldBlock => break,
+            //                 _ => {
+            //                     println!("Error reading TCP message: {}", v);
+            //                     // an error will desync the data stream, so we need the connection to be reset
+            //                     should_kick = true;
+            //                     break;
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     if should_kick {
+            //         to_kick.push(*id);
+            //     }
+            // }
+            // for id in to_kick {
+            //     self.kick(&id);
+            // }
             messages
         }
 
@@ -449,31 +458,31 @@ pub mod server {
             }
             self.udp_message_queue.append(&mut retry);
 
-            // tcp sending
-            for (id, info) in &mut self.connection_data {
-                let data = &mut info.tcp_send;
-                loop {
-                    // send as many bytes of previous unsent message
-                    if let Some(buffer) = data.next_send() {
-                        match info.tcp_socket.send(buffer) {
-                            Ok(sent) => {
-                                data.update_buffer(sent);
-                            },
-                            Err(v) => match v.kind() {
-                                std::io::ErrorKind::WouldBlock => break,
-                                _ => {
-                                    println!("Error writing TCP {} bytes to {} ({}): {}",
-                                        data.length - data.position,
-                                        info.address,
-                                        id,
-                                        v);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // // tcp sending
+            // for (id, info) in &mut self.connection_data {
+            //     let data = &mut info.tcp_send;
+            //     loop {
+            //         // send as many bytes of previous unsent message
+            //         if let Some(buffer) = data.next_send() {
+            //             match info.tcp_socket.send(buffer) {
+            //                 Ok(sent) => {
+            //                     data.update_buffer(sent);
+            //                 },
+            //                 Err(v) => match v.kind() {
+            //                     std::io::ErrorKind::WouldBlock => break,
+            //                     _ => {
+            //                         println!("Error writing TCP {} bytes to {} ({}): {}",
+            //                             data.length - data.position,
+            //                             info.address,
+            //                             id,
+            //                             v);
+            //                         break;
+            //                     }
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
         }
 
         pub fn send_udp(&mut self, receivers: Vec<ConnectionID>, data: Vec<u8>) {
@@ -558,64 +567,70 @@ pub mod client {
 
     use super::{make_udp_socket, MAX_UDP_MESSAGE_SIZE, TcpSendState, MAX_TCP_MESSAGE_SIZE, TcpRecvState, make_tcp_socket};
 
+    #[derive(Clone, Eq, PartialEq)]
+    pub enum TcpConnectionStatus {
+        NotConnected,
+        Connecting,
+        Connected
+    }
+
     pub struct Connection {
         udp_socket: Option<Socket>,
         tcp_socket: Option<Socket>,
+        tcp_connection_status: TcpConnectionStatus,
         tcp_send: TcpSendState,
         tcp_recv: TcpRecvState,
-        server_address: SockAddr,
-        server_address_socket: SocketAddr,
+        server_address_udp: SockAddr,
+        server_address_socket_udp: SocketAddr,
+        server_address_tcp: SockAddr,
+        server_address_socket_tcp: SocketAddr,
         message_queue: Vec<Vec<u8>>,
-        read_buffer: [MaybeUninit<u8>; 1<<20]
+        read_buffer: Box<[MaybeUninit<u8>]>
     }
 
     impl Connection {
-        pub fn new(server_address: &SocketAddr) -> (Connection, Option<Error>) {
-            let server_address_obj: SockAddr = (*server_address).into();
-            let mut error = None;
-            let (udp_socket, tcp_socket) = match (make_udp_socket(None), make_tcp_socket(None, Some(server_address_obj))) {
-                (Ok(udp_socket), Ok(tcp_socket)) => (Some(udp_socket), Some(tcp_socket)),
-                (Err(e1), _) => {
-                    error = Some(e1);
-                    (None, None)
-                },
-                (_, Err(e2)) => {
-                    error = Some(e2);
-                    (None, None)
-                }
-            };
+        pub fn new(server_address_udp: &SocketAddr, server_address_tcp: &SocketAddr) -> (Connection, Option<Error>) {
             let mut connection = Connection {
-                server_address: (*server_address).into(),
-                server_address_socket: *server_address,
+                server_address_udp: (*server_address_udp).into(),
+                server_address_socket_udp: *server_address_udp,
+                server_address_tcp: (*server_address_tcp).into(),
+                server_address_socket_tcp: *server_address_tcp,
                 message_queue: Vec::new(),
-                udp_socket,
-                tcp_socket,
+                udp_socket: None,
+                tcp_socket: None,
+                tcp_connection_status: TcpConnectionStatus::NotConnected,
                 tcp_send: TcpSendState {
                     queue: VecDeque::new(),
                     queue_size: 0,
-                    buffer: [0; MAX_TCP_MESSAGE_SIZE],
+                    buffer: vec![0; MAX_TCP_MESSAGE_SIZE].into_boxed_slice(),
                     length: 0,
                     position: 0
                 },
                 tcp_recv: TcpRecvState {
-                    buffer: [0; MAX_TCP_MESSAGE_SIZE],
+                    buffer: vec![0; MAX_TCP_MESSAGE_SIZE].into_boxed_slice(),
                     length: 0,
                     remaining: 0,
                     failure: None
                 },
-                read_buffer: [MaybeUninit::zeroed(); 1<<20]
+                read_buffer: vec![MaybeUninit::zeroed(); 1<<20].into_boxed_slice()
             };
-            let error = match (error, connection.connect()) {
-                (Some(e), _) => Some(e),
-                (None, Ok(())) => None,
-                (None, Err(e)) => Some(e)
+            let error = match connection.connect() {
+                Ok(()) => None,
+                Err(e) => Some(e)
             };
             (connection, error)
         }
 
         pub fn connect(&mut self) -> Result<()> {
+            match (&self.udp_socket, &self.tcp_socket) {
+                (Some(_), _) |
+                (_, Some(_)) => {
+                    self.disconnect();
+                },
+                _ => ()
+            }
             let mut error = None;
-            (self.udp_socket, self.tcp_socket) = match (make_udp_socket(None), make_tcp_socket(None, Some(self.server_address_socket.into()))) {
+            (self.udp_socket, self.tcp_socket) = match (make_udp_socket(None), make_tcp_socket(None, Some(self.server_address_socket_tcp.into()))) {
                 (Ok(udp_socket), Ok(tcp_socket)) => (Some(udp_socket), Some(tcp_socket)),
                 (Err(e1), _) => {
                     error = Some(e1);
@@ -627,7 +642,10 @@ pub mod client {
                 }
             };
             match error {
-                None => Ok(()),
+                None => {
+                    self.tcp_connection_status = TcpConnectionStatus::Connecting;
+                    Ok(())
+                },
                 Some(e1) => Err(e1)
             }
         }
@@ -637,21 +655,64 @@ pub mod client {
             (self.udp_socket, self.tcp_socket) = (None, None);
         }
 
-        pub fn get_server_address(&self) -> SocketAddr {
-            self.server_address_socket
+        pub fn get_server_address_udp(&self) -> (SocketAddr, SocketAddr) {
+            (self.server_address_socket_udp, self.server_address_socket_tcp)
         }
 
-        pub fn set_server_address(&mut self, addr: &SocketAddr) {
-            self.server_address_socket = addr.clone();
-            self.server_address = (*addr).into();
+        pub fn set_server_address(&mut self, addr_udp: &SocketAddr, addr_tcp: &SocketAddr) {
+            self.server_address_socket_udp = addr_udp.clone();
+            self.server_address_udp = (*addr_udp).into();
+            self.server_address_socket_tcp = addr_tcp.clone();
+            self.server_address_tcp = (*addr_tcp).into();
         }
 
         pub fn poll(&mut self) -> Vec<Vec<u8>> {
+            match self.tcp_connection_status {
+                TcpConnectionStatus::NotConnected => return vec![],
+                TcpConnectionStatus::Connecting => {
+                    // spam connect until it gives an error IsConn
+                    if let Some(tcp_socket) = &mut self.tcp_socket {
+                        match tcp_socket.connect(&self.server_address_tcp) {
+                            Ok(()) => {
+                                println!("Error, confusing connection OK status");
+                                self.disconnect();
+                                return vec![];
+                            },
+                            Err(err) => {
+                                match (err.kind(), err.raw_os_error()) {
+                                    (_, Some(10056)) => {
+                                        // connection works
+                                        println!("Connection works error");
+                                        self.tcp_connection_status = TcpConnectionStatus::Connected;
+                                    },
+                                    (std::io::ErrorKind::WouldBlock, _) => {
+                                        // connection in progress
+                                        println!("{}", err);
+                                        return vec![];
+                                    },
+                                    (_, Some(10037)) => {
+                                        // connection in progress
+                                        println!("{}", err);
+                                        return vec![];
+                                    },
+                                    _ => {
+                                        panic!("What is this error: {}", err);
+                                    },
+                                }
+                            },
+                        }
+                    } else {
+                        self.tcp_connection_status = TcpConnectionStatus::NotConnected;
+                        return vec![];
+                    }
+                },
+                TcpConnectionStatus::Connected => (),
+            }
             let mut messages: Vec<Vec<u8>> = Vec::new();
             if let (Some(udp_socket), Some(tcp_socket)) = (&self.udp_socket, &self.tcp_socket) {
                 // get udp packets
                 loop {
-                    match udp_socket.recv_from(&mut self.read_buffer) {
+                    match udp_socket.recv_from(self.read_buffer.as_mut()) {
                         Ok((size, addr)) => {
                             let addr: SocketAddr = match addr.as_socket() {
                                 Some(addr) => addr,
@@ -660,7 +721,7 @@ pub mod client {
                                     continue
                                 }
                             };
-                            if addr != self.server_address_socket {
+                            if addr != self.server_address_socket_tcp {
                                 println!("Error: received packet from non-server address");
                                 continue;
                             }
@@ -685,7 +746,7 @@ pub mod client {
                 // get tcp packets
                 let mut quit = None;
                 loop {
-                    match tcp_socket.recv(&mut self.read_buffer) {
+                    match tcp_socket.recv(self.read_buffer.as_mut()) {
                         Ok(size) => if size == 0 {
                             break;
                         } else {
@@ -698,7 +759,7 @@ pub mod client {
                         },
                         Err(v) => {
                             match v.kind() {
-                                ErrorKind::WouldBlock => (),
+                                ErrorKind::WouldBlock => break,
                                 _ => {
                                     quit = Some(v.to_string());
                                     break;
@@ -714,12 +775,19 @@ pub mod client {
             }
             messages
         }
-    
+
+        pub fn status(&self) -> TcpConnectionStatus {
+            self.tcp_connection_status.clone()
+        }
+
         pub fn flush(&mut self) {
+            if self.tcp_connection_status != TcpConnectionStatus::Connected {
+                return
+            }
             let mut failed: Vec<Vec<u8>> = Vec::new();
             if let (Some(udp_socket), Some(tcp_socket)) = (&mut self.udp_socket, &mut self.tcp_socket) {
                 for data in self.message_queue.drain(0..self.message_queue.len()) {
-                    let addr = &self.server_address;
+                    let addr = &self.server_address_tcp;
                     let written = udp_socket.send_to(data.as_slice(), addr);
                     match written {
                         Ok(written) => {
