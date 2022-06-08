@@ -9,6 +9,8 @@ extern crate glfw;
 // pub mod world;
 pub mod networking2;
 
+use std::collections::HashMap;
+use std::net::UdpSocket;
 use std::{io::Result, net::SocketAddr, time::Duration};
 use std::env;
 use std::thread;
@@ -35,7 +37,14 @@ use std::io::{self, ErrorKind};
 // }
 
 fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
-    let mut udp = networking2::wrapper::UdpConnection::new(None)?;
+    // let send_to: SocketAddr = format!("127.0.0.1:{}", {
+    //     let mut buffer = String::new();
+    //     io::stdin().read_line(&mut buffer).unwrap();
+    //     buffer.truncate(buffer.len() - 2);
+    //     buffer
+    // }).parse().unwrap();
+    let udp = UdpSocket::bind("0.0.0.0:0")?;
+    udp.set_nonblocking(true)?;
     let stdin_channel = {
         let (tx, rx) = mpsc::channel::<String>();
         thread::spawn(move || loop {
@@ -46,8 +55,9 @@ fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
         });
         rx
     };
+    let mut buffer = vec![0u8; 1024].into_boxed_slice();
     loop {
-        let (recv, err) = udp.recv_all(None);
+        let (recv, err) = udp_recv_all(&udp, buffer.as_mut(), None);
         for (addr, packets) in recv {
             for packet in packets {
                 println!("Received from {:?}: {}", addr, std::str::from_utf8(packet.as_slice()).unwrap());
@@ -56,7 +66,7 @@ fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
         match err {
             Some(err) => match err.kind() {
                 ErrorKind::WouldBlock => (),
-                _ => println!("Error sending: {}", err)
+                _ => println!("Error receiving: {}", err)
             },
             None => ()
         }
@@ -68,7 +78,7 @@ fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
             },
             Err(TryRecvError::Disconnected) => break,
         };
-        match udp.send(&addresses.0, message.as_bytes()) {
+        match udp.send_to(message.as_bytes(), &addresses.0) {
             Ok(sent) => println!("Sent {} bytes", sent),
             Err(err) => match err.kind() {
                 ErrorKind::WouldBlock => (),
@@ -80,28 +90,64 @@ fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
     Ok(())
 }
 
+fn udp_recv_all(socket: &UdpSocket, buffer: &mut [u8], limit: Option<usize>)
+    -> (HashMap<SocketAddr, Vec<Vec<u8>>>, Option<std::io::Error>) {
+    let mut error = None;
+    let mut map: HashMap<SocketAddr, Vec<Vec<u8>>> = HashMap::new();
+    let limit = match limit {
+        Some(limit) => limit,
+        None => usize::MAX
+    };
+    for _ in 0..limit {
+        match socket.recv_from(buffer) {
+            Ok((sent, addr)) => {
+                let packet = Vec::from(&buffer[0..sent]);
+                let spot = map.get_mut(&addr);
+                match spot {
+                    Some(spot) => {
+                        spot.push(packet);
+                    },
+                    None => {
+                        map.insert(addr, vec![packet]);
+                    }
+                }
+            },
+            Err(err) => {
+                error = Some(err);
+                break
+            }
+        }
+    }
+    (map, error)
+}
+
 fn echo_server(ports: (u16, u16)) -> Result<()> {
-    let mut udp = networking2::wrapper::UdpConnection::new(Some(ports.0))?;
-    loop {
-        match udp.recv() {
-            Ok((addr, data)) => {
-                let data = String::from_utf8_lossy(data.as_slice());
-                println!("Recv from {:?}: {}", addr, data);
-                match udp.send(&addr, str::as_bytes(&data)) {
+    let udp = UdpSocket::bind(format!("0.0.0.0:{}", ports.0))?;
+    udp.set_nonblocking(true)?;
+    let mut buffer: Box<[u8]> = vec![0u8; 1024].into_boxed_slice();
+    let mut run = true;
+    while run {
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+        let (recv, err) = udp_recv_all(&udp, &mut buffer, None);
+        for (addr, packets) in recv {
+            for packet in packets {
+                let str = String::from_utf8_lossy(packet.as_slice());
+                println!("Recv from {:?}: {}", addr, str);
+                match udp.send_to(packet.as_slice(), addr) {
                     Ok(size) => println!("Sent {} bytes", size),
                     Err(err) => println!("Error sending: {}", err)
                 }
-                match data.as_ref() {
-                    "stop" => break,
+                match str.as_ref() {
+                    "stop" => run = false,
                     _ => ()
                 }
             }
-            Err(err) => match err.kind() {
-                ErrorKind::WouldBlock => (),
-                _ => {
-                    println!("Echo server recv error: {}", err);
-                }
-            },
+        }
+        if let Some(err) = err {
+            match err.kind() {
+                std::io::ErrorKind::WouldBlock => (),
+                _ => println!("Error receiving: {}", err)
+            }
         }
     }
     Ok(())
