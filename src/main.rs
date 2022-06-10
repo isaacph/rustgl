@@ -10,13 +10,13 @@ extern crate glfw;
 pub mod networking2;
 
 use std::collections::HashMap;
-use std::net::UdpSocket;
+use std::net::{UdpSocket, TcpListener, TcpStream, Shutdown};
 use std::{io::Result, net::SocketAddr, time::Duration};
 use std::env;
 use std::thread;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Receiver};
 use std::sync::mpsc::TryRecvError;
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, Read, Write};
 
 // fn echo_server(port_udp: u16, port_tcp: u16) -> Result<()> {
 //     let mut server = networking::server::ServerConnection::new(port_udp, port_tcp)?;
@@ -45,16 +45,7 @@ fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
     // }).parse().unwrap();
     let udp = UdpSocket::bind("0.0.0.0:0")?;
     udp.set_nonblocking(true)?;
-    let stdin_channel = {
-        let (tx, rx) = mpsc::channel::<String>();
-        thread::spawn(move || loop {
-            let mut buffer = String::new();
-            io::stdin().read_line(&mut buffer).unwrap();
-            buffer.truncate(buffer.len() - 2);
-            tx.send(buffer).unwrap();
-        });
-        rx
-    };
+    let stdin_channel = console_stream();
     let mut buffer = vec![0u8; 1024].into_boxed_slice();
     loop {
         let (recv, err) = udp_recv_all(&udp, buffer.as_mut(), None);
@@ -88,6 +79,24 @@ fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
         std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
     Ok(())
+}
+
+fn grab_console_line(prompt: &str) -> String {
+    let mut buffer = String::new();
+    io::stdout().write(prompt.as_bytes()).unwrap();
+    io::stdout().flush().unwrap();
+    io::stdin().read_line(&mut buffer).unwrap();
+    String::from(buffer.trim())
+}
+
+fn console_stream() -> Receiver<String> {
+    let (tx, rx) = mpsc::channel::<String>();
+    thread::spawn(move || loop {
+        let mut buffer = String::new();
+        io::stdin().read_line(&mut buffer).unwrap();
+        tx.send(buffer.trim_end().into()).unwrap();
+    });
+    rx
 }
 
 fn udp_recv_all(socket: &UdpSocket, buffer: &mut [u8], limit: Option<usize>)
@@ -152,10 +161,164 @@ fn echo_server(ports: (u16, u16)) -> Result<()> {
     }
     Ok(())
 }
+// struct ConnectionInfo {
+//     stream: TcpStream,
+//     write_buffer: Vec<u8>
+// }
+// loop {
+//     match tcp.accept() {
+//         Ok((stream, addr)) => {
+//             println!("New connection from {}", addr);
+//             connections.insert(addr, ConnectionInfo {
+//                 stream,
+//                 write_buffer: vec![]
+//             });
+//         },
+//         Err(err) => match err.kind() {
+//             std::io::ErrorKind::WouldBlock => break,
+//             _ => {
+//                 println!("Error with TCP accept: {}", err);
+//                 break;
+//             }
+//         }
+//     }
+// }
+
+pub fn console_client_tcp(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
+    let addr = addresses.1;
+    let mut stream = TcpStream::connect(addr)?;
+    println!("Connected on {}", stream.local_addr()?);
+    stream.set_nonblocking(true)?;
+    let stdin_channel = console_stream();
+    let mut buffer = vec![0u8; 1024].into_boxed_slice();
+    let mut write_buffer = vec![];
+    loop {
+        match stdin_channel.try_recv() {
+            Ok(msg) => {
+                write_buffer.extend(msg.as_bytes());
+            },
+            Err(TryRecvError::Empty) => (),
+            Err(TryRecvError::Disconnected) => break,
+        }
+        let mut disconnected: Vec<SocketAddr> = vec![];
+        match stream.read(buffer.as_mut()) {
+            Ok(size) => match size {
+                0 => break,
+                _ => {
+                    let data = &buffer[0..size];
+                    let str = String::from_utf8_lossy(data);
+                    println!("Received from {}: {}", addr, str);
+                }
+            },
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::WouldBlock => (),
+                _ => {
+                    println!("Error receiving from {}: {}", addr, err);
+                    disconnected.push(addr);
+                }
+            }
+        }
+        match stream.write(write_buffer.as_mut_slice()) {
+            Ok(sent) => {
+                write_buffer.drain(0..sent);
+            },
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::WouldBlock => (),
+                _ => println!("Error receiving from {}: {}", addr, err)
+            }
+        }
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+    }
+    println!("Disconnected from server.");
+    Ok(())
+}
+
+fn echo_server_tcp(ports: (u16, u16)) -> Result<()> {
+    let tcp = TcpListener::bind(format!("0.0.0.0:{}", ports.1))?;
+    tcp.set_nonblocking(true)?;
+    struct ConnectionInfo {
+        stream: TcpStream,
+        write_buffer: Vec<u8>
+    }
+    let mut connections: HashMap<SocketAddr, ConnectionInfo> = HashMap::new();
+    let mut buffer = Box::new([0u8; 1024]);
+    loop {
+        loop {
+            match tcp.accept() {
+                Ok((stream, addr)) => {
+                    println!("New connection from {}", addr);
+                    connections.insert(addr, ConnectionInfo {
+                        stream,
+                        write_buffer: vec![]
+                    });
+                },
+                Err(err) => match err.kind() {
+                    std::io::ErrorKind::WouldBlock => break,
+                    _ => {
+                        println!("Error with TCP accept: {}", err);
+                        break;
+                    }
+                }
+            }
+        }
+        let mut disconnects = vec![];
+        for (addr, info) in &mut connections {
+            match info.stream.read(buffer.as_mut()) {
+                Ok(size) => match size {
+                    0 => disconnects.push(*addr),
+                    _ => {
+                        let data = &buffer[0..size];
+                        let str = String::from_utf8_lossy(data);
+                        println!("Received from {}: {}", addr, str);
+                        info.write_buffer.extend(data);
+                    }
+                },
+                Err(err) => match err.kind() {
+                    std::io::ErrorKind::WouldBlock => (),
+                    _ => {
+                        println!("Error receiving from {}: {}", addr, err);
+                        disconnects.push(*addr);
+                        continue;
+                    }
+                }
+            }
+            if info.write_buffer.len() > 0 {
+                match info.stream.write(info.write_buffer.as_mut_slice()) {
+                    Ok(sent) => match sent {
+                        0 => disconnects.push(*addr),
+                        _ => {
+                            info.write_buffer.drain(0..sent);
+                        }
+                    },
+                    Err(err) => match err.kind() {
+                        std::io::ErrorKind::WouldBlock => (),
+                        _ => {
+                            println!("Error writing to {}: {}", addr, err);
+                            disconnects.push(*addr);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        for addr in disconnects {
+            if let Some(info) = connections.remove(&addr) {
+                if let Err(err) = info.stream.shutdown(Shutdown::Both) {
+                    println!("Error disconnecting from {}: {}", addr, err);
+                } else {
+                    println!("Disconnected from {}", addr);
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let ports = (1234, 1235);
+    let ports: (u16, u16) =
+                (grab_console_line("UDP port: ").parse().expect("Invalid port"),
+                 grab_console_line("TCP port: ").parse().expect("Invalid port"));
     let addresses: (SocketAddr, SocketAddr) = (
         format!("127.0.0.1:{}", ports.0).parse().unwrap(),
         format!("127.0.0.1:{}", ports.1).parse().unwrap()
@@ -178,6 +341,12 @@ fn main() -> Result<()> {
         },
         "client" => {
             console_client(addresses)?
+        },
+        "tcpclient" => {
+            console_client_tcp(addresses)?
+        },
+        "tcpserver" => {
+            echo_server_tcp(ports)?
         },
         _ => {
             println!("Unknown mode");
