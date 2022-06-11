@@ -4,6 +4,7 @@ extern crate glfw;
 // pub mod chatbox;
 // pub mod networking;
 // pub mod networking_wrapping;
+pub mod networking_commands;
 // pub mod game;
 // pub mod server;
 // pub mod world;
@@ -17,6 +18,8 @@ use std::thread;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::mpsc::TryRecvError;
 use std::io::{self, ErrorKind, Read, Write};
+
+use serde::{Serialize, Deserialize};
 
 // fn echo_server(port_udp: u16, port_tcp: u16) -> Result<()> {
 //     let mut server = networking::server::ServerConnection::new(port_udp, port_tcp)?;
@@ -36,7 +39,7 @@ use std::io::{self, ErrorKind, Read, Write};
 //     Ok(())
 // }
 
-fn console_client(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
+fn console_client_udp(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
     // let send_to: SocketAddr = format!("127.0.0.1:{}", {
     //     let mut buffer = String::new();
     //     io::stdin().read_line(&mut buffer).unwrap();
@@ -130,7 +133,7 @@ fn udp_recv_all(socket: &UdpSocket, buffer: &mut [u8], limit: Option<usize>)
     (map, error)
 }
 
-fn echo_server(ports: (u16, u16)) -> Result<()> {
+fn echo_server_udp(ports: (u16, u16)) -> Result<()> {
     let udp = UdpSocket::bind(format!("0.0.0.0:{}", ports.0))?;
     udp.set_nonblocking(true)?;
     let mut buffer: Box<[u8]> = vec![0u8; 1024].into_boxed_slice();
@@ -200,7 +203,6 @@ pub fn console_client_tcp(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
             Err(TryRecvError::Empty) => (),
             Err(TryRecvError::Disconnected) => break,
         }
-        let mut disconnected: Vec<SocketAddr> = vec![];
         match stream.read(buffer.as_mut()) {
             Ok(size) => match size {
                 0 => break,
@@ -214,7 +216,6 @@ pub fn console_client_tcp(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
                 std::io::ErrorKind::WouldBlock => (),
                 _ => {
                     println!("Error receiving from {}: {}", addr, err);
-                    disconnected.push(addr);
                 }
             }
         }
@@ -224,7 +225,7 @@ pub fn console_client_tcp(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
             },
             Err(err) => match err.kind() {
                 std::io::ErrorKind::WouldBlock => (),
-                _ => println!("Error receiving from {}: {}", addr, err)
+                _ => println!("Error writing to {}: {}", addr, err)
             }
         }
         std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
@@ -238,7 +239,7 @@ fn echo_server_tcp(ports: (u16, u16)) -> Result<()> {
     tcp.set_nonblocking(true)?;
     struct ConnectionInfo {
         stream: TcpStream,
-        write_buffer: Vec<u8>
+        write_buffer: Vec<u8>,
     }
     let mut connections: HashMap<SocketAddr, ConnectionInfo> = HashMap::new();
     let mut buffer = Box::new([0u8; 1024]);
@@ -311,7 +312,351 @@ fn echo_server_tcp(ports: (u16, u16)) -> Result<()> {
             }
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct GetAddress;
+
+#[derive(Serialize, Deserialize)]
+struct SendAddress(String);
+
+impl<'a> ServerCommand<'a> for GetAddress {
+    fn run(self, (addr, server): (&SocketAddr, &mut ServerData)) {
+        let packet: SerializedClientCommand = SendAddress(addr.to_string()).into();
+        match server.udp.send_to(packet.data.as_slice(), addr) {
+            Ok(size) => println!("Sent UDP {} bytes", size),
+            Err(err) => println!("Error UDP sending: {}", err)
+        };
+    }
+}
+
+impl<'a> ClientCommand<'a> for SendAddress {
+    fn run(self, _client: &mut ClientData) {
+        println!("Server sent their view of client's address: {}", self.0);
+    }
+}
+
+commands_execute!(
+    execute_client_command,
+    ClientCommand,
+    ClientCommandID,
+    SerializedClientCommand,
+    &mut ClientData,
+    // list commands here:
+    [
+        SendAddress
+    ]
+);
+
+// for real server-only that doesn't need to execute client commands
+// commands_id!(
+//     ClientCommandID,
+//     SerializedClientCommand,
+//     [
+//         SendAddress
+//     ]
+// );
+
+commands_execute!(
+    execute_server_command,
+    ServerCommand,
+    ServerCommandID,
+    SerializedServerCommand,
+    (&SocketAddr, &mut ServerData),
+    // list commands here:
+    [
+        GetAddress
+    ]
+);
+
+pub struct ClientData {
+    tcp: TcpStream,
+    udp: UdpSocket,
+    addr_tcp: SocketAddr,
+    addr_udp: SocketAddr
+}
+
+pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
+    let mut client = ClientData {
+        tcp: TcpStream::connect(addresses.1)?,
+        udp: UdpSocket::bind("0.0.0.0:0")?,
+        addr_tcp: addresses.1,
+        addr_udp: addresses.0
+    };
+    println!("Connected on {}", client.tcp.local_addr()?);
+    client.tcp.set_nonblocking(true)?;
+    client.udp.set_nonblocking(true)?;
+    let stdin_channel = console_stream();
+    let mut buffer = vec![0u8; 1024].into_boxed_slice();
+    let mut tcp_write_buffer: Vec<u8> = vec![];
+    loop {
+        let mut udp_message = None;
+        match stdin_channel.try_recv() {
+            Ok(msg) => {
+                let split: Vec<&str> = msg.split(" ").collect();
+                match &split[..] {
+                    ["getaddr"] => {
+                        udp_message = Some(SerializedServerCommand::from(GetAddress).data);
+                    },
+                    ["setaddr", _, ..] => {
+                        tcp_write_buffer.extend(msg["setaddr ".len()..msg.len()].as_bytes());
+                        tcp_write_buffer.push(0u8);
+                    }
+                    ["udp", _, ..] => {
+                        udp_message = Some(Vec::from(msg["udp ".len()..msg.len()].as_bytes()));
+                    },
+                    ["tcp", _, ..] => {
+                        tcp_write_buffer.extend(msg["tcp ".len()..msg.len()].as_bytes())
+                    },
+                    _ => println!("Invalid command: {}", msg)
+                };
+                // tcp_write_buffer.extend(msg.as_bytes());
+            },
+            Err(TryRecvError::Empty) => (),
+            Err(TryRecvError::Disconnected) => break,
+        }
+
+        let (recv, err) = udp_recv_all(&client.udp, buffer.as_mut(), None);
+        for (addr, packets) in recv {
+            for packet in packets {
+                println!("Received UDP from {:?}: {}", addr, std::str::from_utf8(packet.as_slice()).unwrap());
+                let command = SerializedClientCommand {
+                    data: packet
+                };
+                match command.execute(&mut client) {
+                    Ok(()) => (),
+                    Err(err) => println!("Error deserializing UDP command: {}", err)
+                }
+            }
+        }
+        match err {
+            Some(err) => match err.kind() {
+                ErrorKind::WouldBlock => (),
+                _ => println!("Error receiving UDP: {}", err)
+            },
+            None => ()
+        }
+        if let Some(message) = udp_message {
+            match client.udp.send_to(message.as_slice(), &client.addr_udp) {
+                Ok(sent) => println!("Sent UDP {} bytes", sent),
+                Err(err) => match err.kind() {
+                    ErrorKind::WouldBlock => (),
+                    _ => println!("Error sending UDP: {}", err)
+                }
+            }
+        }
+
+        // tcp stuff
+        match client.tcp.read(buffer.as_mut()) {
+            Ok(size) => match size {
+                0 => break,
+                _ => {
+                    let data = &buffer[0..size];
+                    let str = String::from_utf8_lossy(data);
+                    println!("Received TCP from {}: {}", client.addr_tcp, str);
+                }
+            },
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::WouldBlock => (),
+                _ => {
+                    println!("Error receiving TCP from {}: {}", client.addr_tcp, err);
+                }
+            }
+        }
+        match client.tcp.write(tcp_write_buffer.as_mut_slice()) {
+            Ok(sent) => {
+                tcp_write_buffer.drain(0..sent);
+            },
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::WouldBlock => (),
+                _ => println!("Error writing TCP to {}: {}", client.addr_tcp, err)
+            }
+        }
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+    }
+    println!("Disconnected from server.");
     Ok(())
+}
+
+struct ConnectionInfo {
+    stream: TcpStream,
+    write_buffer: Vec<u8>,
+    _tcp_address: SocketAddr,
+    udp_address: Option<SocketAddr>,
+    udp_address_buffer_temp: Vec<u8>
+}
+
+pub struct ServerData {
+    udp: UdpSocket,
+    tcp: TcpListener,
+    connections: HashMap<SocketAddr, ConnectionInfo>
+}
+
+const MAX_UDP_ADDR_SIZE: usize = 50;
+
+fn echo_server_both(ports: (u16, u16)) -> Result<()> {
+    let mut data = ServerData {
+        udp: UdpSocket::bind(format!("0.0.0.0:{}", ports.0))?,
+        tcp: TcpListener::bind(format!("0.0.0.0:{}", ports.1))?,
+        connections: HashMap::new()
+    };
+    data.udp.set_nonblocking(true)?;
+    let mut buffer: Box<[u8]> = vec![0u8; 1024].into_boxed_slice();
+    data.tcp.set_nonblocking(true)?;
+    loop {
+        // do UDP
+        let (recv, err) = udp_recv_all(&data.udp, &mut buffer, None);
+        for (addr, packets) in recv {
+            for packet in packets {
+                let str = String::from_utf8_lossy(packet.as_slice()).to_string();
+                // match udp.send_to(packet.as_slice(), addr) {
+                //     Ok(size) => println!("Sent UDP {} bytes", size),
+                //     Err(err) => println!("Error UDP sending: {}", err)
+                // }
+                let command = SerializedServerCommand {
+                    data: packet
+                };
+                match command.execute((&addr, &mut data)) {
+                    Ok(()) => println!("Ran UDP command from {:?}: {}", addr, str),
+                    Err(err) => println!("Error deserializing UDP packet from {}: {}", addr, err),
+                }
+            }
+        }
+        // errors for udp
+        if let Some(err) = err {
+            match err.kind() {
+                std::io::ErrorKind::WouldBlock => (),
+                _ => println!("Error UDP receiving: {}", err)
+            }
+        }
+
+        // listen on TCP
+        loop {
+            match data.tcp.accept() {
+                Ok((stream, addr)) => {
+                    println!("New connection from {}", addr);
+                    data.connections.insert(addr, ConnectionInfo {
+                        stream,
+                        write_buffer: vec![],
+                        _tcp_address: addr,
+                        udp_address: None,
+                        udp_address_buffer_temp: vec![]
+                    });
+                },
+                Err(err) => match err.kind() {
+                    std::io::ErrorKind::WouldBlock => break,
+                    _ => {
+                        println!("Error with TCP accept: {}", err);
+                        break;
+                    }
+                }
+            }
+        }
+        let mut disconnects = vec![];
+        for (addr, info) in &mut data.connections {
+            match info.stream.read(buffer.as_mut()) {
+                Ok(size) => match size {
+                    0 => disconnects.push(*addr),
+                    _ => {
+                        // process first CString of stream into UDP address
+                        // kick if bad string (too long or failed to parse)
+                        let mut kick = None;
+                        let data = if let None = info.udp_address {
+                            let mut finished = false;
+                            let udp_addr_grab = {
+                                let mut len = buffer.len();
+                                for i in 0..buffer.len() {
+                                    if buffer[i] == 0u8 {
+                                        len = i;
+                                        finished = true;
+                                        break;
+                                    }
+                                }
+                                len
+                            };
+                            if udp_addr_grab + info.udp_address_buffer_temp.len() > MAX_UDP_ADDR_SIZE {
+                                kick = Some(format!("UDP address length is too long"));
+                            } else {
+                                // try to construct client's UDP address
+                                info.udp_address_buffer_temp.extend(&buffer[0..udp_addr_grab]);
+                                if finished {
+                                    let mut address_buffer = vec![];
+                                    std::mem::swap( // clear info UDP address buffer while grabbing ownership of it
+                                        &mut address_buffer,
+                                        &mut info.udp_address_buffer_temp
+                                    );
+                                    match String::from_utf8(address_buffer) {
+                                        Ok(str) => match str.parse() {
+                                            Ok(udp_addr) => {
+                                                info.udp_address = Some(udp_addr);
+                                                println!("Got UDP address from {}: {}", addr, udp_addr);
+                                            },
+                                            Err(err) => kick = Some(format!(
+                                                "Failed to parse UDP address. Address: {}, Error: {}",
+                                                str,
+                                                err.to_string()
+                                            )),
+                                        },
+                                        Err(err) => kick = Some(format!(
+                                            "Failed to parse UTF8 for UDP address: {}",
+                                            err.to_string()
+                                        )),
+                                    }
+                                }
+                            }
+                            &buffer[udp_addr_grab..size]
+                        } else {
+                            &buffer[0..size]
+                        };
+                        if let Some(err_str) = kick {
+                            disconnects.push(*addr);
+                            println!("Error receiving UDP address from {}: {}", addr, err_str);
+                        } else {
+                            let str = String::from_utf8_lossy(data);
+                            println!("Received TCP from {}: {}", addr, str);
+                            info.write_buffer.extend(data);
+                        }
+                    }
+                },
+                Err(err) => match err.kind() {
+                    std::io::ErrorKind::WouldBlock => (),
+                    _ => {
+                        println!("Error TCP receiving from {}: {}", addr, err);
+                        disconnects.push(*addr);
+                        continue;
+                    }
+                }
+            }
+            if info.write_buffer.len() > 0 {
+                match info.stream.write(info.write_buffer.as_mut_slice()) {
+                    Ok(sent) => match sent {
+                        0 => disconnects.push(*addr),
+                        _ => {
+                            info.write_buffer.drain(0..sent);
+                        }
+                    },
+                    Err(err) => match err.kind() {
+                        std::io::ErrorKind::WouldBlock => (),
+                        _ => {
+                            println!("Error TCP writing to {}: {}", addr, err);
+                            disconnects.push(*addr);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        for addr in disconnects {
+            if let Some(info) = data.connections.remove(&addr) {
+                if let Err(err) = info.stream.shutdown(Shutdown::Both) {
+                    println!("Error disconnecting from {}: {}", addr, err);
+                } else {
+                    println!("Disconnected from {}", addr);
+                }
+            }
+        }
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+    }
 }
 
 fn main() -> Result<()> {
@@ -337,16 +682,22 @@ fn main() -> Result<()> {
         //     console_client(server_address_udp, server_address_tcp)?
         // },
         "server" => {
-            echo_server(ports)?
+            echo_server_udp(ports)?
         },
         "client" => {
-            console_client(addresses)?
+            console_client_udp(addresses)?
         },
         "tcpclient" => {
             console_client_tcp(addresses)?
         },
         "tcpserver" => {
             echo_server_tcp(ports)?
+        },
+        "bothserver" => {
+            echo_server_both(ports)?
+        },
+        "bothclient" => {
+            console_client_both(addresses)?
         },
         _ => {
             println!("Unknown mode");
