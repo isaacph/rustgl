@@ -346,8 +346,10 @@ impl<'a> ServerCommand<'a> for GetAddress {
 }
 
 impl<'a> ClientCommand<'a> for SendAddress {
-    fn run(self, _: (Protocol, &mut Client)) {
-        println!("Server sent their view of client's address: {}", self.0);
+    fn run(self, (_, client): (Protocol, &mut Client)) {
+        //println!("Server sent their view of client's address: {}", self.0);
+        let packet: SerializedServerCommand = (&SetUDPAddress(self.0)).into();
+        client.send_tcp(packet);
     }
 }
 
@@ -910,6 +912,8 @@ fn echo_server_both(ports: (u16, u16)) -> Result<()> {
                 }
             }
         }
+
+        // execute all packets
         for (protocol, addr, packet) in packets {
             match packet.execute(((protocol, &addr), &mut server)) {
                 Ok(()) => println!("Server ran client command from {}", addr),
@@ -925,7 +929,7 @@ fn echo_server_both(ports: (u16, u16)) -> Result<()> {
                 }
             }
         }
-        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+        // std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
 }
 
