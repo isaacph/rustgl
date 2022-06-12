@@ -31,12 +31,19 @@ macro_rules! _commands_id_static_def {
         pub struct $serialized_command_name {
             pub data: Vec<u8>
         }
-        impl<'a, T> From<T> for $serialized_command_name
+        impl<'a, T> From<&T> for $serialized_command_name
                 where T: Serialize + $id_trait_name {
-            fn from(command: T) -> Self {
+            fn from(command: &T) -> Self {
                 let mut data: Vec<u8> = bincode::serialize(&command).unwrap(); // TODO: error handling
                 let mut id = Vec::from(command.id().to_be_bytes());
                 data.append(&mut id);
+                $serialized_command_name {
+                    data
+                }
+            }
+        }
+        impl From<Vec<u8>> for $serialized_command_name {
+            fn from(data: Vec<u8>) -> Self {
                 $serialized_command_name {
                     data
                 }
@@ -101,7 +108,7 @@ macro_rules! commands_execute {
     };
 
     ($command_trait_name:ident, @step2 $_idx:expr, $context:ident, $cmdid:ident, $cmd:ident, ) => {
-        return Err(Box::new(bincode::ErrorKind::Custom(format!("Invalid server command id: {}", $cmdid))));
+        return Err(Box::new(bincode::ErrorKind::Custom(format!("Invalid command id: {}", $cmdid))));
     };
     ($command_trait_name:ident, @step2 $idx:expr, $context:ident, $cmdid:ident, $cmd:ident, $head:path, $($tail:path,)*) => {
         if $cmdid == $idx {
