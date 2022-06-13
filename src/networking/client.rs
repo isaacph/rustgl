@@ -2,7 +2,7 @@ use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::
 
 use crate::{model::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}, networking::{tcp_buffering::{TcpSendState, TcpRecvState}, Protocol, config::RECV_BUFFER_SIZE}, console_stream, udp_recv_all};
 
-use super::{tcp_buffering, config::MAX_UDP_MESSAGE_SIZE, Message};
+use super::{tcp_buffering, config::MAX_UDP_MESSAGE_SIZE};
 
 // maximum number of network commands to process for each type of processing in one cycle
 // note the types are TCP send, TCP recv, UDP send, UDP recv
@@ -24,8 +24,7 @@ impl Client {
     where
         T: Into<SerializedServerCommand>
     {
-        let a: SerializedServerCommand = packet.into();
-        let Message(data) = a.into();
+        let SerializedServerCommand(data) = packet.into();
         if data.len() > MAX_UDP_MESSAGE_SIZE {
             println!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE);
             return;
@@ -36,20 +35,19 @@ impl Client {
     where
         T: Into<SerializedServerCommand>
     {
-        let a: SerializedServerCommand = message.into();
-        let Message(data) = a.into();
+        let SerializedServerCommand(data) = message.into();
         self.tcp_send.enqueue(data).unwrap();
     }
     pub fn disconnect(&mut self) {
 
     }
-    fn update_udp_recv(&mut self) -> Vec<Message> {
+    fn update_udp_recv(&mut self) -> Vec<Vec<u8>> {
         let (recv, err) = udp_recv_all(&self.udp, self.recv_buffer.as_mut(), Some(MAX_PACKETS_PROCESS));
         let mut messages = vec![];
         for (addr, recvd) in recv {
             for message in recvd {
                 println!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(message.as_slice()));
-                messages.push(Message(message));
+                messages.push(message);
                 // let command = SerializedClientCommand {
                 //     data: message
                 // };
@@ -87,7 +85,7 @@ impl Client {
             }
         }
     }
-    fn update_tcp_recv(&mut self) -> Vec<Message> {
+    fn update_tcp_recv(&mut self) -> Vec<Vec<u8>> {
         let mut messages = vec![];
         if let Some(tcp) = &mut self.tcp {
             let mut quit = false;
@@ -104,7 +102,7 @@ impl Client {
                             for data in self.tcp_recv.receive(&self.recv_buffer[0..size]) {
                                 let str = String::from_utf8_lossy(&data[0..cmp::min(data.len(), 1024)]);
                                 println!("Received full message TCP length {} from {}: {}", data.len(), self.addr_tcp, str);
-                                messages.push(Message(data));
+                                messages.push(data);
                             }
                             approx_packets += 1 + (size - 1) / 1024;
                         }
@@ -225,7 +223,7 @@ pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Resu
         messages.append(&mut client.update_tcp_recv());
         client.update_tcp_send();
         for message in messages {
-            match SerializedClientCommand::from(message.0).execute((Protocol::TCP, &mut client)) {
+            match SerializedClientCommand::from(message).execute((Protocol::TCP, &mut client)) {
                 Ok(()) => (),
                 Err(err) => {
                     println!("{}", err);

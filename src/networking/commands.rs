@@ -46,11 +46,6 @@ macro_rules! _commands_id_static_def {
                 self.0
             }
         }
-        impl Into<Message> for $serialized_command_name {
-            fn into(self) -> Message {
-                Message(self.0)
-            }
-        }
     }
 }
 

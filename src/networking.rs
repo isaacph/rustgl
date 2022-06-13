@@ -11,6 +11,3 @@ pub mod config;
 pub enum Protocol {
     TCP, UDP
 }
-
-#[derive(Serialize, Deserialize)]
-pub struct Message(pub Vec<u8>);
