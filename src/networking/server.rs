@@ -1,8 +1,8 @@
-use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}};
+use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp};
 
-use crate::{model::{SerializedClientCommand, Protocol, SerializedServerCommand}, udp_recv_all};
+use crate::{model::{SerializedClientCommand, SerializedServerCommand}, udp_recv_all};
 
-use super::tcp_buffering::{TcpRecvState, TcpSendState};
+use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol};
 
 pub struct ConnectionInfo {
     pub stream: TcpStream,
@@ -23,7 +23,7 @@ pub struct Server {
 impl Server {
     pub fn send_tcp(&mut self, tcp_addr: &SocketAddr, data: SerializedClientCommand) -> std::result::Result<(), String> {
         match self.connections.get_mut(tcp_addr) {
-            Some(info) => info.tcp_send.enqueue(data.data),
+            Some(info) => info.tcp_send.enqueue(data.0),
             None => Err(format!("Client with TCP address {} not found", tcp_addr))
         }
     }
@@ -50,15 +50,13 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
     server.tcp.set_nonblocking(true)?;
     loop {
         // recv UDP
-        let mut packets: Vec<(Protocol, SocketAddr, SerializedServerCommand)> = Vec::new();
+        let mut messages: Vec<(Protocol, SocketAddr, SerializedServerCommand)> = Vec::new();
         let (recv, err) = udp_recv_all(&server.udp, &mut buffer, None);
         for (addr, data) in recv {
             for packet in data {
                 let _ = String::from_utf8_lossy(packet.as_slice()).to_string();
-                let command = SerializedServerCommand {
-                    data: packet
-                };
-                packets.push((Protocol::UDP, addr, command));
+                let command = SerializedServerCommand(packet);
+                messages.push((Protocol::UDP, addr, command));
                 // match command.execute(((Protocol::UDP, &addr), &mut server)) {
                 //     Ok(()) => println!("Ran UDP command from {:?}: {}", addr, str),
                 //     Err(err) => println!("Error deserializing UDP packet from {}: {}", addr, err),
@@ -101,9 +99,9 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
             // send udp
             if let Some(udp_address) = info.udp_address {
                 while let Some(packet) = info.udp_send_queue.pop_front() {
-                    match server.udp.send_to(packet.data.as_slice(), udp_address) {
+                    match server.udp.send_to(packet.0.as_slice(), udp_address) {
                         Ok(sent) => {
-                            if sent != packet.data.len() {
+                            if sent != packet.0.len() {
                                 println!("Somehow didn't send entire UDP packet");
                             }
                         },
@@ -124,12 +122,13 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
                 Ok(size) => match size {
                     0 => disconnects.push(*addr),
                     _ => {
+                        println!("Received TCP bytes: {}", size);
                         let data = info.tcp_recv.receive(&buffer[0..size]);
-                        for packet in &data {
-                            let str = String::from_utf8_lossy(&packet);
-                            println!("Received TCP from {}: {}", addr, str);
+                        for message in &data {
+                            let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
+                            println!("Received full message TCP length {} from {}: {}", message.len(), addr, str);
                         }
-                        packets.extend(data.into_iter().map(|data| (Protocol::TCP, *addr, data.into())));
+                        messages.extend(data.into_iter().map(|data| (Protocol::TCP, *addr, data.into())));
                     }
                 },
                 Err(err) => match err.kind() {
@@ -173,8 +172,8 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
         }
 
         // execute all packets
-        for (protocol, addr, packet) in packets {
-            match packet.execute(((protocol, &addr), &mut server)) {
+        for (protocol, addr, message) in messages {
+            match message.execute(((protocol, &addr), &mut server)) {
                 Ok(()) => println!("Server ran client command from {}", addr),
                 Err(err) => println!("Error running client {} command: {}", addr, err)
             }

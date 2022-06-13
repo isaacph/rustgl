@@ -5,6 +5,8 @@ extern crate glfw;
 // pub mod networking_wrapping;
 pub mod networking;
 pub mod model;
+pub mod client;
+pub mod server;
 // pub mod game;
 // pub mod server;
 // pub mod world;

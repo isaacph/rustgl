@@ -13,40 +13,42 @@ macro_rules! _commands_execute_static_def {
         }
         impl $serialized_command_name {
             pub fn execute(&self, context: $context_type) -> bincode::Result<()> {
-                let data = &self.data;
+                let data = &self.0;
                 let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
                 $execute_fn_name(context, id, &data.as_slice()[..data.len() - 2])
             }
         }
     }
 }
-
 #[macro_export]
 macro_rules! _commands_id_static_def {
     ($id_trait_name:ident,
         $serialized_command_name:ident) => {
-        pub trait $id_trait_name {
+        pub trait $id_trait_name: Serialize {
             fn id(&self) -> u16;
         }
-        pub struct $serialized_command_name {
-            pub data: Vec<u8>
-        }
-        impl<'a, T> From<&T> for $serialized_command_name
-                where T: Serialize + $id_trait_name {
-            fn from(command: &T) -> Self {
-                let mut data: Vec<u8> = bincode::serialize(&command).unwrap(); // TODO: error handling
-                let mut id = Vec::from(command.id().to_be_bytes());
-                data.append(&mut id);
-                $serialized_command_name {
-                    data
-                }
-            }
-        }
+        pub struct $serialized_command_name(pub Vec<u8>);
+        // impl<T: $id_trait_name> From<&T> for $serialized_command_name {
+        //     fn from(command: &T) -> Self {
+        //         let mut data: Vec<u8> = bincode::serialize(&command).unwrap(); // TODO: error handling
+        //         let mut id = Vec::from(command.id().to_be_bytes());
+        //         data.append(&mut id);
+        //         $serialized_command_name(data)
+        //     }
+        // }
         impl From<Vec<u8>> for $serialized_command_name {
             fn from(data: Vec<u8>) -> Self {
-                $serialized_command_name {
-                    data
-                }
+                $serialized_command_name(data)
+            }
+        }
+        impl Into<Vec<u8>> for $serialized_command_name {
+            fn into(self) -> Vec<u8> {
+                self.0
+            }
+        }
+        impl Into<Message> for $serialized_command_name {
+            fn into(self) -> Message {
+                Message(self.0)
             }
         }
     }
@@ -54,14 +56,27 @@ macro_rules! _commands_id_static_def {
 
 #[macro_export]
 macro_rules! commands_id {
-    ($id_trait_name:ident, @step $idx:expr, ) => {};
-    ($id_trait_name:ident, @step $idx:expr, $head:path, $($tail:path,)*) => {
+    ($id_trait_name:ident, $serialized_command_name:ident, @step $idx:expr, ) => {};
+    ($id_trait_name:ident, $serialized_command_name:ident, @step $idx:expr, $head:path, $($tail:path,)*) => {
         impl $id_trait_name for $head {
             fn id(&self) -> u16 {
                 $idx
             }
         }
-        commands_id!($id_trait_name, @step $idx + 1u16, $($tail,)*);
+        impl Into<$serialized_command_name> for &$head {
+            fn into(self) -> $serialized_command_name {
+                let mut data: Vec<u8> = bincode::serialize(self).unwrap(); // TODO: error handling
+                let mut id = Vec::from(($idx as u16).to_be_bytes());
+                data.append(&mut id);
+                $serialized_command_name(data)
+            }
+        }
+        impl Into<$serialized_command_name> for $head {
+            fn into(self) -> $serialized_command_name {
+                (&self).into()
+            }
+        }
+        commands_id!($id_trait_name, $serialized_command_name, @step $idx + 1u16, $($tail,)*);
     };
     // requires trailing comma
     ($id_trait_name:ident,
@@ -70,7 +85,7 @@ macro_rules! commands_id {
         _commands_id_static_def!(
             $id_trait_name,
             $serialized_command_name);
-        commands_id!($id_trait_name, @step 0u16, $head, $($tail,)*);
+        commands_id!($id_trait_name, $serialized_command_name, @step 0u16, $head, $($tail,)*);
     };
     // support for no trailing comma
     ($id_trait_name:ident,
@@ -96,7 +111,7 @@ macro_rules! commands_execute {
         $serialized_command_name:ident,
         $context_type:ty,
         [$head:path, $($tail:path,)*] ) => {
-        commands_id!($id_trait_name, $serialized_command_name, [$head, $($tail,)*]);
+        // commands_id!($id_trait_name, $serialized_command_name, [$head, $($tail,)*]);
         _commands_execute_static_def!($execute_fn_name,
             $command_trait_name,
             $id_trait_name,
@@ -118,6 +133,8 @@ macro_rules! commands_execute {
         }
         commands_execute!($command_trait_name, @step2 $idx + 1u16, $context, $cmdid, $cmd, $($tail,)*);
     };
+
+    // allow non-borrows to also be serialized (without extra steps)
 
     // compatibility with trailing comma for client command list:
     ($execute_fn_name:ident,

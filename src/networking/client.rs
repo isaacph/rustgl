@@ -1,104 +1,62 @@
-use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::mpsc::TryRecvError, io::{ErrorKind, Read, Write}, time::Duration};
+use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::mpsc::TryRecvError, io::{ErrorKind, Read, Write}, time::Duration, cmp};
 
-use crate::{model::{SerializedServerCommand, GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, Protocol}, networking::{tcp_buffering::{TcpSendState, TcpRecvState}}, console_stream, udp_recv_all};
+use crate::{model::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}, networking::{tcp_buffering::{TcpSendState, TcpRecvState}, Protocol, config::RECV_BUFFER_SIZE}, console_stream, udp_recv_all};
 
-use super::{tcp_buffering, config::MAX_UDP_MESSAGE_SIZE};
+use super::{tcp_buffering, config::MAX_UDP_MESSAGE_SIZE, Message};
+
+// maximum number of network commands to process for each type of processing in one cycle
+// note the types are TCP send, TCP recv, UDP send, UDP recv
+const MAX_PACKETS_PROCESS: usize = 256;
 
 pub struct Client {
-    pub tcp: TcpStream,
+    pub tcp: Option<TcpStream>,
     pub udp: UdpSocket,
     pub addr_tcp: SocketAddr,
     pub addr_udp: SocketAddr,
-    pub udp_message_queue: VecDeque<SerializedServerCommand>,
+    pub udp_message_queue: VecDeque<Vec<u8>>,
     pub tcp_send: tcp_buffering::TcpSendState,
     pub tcp_recv: tcp_buffering::TcpRecvState,
+    pub recv_buffer: Box<[u8]>
 }
 
 impl Client {
-    pub fn send_udp(&mut self, packet: SerializedServerCommand) {
-        if packet.data.len() > MAX_UDP_MESSAGE_SIZE {
-            println!("Attempted to send UDP message that was too big: {} > {}", packet.data.len(), MAX_UDP_MESSAGE_SIZE);
+    pub fn send_udp<T>(&mut self, packet: T)
+    where
+        T: Into<SerializedServerCommand>
+    {
+        let a: SerializedServerCommand = packet.into();
+        let Message(data) = a.into();
+        if data.len() > MAX_UDP_MESSAGE_SIZE {
+            println!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE);
             return;
         }
-        self.udp_message_queue.push_back(packet);
+        self.udp_message_queue.push_back(data);
     }
-    pub fn send_tcp(&mut self, packet: SerializedServerCommand) {
-        self.tcp_send.enqueue(packet.data).unwrap();
+    pub fn send_tcp<T>(&mut self, message: T)
+    where
+        T: Into<SerializedServerCommand>
+    {
+        let a: SerializedServerCommand = message.into();
+        let Message(data) = a.into();
+        self.tcp_send.enqueue(data).unwrap();
     }
-}
+    pub fn disconnect(&mut self) {
 
-pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Result<()> {
-    let mut client = Client {
-        tcp: TcpStream::connect(addresses.1)?,
-        udp: UdpSocket::bind("0.0.0.0:0")?,
-        addr_tcp: addresses.1,
-        addr_udp: addresses.0,
-        udp_message_queue: VecDeque::new(),
-        tcp_send: TcpSendState::init(),
-        tcp_recv: TcpRecvState::init()
-    };
-    println!("Connected on {}", client.tcp.local_addr()?);
-    client.tcp.set_nonblocking(true)?;
-    client.udp.set_nonblocking(true)?;
-    let stdin_channel = console_stream();
-    let mut buffer = vec![0u8; 1024].into_boxed_slice();
-    loop {
-        match stdin_channel.try_recv() {
-            Ok(msg) => {
-                let split: Vec<&str> = msg.split(" ").collect();
-                match &split[..] {
-                    ["getaddr"] => {
-                        client.send_udp((&GetAddress).into());
-                    },
-                    ["setaddr", _, ..] => {
-                        client.send_tcp(
-                            (&SetUDPAddress(msg["setaddr ".len()..msg.len()].into())).into()
-                        );
-                        // let mut buffer = Vec::from(msg["setaddr ".len()..msg.len()].as_bytes());
-                        // buffer.push(0u8);
-                        // match client.tcp_send.enqueue(buffer) {
-                        //     Ok(()) => (),
-                        //     Err(err) => println!("Error sending command: {}", err)
-                        // }
-                    }
-                    ["udp", "echo", _, ..] => {
-                        client.send_udp((&EchoMessage(msg["udp echo ".len()..msg.len()].into())).into());
-                    },
-                    ["tcp", "echo", _, ..] => {
-                        client.send_tcp(
-                            (&EchoMessage(msg["tcp echo ".len()..msg.len()].into())).into()
-                        );
-                    },
-                    ["tcp", "big", len] => {
-                        client.send_tcp(
-                            (&EchoMessage({
-                                let mut s = String::new();
-                                for _ in 0..len.parse().unwrap() {
-                                    s.push('t');
-                                }
-                                s
-                            })).into()
-                        );
-                    }
-                    _ => println!("Invalid command: {}", msg)
-                };
-                // tcp_write_buffer.extend(msg.as_bytes());
-            },
-            Err(TryRecvError::Empty) => (),
-            Err(TryRecvError::Disconnected) => break,
-        }
-
-        let (recv, err) = udp_recv_all(&client.udp, buffer.as_mut(), None);
-        for (addr, packets) in recv {
-            for packet in packets {
-                println!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(packet.as_slice()));
-                let command = SerializedClientCommand {
-                    data: packet
-                };
-                match command.execute((Protocol::UDP, &mut client)) {
-                    Ok(()) => (),
-                    Err(err) => println!("Error deserializing UDP command: {}", err)
-                }
+    }
+    fn update_udp_recv(&mut self) -> Vec<Message> {
+        let (recv, err) = udp_recv_all(&self.udp, self.recv_buffer.as_mut(), Some(MAX_PACKETS_PROCESS));
+        let mut messages = vec![];
+        for (addr, recvd) in recv {
+            for message in recvd {
+                println!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(message.as_slice()));
+                messages.push(Message(message));
+                // let command = SerializedClientCommand {
+                //     data: message
+                // };
+                // match command.execute((Protocol::UDP, self)) {
+                //     Ok(()) => (),
+                //     Err(err) => println!("Error deserializing UDP command: {}", err)
+                // }
             }
         }
         match err {
@@ -108,70 +66,173 @@ pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Resu
             },
             None => ()
         }
-        while let Some(message) = client.udp_message_queue.pop_front() {
-            match client.udp.send_to(message.data.as_slice(), &client.addr_udp) {
+        messages
+    }
+    fn update_udp_send(&mut self) {
+        let mut processed = 0;
+        while let Some(message) = self.udp_message_queue.pop_front() {
+            match self.udp.send_to(message.as_slice(), &self.addr_udp) {
                 Ok(sent) => println!("Sent UDP {} bytes", sent),
                 Err(err) => {
                     match err.kind() {
                         ErrorKind::WouldBlock => break,
                         _ => println!("Error sending UDP: {}", err)
                     }
-                    client.udp_message_queue.push_front(message);
+                    self.udp_message_queue.push_front(message);
                 }
             }
+            processed += 1;
+            if processed >= MAX_PACKETS_PROCESS {
+                break;
+            }
         }
-
-        // tcp stuff
-        match client.tcp.read(buffer.as_mut()) {
-            Ok(size) => match size {
-                0 => break,
-                _ => {
-                    for data in client.tcp_recv.receive(&buffer[0..size]) {
-                        let str = String::from_utf8_lossy(&data);
-                        println!("Received TCP from {}: {}", client.addr_tcp, str);
-                        match SerializedClientCommand::from(data).execute((Protocol::TCP, &mut client)) {
-                            Ok(()) => (),
-                            Err(err) => {
-                                println!("{}", err);
+    }
+    fn update_tcp_recv(&mut self) -> Vec<Message> {
+        let mut messages = vec![];
+        if let Some(tcp) = &mut self.tcp {
+            let mut quit = false;
+            let mut approx_packets = 0;
+            while approx_packets < MAX_PACKETS_PROCESS { // limit how much time we spend receiving
+                match tcp.read(self.recv_buffer.as_mut()) {
+                    Ok(size) => match size {
+                        0 => {
+                            quit = true;
+                            break;
+                        },
+                        _ => {
+                            println!("Received TCP bytes length: {}", size);
+                            for data in self.tcp_recv.receive(&self.recv_buffer[0..size]) {
+                                let str = String::from_utf8_lossy(&data[0..cmp::min(data.len(), 1024)]);
+                                println!("Received full message TCP length {} from {}: {}", data.len(), self.addr_tcp, str);
+                                messages.push(Message(data));
                             }
+                            approx_packets += 1 + (size - 1) / 1024;
+                        }
+                    },
+                    Err(err) => match err.kind() {
+                        std::io::ErrorKind::WouldBlock => break,
+                        std::io::ErrorKind::ConnectionReset => {
+                            println!("Error receiving TCP: {}", err);
+                            quit = true;
+                            break;
+                        },
+                        _ => {
+                            println!("Error receiving TCP from {}: {}", self.addr_tcp, err);
+                            quit = true;
+                            break;
                         }
                     }
                 }
-            },
-            Err(err) => match err.kind() {
-                std::io::ErrorKind::WouldBlock => (),
-                std::io::ErrorKind::ConnectionReset => {
-                    println!("Error receiving TCP: {}", err);
-                    break
-                },
-                _ => {
-                    println!("Error receiving TCP from {}: {}", client.addr_tcp, err);
-                }
+            }
+            if let Some(error) = self.tcp_recv.failed() {
+                println!("Error in TCP recv stream: {}", error);
+                self.disconnect();
+            }
+            if quit {
+                self.disconnect();
             }
         }
-        if let Some(error) = client.tcp_recv.failed() {
-            println!("Error in TCP stream: {}", error);
-            break;
-        }
-        let mut quit = false;
-        while let Some(buffer) = client.tcp_send.next_send() {
-            match client.tcp.write(buffer) {
-                Ok(sent) => {
-                    client.tcp_send.update_buffer(sent);
-                    println!("Sent {} TCP bytes", sent);
-                },
-                Err(err) => match err.kind() {
-                    std::io::ErrorKind::WouldBlock => (),
-                    _ => {
-                        println!("Error writing TCP to {}: {}", client.addr_tcp, err);
-                        quit = true;
+        messages
+    }
+    fn update_tcp_send(&mut self) {
+        // tcp stuff
+        if let Some(tcp) = &mut self.tcp {
+            let mut quit = false;
+            let mut processed = 0;
+            while let Some(buffer) = self.tcp_send.next_send() {
+                match tcp.write(buffer) {
+                    Ok(sent) => match sent {
+                        0 => break,
+                        _ => {
+                            self.tcp_send.update_buffer(sent);
+                            println!("Sent {} TCP bytes", sent);
+                            processed += 1 + (sent - 1) / 1024;
+                            if processed >= MAX_PACKETS_PROCESS {
+                                break;
+                            }
+                        }
+                    },
+                    Err(err) => match err.kind() {
+                        std::io::ErrorKind::WouldBlock => break,
+                        _ => {
+                            println!("Error writing TCP to {}: {}", self.addr_tcp, err);
+                            quit = true;
+                        }
                     }
                 }
             }
+            if quit {
+                self.disconnect();
+            }
         }
-        if quit {
-            break;
+    }
+}
+
+pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Result<()> {
+    let tcp = TcpStream::connect(addresses.1)?;
+    println!("Connected on {}", tcp.local_addr()?);
+    tcp.set_nonblocking(true)?;
+    let mut client = Client {
+        tcp: Some(tcp),
+        udp: UdpSocket::bind("0.0.0.0:0")?,
+        addr_tcp: addresses.1,
+        addr_udp: addresses.0,
+        udp_message_queue: VecDeque::new(),
+        tcp_send: TcpSendState::init(),
+        tcp_recv: TcpRecvState::init(),
+        recv_buffer: vec![0u8; RECV_BUFFER_SIZE].into_boxed_slice()
+    };
+    
+    client.udp.set_nonblocking(true)?;
+    let stdin_channel = console_stream();
+    loop {
+        match stdin_channel.try_recv() {
+            Ok(msg) => {
+                let split: Vec<&str> = msg.split(" ").collect();
+                match &split[..] {
+                    ["getaddr"] => {
+                        client.send_udp(GetAddress);
+                    },
+                    ["setaddr", _, ..] => {
+                        client.send_tcp(SetUDPAddress(msg["setaddr ".len()..msg.len()].into()));
+                    }
+                    ["udp", "echo", _, ..] => {
+                        client.send_udp(EchoMessage(msg["udp echo ".len()..msg.len()].into()));
+                    },
+                    ["tcp", "echo", _, ..] => {
+                        client.send_tcp(EchoMessage(msg["tcp echo ".len()..msg.len()].into()));
+                    },
+                    ["tcp", "big", len] => {
+                        client.send_tcp(EchoMessage({
+                            let mut s = String::new();
+                            for _ in 0..len.parse().unwrap() {
+                                s.push('t');
+                            }
+                            s
+                        }));
+                    }
+                    _ => println!("Invalid command: {}", msg)
+                };
+                // tcp_write_buffer.extend(msg.as_bytes());
+            },
+            Err(TryRecvError::Empty) => (),
+            Err(TryRecvError::Disconnected) => break,
         }
+
+        let mut messages = vec![];
+        messages.append(&mut client.update_udp_recv());
+        client.update_udp_send();
+        messages.append(&mut client.update_tcp_recv());
+        client.update_tcp_send();
+        for message in messages {
+            match SerializedClientCommand::from(message.0).execute((Protocol::TCP, &mut client)) {
+                Ok(()) => (),
+                Err(err) => {
+                    println!("{}", err);
+                }
+            }
+        }
+        
         std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
     println!("Disconnected from server.");
