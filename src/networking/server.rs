@@ -22,6 +22,7 @@ pub struct Server {
 
 impl Server {
     pub fn send_tcp(&mut self, tcp_addr: &SocketAddr, data: SerializedClientCommand) -> std::result::Result<(), String> {
+        println!("Sending message to {}, length {}", tcp_addr, data.0.len());
         match self.connections.get_mut(tcp_addr) {
             Some(info) => info.tcp_send.enqueue(data.0),
             None => Err(format!("Client with TCP address {} not found", tcp_addr))

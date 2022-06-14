@@ -48,17 +48,18 @@ impl<'a> ServerCommand<'a> for SetUDPAddress {
 
 impl<'a> ServerCommand<'a> for EchoMessage {
     fn run(self, ((protocol, addr), server): ((Protocol, &SocketAddr), &mut Server)) {
+        println!("Running echo");
         match protocol {
             Protocol::TCP => 
-            match server.send_tcp(addr, (&self).into()) {
+            match server.send_tcp(addr, self.into()) {
                 Ok(()) => (),
                 Err(err) => println!("Error echoing TCP to {}: {}", addr, err)
             },
             Protocol::UDP => {
-                let udp_addr = addr.clone();
+                let udp_addr = *addr;
                 match server.corresponding_tcp_to_udp.get(&udp_addr) {
                     Some(tcp_addr) => {
-                        let tcp_addr = tcp_addr.clone();
+                        let tcp_addr = *tcp_addr;
                         match server.send_udp(&tcp_addr, (&self).into()) {
                             Ok(()) => (),
                             Err(err) => println!("Error echoing UDP to client with TCP address {}: {}", udp_addr, err)

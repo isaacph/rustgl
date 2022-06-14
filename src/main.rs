@@ -11,7 +11,7 @@ pub mod server;
 // pub mod server;
 // pub mod world;
 
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::net::{UdpSocket, TcpListener, TcpStream, Shutdown};
 use std::{io::Result, net::SocketAddr, time::Duration};
 use std::env;
@@ -88,7 +88,7 @@ fn console_client_udp(addresses: (SocketAddr, SocketAddr)) -> Result<()> {
 
 pub fn grab_console_line(prompt: &str) -> String {
     let mut buffer = String::new();
-    io::stdout().write(prompt.as_bytes()).unwrap();
+    io::stdout().write_all(prompt.as_bytes()).unwrap();
     io::stdout().flush().unwrap();
     io::stdin().read_line(&mut buffer).unwrap();
     String::from(buffer.trim())
@@ -151,9 +151,8 @@ fn echo_server_udp(ports: (u16, u16)) -> Result<()> {
                     Ok(size) => println!("Sent {} bytes", size),
                     Err(err) => println!("Error sending: {}", err)
                 }
-                match str.as_ref() {
-                    "stop" => run = false,
-                    _ => ()
+                if str.as_ref() == "false" {
+                    run = false;
                 }
             }
         }

@@ -39,8 +39,9 @@ impl Client {
         self.tcp_send.enqueue(data).unwrap();
     }
     pub fn disconnect(&mut self) {
-
+        println!("Disconnected from server");
     }
+
     fn update_udp_recv(&mut self) -> Vec<Vec<u8>> {
         let (recv, err) = udp_recv_all(&self.udp, self.recv_buffer.as_mut(), Some(MAX_PACKETS_PROCESS));
         let mut messages = vec![];
@@ -66,6 +67,7 @@ impl Client {
         }
         messages
     }
+
     fn update_udp_send(&mut self) {
         let mut processed = 0;
         while let Some(message) = self.udp_message_queue.pop_front() {
@@ -85,6 +87,7 @@ impl Client {
             }
         }
     }
+
     fn update_tcp_recv(&mut self) -> Vec<Vec<u8>> {
         let mut messages = vec![];
         if let Some(tcp) = &mut self.tcp {
@@ -132,6 +135,7 @@ impl Client {
         }
         messages
     }
+
     fn update_tcp_send(&mut self) {
         // tcp stuff
         if let Some(tcp) = &mut self.tcp {
@@ -230,8 +234,8 @@ pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Resu
                 }
             }
         }
-        
-        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+
+        //std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
     println!("Disconnected from server.");
     Ok(())
