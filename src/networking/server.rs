@@ -36,6 +36,12 @@ impl Display for ServerError {
 
 pub type ServerResult<T> = Result<T, ServerError>;
 
+pub struct ServerUpdate {
+    pub messages: Vec<(Protocol, SocketAddr, Box<[u8]>)>,
+    pub connects: Vec<SocketAddr>,
+    pub disconnects: Vec<SocketAddr>
+}
+
 impl Server {
     pub fn send_tcp(&mut self, tcp_addr: &SocketAddr, data: SerializedClientCommand) -> std::result::Result<(), String> {
         println!("Sending message to {}, length {}", tcp_addr, data.0.len());
@@ -81,12 +87,12 @@ impl Server {
         }
     }
 
-    pub fn update_tcp_listen(&mut self) -> ServerResult<()> {
+    pub fn update_tcp_listen(&mut self, connections: &mut Vec<SocketAddr>) -> ServerResult<()> {
         // listen on TCP
         loop {
             match self.tcp.accept() {
                 Ok((stream, addr)) => {
-                    println!("New connection from {}", addr);
+                    // println!("New connection from {}", addr);
                     match stream.set_nonblocking(true) {
                         Ok(()) => {
                             self.connections.insert(addr, ConnectionInfo {
@@ -97,6 +103,7 @@ impl Server {
                                 tcp_recv: TcpRecvState::init(),
                                 tcp_send: TcpSendState::init()
                             });
+                            connections.push(addr);
                         },
                         Err(err) => {
                             println!("Failed to accept connection from {} since could not set nonblocking: {}", addr, err);
@@ -113,12 +120,13 @@ impl Server {
         }
     }
 
-    pub fn update(&mut self) -> Vec<(Protocol, SocketAddr, Box<[u8]>)> {
+    pub fn update(&mut self) -> ServerUpdate {
         let mut messages: Vec<(Protocol, SocketAddr, Box<[u8]>)> = Vec::new();
+        let mut connects = vec![];
         let mut disconnects = vec![];
         match (|| -> ServerResult<()> {
             self.update_udp_recv(&mut messages)?;
-            self.update_tcp_listen()?;
+            self.update_tcp_listen(&mut connects)?;
             for (addr, info) in &mut self.connections {
                 match (|| -> ServerResult<()> {
                     info.update_udp_send(&self.udp)?;
@@ -142,16 +150,18 @@ impl Server {
         }
         
         // disconnect clients
-        for addr in disconnects {
+        for addr in &disconnects {
             if let Some(info) = self.connections.remove(&addr) {
                 if let Err(err) = info.stream.shutdown(Shutdown::Both) {
                     println!("Error disconnecting from {}: {}", addr, err);
-                } else {
-                    println!("Disconnected from {}", addr);
                 }
             }
         }
-        messages
+        ServerUpdate {
+            messages,
+            connects,
+            disconnects
+        }
     }
 
     pub fn init(ports: (u16, u16)) -> std::io::Result<Self> {

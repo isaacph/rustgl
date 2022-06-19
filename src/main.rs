@@ -21,7 +21,7 @@ use std::sync::mpsc::TryRecvError;
 use std::io::{self, ErrorKind, Read, Write};
 
 use model::SerializedServerCommand;
-use networking::server::Server;
+use networking::server::{Server, ServerUpdate};
 
 use crate::model::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand};
 use crate::networking::Protocol;
@@ -404,11 +404,22 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
     let mut server = Server::init(ports)?;
     loop {
         // execute all packets
-        for (protocol, addr, message) in server.update() {
+        let ServerUpdate {
+            messages,
+            connects,
+            disconnects
+        } = server.update();
+        for (protocol, addr, message) in messages {
             match SerializedServerCommand::from(message).execute(((protocol, &addr), &mut server)) {
                 Ok(()) => println!("Server ran client command from {}", addr),
                 Err(err) => println!("Error running client {} command: {}", addr, err)
             }
+        }
+        for addr in connects {
+            println!("New connection from {}", addr);
+        }
+        for addr in disconnects {
+            println!("Disconnected from {}", addr);
         }
         std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
@@ -436,10 +447,10 @@ fn main() -> Result<()> {
         // "client" => { // client
         //     console_client(server_address_udp, server_address_tcp)?
         // },
-        "server" => {
+        "udpserver" => {
             echo_server_udp(ports)?
         },
-        "client" => {
+        "udpclient" => {
             console_client_udp(addresses)?
         },
         "tcpclient" => {
