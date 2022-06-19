@@ -7,6 +7,8 @@ pub mod client;
 pub mod server;
 pub mod tcp_buffering;
 pub mod config;
+pub mod common;
+pub mod example;
 
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
 pub enum Protocol {
