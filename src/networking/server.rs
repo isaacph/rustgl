@@ -1,4 +1,4 @@
-use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp};
+use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, time::Duration};
 
 use crate::{model::{SerializedClientCommand, SerializedServerCommand}, udp_recv_all};
 
@@ -55,7 +55,8 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
         let (recv, err) = udp_recv_all(&server.udp, &mut buffer, None);
         for (addr, data) in recv {
             for packet in data {
-                let _ = String::from_utf8_lossy(packet.as_slice()).to_string();
+                let s = String::from_utf8_lossy(packet.as_slice()).to_string();
+                println!("Received UPD from {:?} of len {}: {}", addr, packet.len(), s);
                 let command = SerializedServerCommand(packet);
                 messages.push((Protocol::UDP, addr, command));
                 // match command.execute(((Protocol::UDP, &addr), &mut server)) {
@@ -77,14 +78,21 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
             match server.tcp.accept() {
                 Ok((stream, addr)) => {
                     println!("New connection from {}", addr);
-                    server.connections.insert(addr, ConnectionInfo {
-                        stream,
-                        _tcp_address: addr,
-                        udp_address: None,
-                        udp_send_queue: VecDeque::new(),
-                        tcp_recv: TcpRecvState::init(),
-                        tcp_send: TcpSendState::init()
-                    });
+                    match stream.set_nonblocking(true) {
+                        Ok(()) => {
+                            server.connections.insert(addr, ConnectionInfo {
+                                stream,
+                                _tcp_address: addr,
+                                udp_address: None,
+                                udp_send_queue: VecDeque::new(),
+                                tcp_recv: TcpRecvState::init(),
+                                tcp_send: TcpSendState::init()
+                            });
+                        },
+                        Err(err) => {
+                            println!("Failed to accept connection from {} since could not set nonblocking: {}", addr, err);
+                        }
+                    }
                 },
                 Err(err) => match err.kind() {
                     std::io::ErrorKind::WouldBlock => break,
@@ -188,6 +196,6 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
                 }
             }
         }
-        // std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
 }

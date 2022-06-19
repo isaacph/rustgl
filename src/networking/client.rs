@@ -40,6 +40,7 @@ impl Client {
     }
     pub fn disconnect(&mut self) {
         println!("Disconnected from server");
+        self.tcp = None;
     }
 
     fn update_udp_recv(&mut self) -> Vec<Vec<u8>> {
@@ -235,7 +236,7 @@ pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Resu
             }
         }
 
-        //std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
     }
     println!("Disconnected from server.");
     Ok(())
