@@ -10,7 +10,6 @@ const MAX_PACKETS_PROCESS: usize = 256;
 
 #[derive(Debug)]
 pub enum ClientError {
-    NoError,
     NoConnection,
     Disconnected,
     Other(String)

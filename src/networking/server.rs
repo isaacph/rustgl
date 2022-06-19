@@ -1,12 +1,12 @@
-use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, time::Duration};
+use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, fmt::Display};
 
-use crate::{model::{SerializedClientCommand, SerializedServerCommand}, udp_recv_all};
+use crate::{model::{SerializedClientCommand}, udp_recv_all};
 
 use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol, config::RECV_BUFFER_SIZE};
 
 pub struct ConnectionInfo {
     pub stream: TcpStream,
-    pub _tcp_address: SocketAddr,
+    pub tcp_address: SocketAddr,
     pub udp_address: Option<SocketAddr>,
     pub udp_send_queue: VecDeque<SerializedClientCommand>,
     pub tcp_recv: TcpRecvState,
@@ -20,6 +20,21 @@ pub struct Server {
     pub corresponding_tcp_to_udp: HashMap<SocketAddr, SocketAddr>,
     pub recv_buffer: Box<[u8]>
 }
+
+#[derive(Debug)]
+pub enum ServerError {
+    NoConnection,
+    Disconnected,
+    Other(String)
+}
+
+impl Display for ServerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+pub type ServerResult<T> = Result<T, ServerError>;
 
 impl Server {
     pub fn send_tcp(&mut self, tcp_addr: &SocketAddr, data: SerializedClientCommand) -> std::result::Result<(), String> {
@@ -38,28 +53,15 @@ impl Server {
             None => Err(format!("Client with TCP address {} not found", tcp_addr))
         }
     }
-}
 
-pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
-    let mut server = Server {
-        udp: UdpSocket::bind(format!("0.0.0.0:{}", ports.0))?,
-        tcp: TcpListener::bind(format!("0.0.0.0:{}", ports.1))?,
-        connections: HashMap::new(),
-        corresponding_tcp_to_udp: HashMap::new(),
-        recv_buffer: vec![0u8; RECV_BUFFER_SIZE].into_boxed_slice(),
-    };
-    server.udp.set_nonblocking(true)?;
-    server.tcp.set_nonblocking(true)?;
-    loop {
+    pub fn update_udp_recv(&mut self, messages: &mut Vec<(Protocol, SocketAddr, Box<[u8]>)>) -> ServerResult<()> {
         // recv UDP
-        let mut messages: Vec<(Protocol, SocketAddr, SerializedServerCommand)> = Vec::new();
-        let (recv, err) = udp_recv_all(&server.udp, &mut server.recv_buffer, None);
+        let (recv, err) = udp_recv_all(&self.udp, &mut self.recv_buffer, None);
         for (addr, data) in recv {
             for packet in data {
                 let s = String::from_utf8_lossy(packet.as_ref()).to_string();
                 println!("Received UPD from {:?} of len {}: {}", addr, packet.len(), s);
-                let command = SerializedServerCommand(packet);
-                messages.push((Protocol::UDP, addr, command));
+                messages.push((Protocol::UDP, addr, packet));
                 // match command.execute(((Protocol::UDP, &addr), &mut server)) {
                 //     Ok(()) => println!("Ran UDP command from {:?}: {}", addr, str),
                 //     Err(err) => println!("Error deserializing UDP packet from {}: {}", addr, err),
@@ -69,21 +71,27 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
         // errors for udp
         if let Some(err) = err {
             match err.kind() {
-                std::io::ErrorKind::WouldBlock => (),
-                _ => println!("Error UDP receiving: {}", err)
+                std::io::ErrorKind::WouldBlock => Ok(()),
+                _ => {
+                    Err(ServerError::Other(format!("Error UDP receiving: {}", err)))
+                }
             }
+        } else {
+            Ok(())
         }
+    }
 
+    pub fn update_tcp_listen(&mut self) -> ServerResult<()> {
         // listen on TCP
         loop {
-            match server.tcp.accept() {
+            match self.tcp.accept() {
                 Ok((stream, addr)) => {
                     println!("New connection from {}", addr);
                     match stream.set_nonblocking(true) {
                         Ok(()) => {
-                            server.connections.insert(addr, ConnectionInfo {
+                            self.connections.insert(addr, ConnectionInfo {
                                 stream,
-                                _tcp_address: addr,
+                                tcp_address: addr,
                                 udp_address: None,
                                 udp_send_queue: VecDeque::new(),
                                 tcp_recv: TcpRecvState::init(),
@@ -96,100 +104,46 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
                     }
                 },
                 Err(err) => match err.kind() {
-                    std::io::ErrorKind::WouldBlock => break,
+                    std::io::ErrorKind::WouldBlock => return Ok(()),
                     _ => {
-                        println!("Error with TCP accept: {}", err);
-                        break;
+                        return Err(ServerError::Other(format!("Error with TCP accept: {}", err)));
                     }
                 }
             }
         }
+    }
+
+    pub fn update(&mut self) -> Vec<(Protocol, SocketAddr, Box<[u8]>)> {
+        let mut messages: Vec<(Protocol, SocketAddr, Box<[u8]>)> = Vec::new();
         let mut disconnects = vec![];
-        for (addr, info) in &mut server.connections {
-            // send udp
-            if let Some(udp_address) = info.udp_address {
-                while let Some(packet) = info.udp_send_queue.pop_front() {
-                    match server.udp.send_to(packet.0.as_ref(), udp_address) {
-                        Ok(sent) => {
-                            if sent != packet.0.len() {
-                                println!("Somehow didn't send entire UDP packet");
-                            }
-                        },
-                        Err(err) => {
-                            match err.kind() {
-                                std::io::ErrorKind::WouldBlock => (),
-                                _ => println!("Error sending UDP packet to client (TCP address {}): {}", addr, err)
-                            }
-                            info.udp_send_queue.push_front(packet);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // read tcp
-            match info.stream.read(server.recv_buffer.as_mut()) {
-                Ok(size) => match size {
-                    0 => disconnects.push(*addr),
-                    _ => {
-                        println!("Received TCP bytes: {}", size);
-                        let data = info.tcp_recv.receive(&server.recv_buffer[0..size]);
-                        for message in &data {
-                            let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
-                            println!("Received full message TCP length {} from {}: {}", message.len(), addr, str);
-                        }
-                        messages.extend(data.into_iter().map(|data| (Protocol::TCP, *addr, data.into())));
-                    }
-                },
-                Err(err) => match err.kind() {
-                    std::io::ErrorKind::WouldBlock => (),
-                    _ => {
-                        println!("Error TCP receiving from {}: {}", addr, err);
+        match (|| -> ServerResult<()> {
+            self.update_udp_recv(&mut messages)?;
+            self.update_tcp_listen()?;
+            for (addr, info) in &mut self.connections {
+                match (|| -> ServerResult<()> {
+                    info.update_udp_send(&self.udp)?;
+                    info.update_tcp_recv(&mut messages, &mut self.recv_buffer)?;
+                    info.update_tcp_send()?;
+                    Ok(())
+                })() {
+                    Ok(()) => (),
+                    Err(err) => {
+                        println!("Client error: {}", err);
                         disconnects.push(*addr);
-                        continue;
                     }
                 }
             }
-            if let Some(error) = info.tcp_recv.failed() {
-                println!("Error in TCP recv stream: {}", error);
-                disconnects.push(*addr);
-                continue;
-            }
-
-            // send tcp
-            while let Some(buffer) = info.tcp_send.next_send() {
-                match info.stream.write(buffer) {
-                    Ok(sent) => match sent {
-                        0 => {
-                            disconnects.push(*addr);
-                            break;
-                        },
-                        _ => {
-                            println!("Sent {} TCP bytes", sent);
-                            info.tcp_send.update_buffer(sent)
-                        }
-                    },
-                    Err(err) => match err.kind() {
-                        std::io::ErrorKind::WouldBlock => (),
-                        _ => {
-                            println!("Error TCP writing to {}: {}", addr, err);
-                            disconnects.push(*addr);
-                            break;
-                        }
-                    }
-                }
+            Ok(())
+        })() {
+            Ok(()) => (),
+            Err(err) => {
+                println!("Server error: {}", err);
             }
         }
-
-        // execute all packets
-        for (protocol, addr, message) in messages {
-            match message.execute(((protocol, &addr), &mut server)) {
-                Ok(()) => println!("Server ran client command from {}", addr),
-                Err(err) => println!("Error running client {} command: {}", addr, err)
-            }
-        }
+        
+        // disconnect clients
         for addr in disconnects {
-            if let Some(info) = server.connections.remove(&addr) {
+            if let Some(info) = self.connections.remove(&addr) {
                 if let Err(err) = info.stream.shutdown(Shutdown::Both) {
                     println!("Error disconnecting from {}: {}", addr, err);
                 } else {
@@ -197,6 +151,97 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
                 }
             }
         }
-        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+        messages
+    }
+
+    pub fn init(ports: (u16, u16)) -> std::io::Result<Self> {
+        let server = Server {
+            udp: UdpSocket::bind(format!("0.0.0.0:{}", ports.0))?,
+            tcp: TcpListener::bind(format!("0.0.0.0:{}", ports.1))?,
+            connections: HashMap::new(),
+            corresponding_tcp_to_udp: HashMap::new(),
+            recv_buffer: vec![0u8; RECV_BUFFER_SIZE].into_boxed_slice(),
+        };
+        server.udp.set_nonblocking(true)?;
+        server.tcp.set_nonblocking(true)?;
+        Ok(server)
+    }
+}
+
+impl ConnectionInfo {
+    pub fn update_udp_send(&mut self, udp: &UdpSocket) -> ServerResult<()> {
+        // send udp
+        if let Some(udp_address) = self.udp_address {
+            while let Some(packet) = self.udp_send_queue.pop_front() {
+                match udp.send_to(packet.0.as_ref(), udp_address) {
+                    Ok(sent) => {
+                        if sent != packet.0.len() {
+                            println!("Somehow didn't send entire UDP packet");
+                        }
+                    },
+                    Err(err) => {
+                        self.udp_send_queue.push_front(packet);
+                        return match err.kind() {
+                            std::io::ErrorKind::WouldBlock => Ok(()),
+                            _ => Err(ServerError::Other(
+                                format!("Error sending UDP packet to client (TCP address {}): {}",
+                                    self.tcp_address,
+                                    err
+                                )))
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    pub fn update_tcp_recv(&mut self, messages: &mut Vec<(Protocol, SocketAddr, Box<[u8]>)>, buffer: &mut [u8]) -> ServerResult<()> {
+        // read tcp
+        let addr = self.tcp_address;
+        match self.stream.read(buffer) {
+            Ok(size) => match size {
+                0 => return Err(ServerError::Disconnected),
+                _ => {
+                    println!("Received TCP bytes: {}", size);
+                    let data = self.tcp_recv.receive(&buffer[0..size]);
+                    for message in &data {
+                        let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
+                        println!("Received full message TCP length {} from {}: {}", message.len(), addr, str);
+                    }
+                    messages.extend(data.into_iter().map(|data| (Protocol::TCP, addr, data.into())));
+                }
+            },
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::WouldBlock => return Ok(()),
+                _ => return Err(ServerError::Other(format!("Error TCP receiving from {}: {}", addr, err)))
+            }
+        }
+        if let Some(error) = self.tcp_recv.failed() {
+            Err(ServerError::Other(format!("Error in TCP recv stream: {}", error)))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn update_tcp_send(&mut self) -> ServerResult<()> {
+        // send tcp
+        let addr = self.tcp_address;
+        while let Some(buffer) = self.tcp_send.next_send() {
+            match self.stream.write(buffer) {
+                Ok(sent) => match sent {
+                    0 => return Err(ServerError::Disconnected),
+                    _ => {
+                        println!("Sent {} TCP bytes", sent);
+                        self.tcp_send.update_buffer(sent)
+                    }
+                },
+                Err(err) => match err.kind() {
+                    std::io::ErrorKind::WouldBlock => (),
+                    _ => return Err(ServerError::Other(format!("Error TCP writing to {}: {}", addr, err)))
+                }
+            }
+        }
+        Ok(())
     }
 }

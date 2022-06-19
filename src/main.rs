@@ -20,7 +20,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::mpsc::TryRecvError;
 use std::io::{self, ErrorKind, Read, Write};
 
-use networking::server::echo_server_both;
+use model::SerializedServerCommand;
+use networking::server::Server;
 
 use crate::model::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand};
 use crate::networking::Protocol;
@@ -397,6 +398,20 @@ pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Resu
     }
     println!("User requested stop");
     Ok(())
+}
+
+pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
+    let mut server = Server::init(ports)?;
+    loop {
+        // execute all packets
+        for (protocol, addr, message) in server.update() {
+            match SerializedServerCommand::from(message).execute(((protocol, &addr), &mut server)) {
+                Ok(()) => println!("Server ran client command from {}", addr),
+                Err(err) => println!("Error running client {} command: {}", addr, err)
+            }
+        }
+        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+    }
 }
 
 fn main() -> Result<()> {
