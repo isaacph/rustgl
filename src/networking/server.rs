@@ -8,9 +8,9 @@ pub struct ConnectionInfo {
     pub stream: TcpStream,
     pub tcp_address: SocketAddr,
     pub udp_address: Option<SocketAddr>,
-    pub udp_send_queue: VecDeque<SerializedClientCommand>,
-    pub tcp_recv: TcpRecvState,
-    pub tcp_send: TcpSendState
+    udp_send_queue: VecDeque<SerializedClientCommand>,
+    tcp_recv: TcpRecvState,
+    tcp_send: TcpSendState
 }
 
 pub struct Server {
@@ -18,7 +18,7 @@ pub struct Server {
     pub tcp: TcpListener,
     pub connections: HashMap<SocketAddr, ConnectionInfo>,
     pub corresponding_tcp_to_udp: HashMap<SocketAddr, SocketAddr>,
-    pub recv_buffer: Box<[u8]>
+    recv_buffer: Box<[u8]>
 }
 
 #[derive(Debug)]
@@ -57,6 +57,13 @@ impl Server {
                 Ok(())
             },
             None => Err(format!("Client with TCP address {} not found", tcp_addr))
+        }
+    }
+
+    pub fn get_tcp_address(&self, udp_addr: &SocketAddr) -> Option<SocketAddr> {
+        match self.corresponding_tcp_to_udp.get(udp_addr) {
+            Some(addr) => Some(*addr),
+            None => None
         }
     }
 

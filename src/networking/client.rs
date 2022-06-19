@@ -23,7 +23,7 @@ impl Display for ClientError {
 
 pub type ClientResult<T> = Result<T, ClientError>;
 
-pub struct Connection {
+struct Connection {
     pub tcp: TcpStream,
     pub udp: UdpSocket,
     pub remote_addr_tcp: SocketAddr,
@@ -36,7 +36,7 @@ pub struct Connection {
 
 type Connecting = (AddressPair, Receiver<std::io::Result<TcpStream>>);
 pub struct Client {
-    pub connection: Option<Connection>,
+    connection: Option<Connection>,
     connecting: Option<Connecting>,
     next_attempt: Option<AddressPair>
 }
@@ -73,6 +73,7 @@ impl Client {
             Err(ClientError::NoConnection)
         }
     }
+
     pub fn disconnect(&mut self) {
         if self.connection.is_some() {
             println!("Disconnected from server");
@@ -267,7 +268,7 @@ impl Client {
         });
     }
 
-    pub fn check_connection(&mut self) {
+    fn check_connection(&mut self) {
         if !self.is_connected() {
             if let Some((addr, rx)) = &self.connecting {
                 match rx.try_recv() {
