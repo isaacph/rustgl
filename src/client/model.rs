@@ -23,7 +23,10 @@ impl<'a> ClientCommand<'a> for SendAddress {
     fn run(self, (_, client): (Protocol, &mut Client)) {
         //println!("Server sent their view of client's address: {}", self.0);
         let packet: SerializedServerCommand = (&SetUDPAddress(self.0)).into();
-        client.send_tcp(packet);
+        match client.send_tcp(packet) {
+            Ok(()) => (),
+            Err(err) => println!("Failed to send address to server: {}", err)
+        }
     }
 }
 
