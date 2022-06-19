@@ -26,7 +26,7 @@ commands_execute!(
 impl<'a> ServerCommand<'a> for GetAddress {
     fn run(self, ((_, addr), server): ((Protocol, &SocketAddr), &mut Server)) {
         let packet: SerializedClientCommand = (&SendAddress(addr.to_string())).into();
-        match server.udp.send_to(packet.0.as_slice(), addr) {
+        match server.udp.send_to(packet.0.as_ref(), addr) {
             Ok(size) => println!("Sent UDP {} bytes", size),
             Err(err) => println!("Error UDP sending: {}", err)
         };

@@ -24,8 +24,8 @@ impl TcpRecvState {
         self.failure.clone()
     }
 
-    pub fn receive(&mut self, data: &[u8]) -> Vec<Vec<u8>> {
-        let mut messages: Vec<Vec<u8>> = vec![];
+    pub fn receive(&mut self, data: &[u8]) -> Vec<Box<[u8]>> {
+        let mut messages: Vec<Box<[u8]>> = vec![];
 
         let mut extension_read_start = 0;
         let extension: &[u8] = data;
@@ -81,8 +81,8 @@ impl TcpRecvState {
                 if self.remaining == 0 {
                     // we finished a packet!
                     // store the finished message
-                    let finished_message = self.buffer[0..self.length].to_vec();
-                    messages.push(finished_message);
+                    let finished_message = &self.buffer[0..self.length];
+                    messages.push(Vec::from(finished_message).into_boxed_slice());
                     // clear the message
                     self.length = 0;
                 }
@@ -93,7 +93,7 @@ impl TcpRecvState {
 }
 
 pub struct TcpSendState {
-    queue: VecDeque<Vec<u8>>,
+    queue: VecDeque<Box<[u8]>>,
     queue_size: usize,
     buffer: Box<[u8]>,
     length: usize,
@@ -125,7 +125,7 @@ impl TcpSendState {
             if let Some(next) = self.queue.pop_front() {
                 let length: [u8; 4] = u32::to_be_bytes(next.len() as u32);
                 self.buffer[0..4].copy_from_slice(&length);
-                self.buffer[4..4 + next.len()].copy_from_slice(next.as_slice());
+                self.buffer[4..4 + next.len()].copy_from_slice(&next);
                 self.position = 0;
                 self.length = next.len() + 4;
                 self.queue_size -= next.len();
@@ -133,7 +133,7 @@ impl TcpSendState {
         }
     }
 
-    pub fn enqueue(&mut self, packet: Vec<u8>) -> std::result::Result<(), String> {
+    pub fn enqueue(&mut self, packet: Box<[u8]>) -> std::result::Result<(), String> {
         if packet.len() + 4 > MAX_TCP_MESSAGE_SIZE {
             Err(format!("Tried to send message that was too big: {} > {}", packet.len() + 4, MAX_TCP_MESSAGE_SIZE))
         } else if self.queue_size + packet.len() > MAX_TCP_MESSAGE_QUEUE_SIZE {

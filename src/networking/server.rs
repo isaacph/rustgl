@@ -2,7 +2,7 @@ use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collec
 
 use crate::{model::{SerializedClientCommand, SerializedServerCommand}, udp_recv_all};
 
-use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol};
+use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol, config::RECV_BUFFER_SIZE};
 
 pub struct ConnectionInfo {
     pub stream: TcpStream,
@@ -17,7 +17,8 @@ pub struct Server {
     pub udp: UdpSocket,
     pub tcp: TcpListener,
     pub connections: HashMap<SocketAddr, ConnectionInfo>,
-    pub corresponding_tcp_to_udp: HashMap<SocketAddr, SocketAddr>
+    pub corresponding_tcp_to_udp: HashMap<SocketAddr, SocketAddr>,
+    pub recv_buffer: Box<[u8]>
 }
 
 impl Server {
@@ -44,18 +45,18 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
         udp: UdpSocket::bind(format!("0.0.0.0:{}", ports.0))?,
         tcp: TcpListener::bind(format!("0.0.0.0:{}", ports.1))?,
         connections: HashMap::new(),
-        corresponding_tcp_to_udp: HashMap::new()
+        corresponding_tcp_to_udp: HashMap::new(),
+        recv_buffer: vec![0u8; RECV_BUFFER_SIZE].into_boxed_slice(),
     };
     server.udp.set_nonblocking(true)?;
-    let mut buffer: Box<[u8]> = vec![0u8; 1024].into_boxed_slice();
     server.tcp.set_nonblocking(true)?;
     loop {
         // recv UDP
         let mut messages: Vec<(Protocol, SocketAddr, SerializedServerCommand)> = Vec::new();
-        let (recv, err) = udp_recv_all(&server.udp, &mut buffer, None);
+        let (recv, err) = udp_recv_all(&server.udp, &mut server.recv_buffer, None);
         for (addr, data) in recv {
             for packet in data {
-                let s = String::from_utf8_lossy(packet.as_slice()).to_string();
+                let s = String::from_utf8_lossy(packet.as_ref()).to_string();
                 println!("Received UPD from {:?} of len {}: {}", addr, packet.len(), s);
                 let command = SerializedServerCommand(packet);
                 messages.push((Protocol::UDP, addr, command));
@@ -108,7 +109,7 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
             // send udp
             if let Some(udp_address) = info.udp_address {
                 while let Some(packet) = info.udp_send_queue.pop_front() {
-                    match server.udp.send_to(packet.0.as_slice(), udp_address) {
+                    match server.udp.send_to(packet.0.as_ref(), udp_address) {
                         Ok(sent) => {
                             if sent != packet.0.len() {
                                 println!("Somehow didn't send entire UDP packet");
@@ -127,12 +128,12 @@ pub fn echo_server_both(ports: (u16, u16)) -> std::io::Result<()> {
             }
 
             // read tcp
-            match info.stream.read(buffer.as_mut()) {
+            match info.stream.read(server.recv_buffer.as_mut()) {
                 Ok(size) => match size {
                     0 => disconnects.push(*addr),
                     _ => {
                         println!("Received TCP bytes: {}", size);
-                        let data = info.tcp_recv.receive(&buffer[0..size]);
+                        let data = info.tcp_recv.receive(&server.recv_buffer[0..size]);
                         for message in &data {
                             let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
                             println!("Received full message TCP length {} from {}: {}", message.len(), addr, str);

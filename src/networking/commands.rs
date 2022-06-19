@@ -15,7 +15,7 @@ macro_rules! _commands_execute_static_def {
             pub fn execute(&self, context: $context_type) -> bincode::Result<()> {
                 let data = &self.0;
                 let id = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
-                $execute_fn_name(context, id, &data.as_slice()[..data.len() - 2])
+                $execute_fn_name(context, id, &data[..data.len() - 2])
             }
         }
     }
@@ -27,7 +27,7 @@ macro_rules! _commands_id_static_def {
         pub trait $id_trait_name: Serialize {
             fn id(&self) -> u16;
         }
-        pub struct $serialized_command_name(pub Vec<u8>);
+        pub struct $serialized_command_name(pub Box<[u8]>);
         // impl<T: $id_trait_name> From<&T> for $serialized_command_name {
         //     fn from(command: &T) -> Self {
         //         let mut data: Vec<u8> = bincode::serialize(&command).unwrap(); // TODO: error handling
@@ -38,11 +38,21 @@ macro_rules! _commands_id_static_def {
         // }
         impl From<Vec<u8>> for $serialized_command_name {
             fn from(data: Vec<u8>) -> Self {
-                $serialized_command_name(data)
+                $serialized_command_name(data.into_boxed_slice())
             }
         }
         impl Into<Vec<u8>> for $serialized_command_name {
             fn into(self) -> Vec<u8> {
+                self.0.to_vec()
+            }
+        }
+        impl From<Box<[u8]>> for $serialized_command_name {
+            fn from(data: Box<[u8]>) -> Self {
+                $serialized_command_name(data)
+            }
+        }
+        impl Into<Box<[u8]>> for $serialized_command_name {
+            fn into(self) -> Box<[u8]> {
                 self.0
             }
         }
@@ -63,7 +73,7 @@ macro_rules! commands_id {
                 let mut data: Vec<u8> = bincode::serialize(self).unwrap(); // TODO: error handling
                 let mut id = Vec::from(($idx as u16).to_be_bytes());
                 data.append(&mut id);
-                $serialized_command_name(data)
+                $serialized_command_name(data.into_boxed_slice())
             }
         }
         impl Into<$serialized_command_name> for $head {

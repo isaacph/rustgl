@@ -1,6 +1,6 @@
-use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::mpsc::TryRecvError, io::{ErrorKind, Read, Write}, time::Duration, cmp};
+use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::mpsc::{TryRecvError, channel, Receiver}, io::{ErrorKind, Read, Write}, time::Duration, cmp, thread, fmt::Display};
 
-use crate::{model::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}, networking::{tcp_buffering::{TcpSendState, TcpRecvState}, Protocol, config::RECV_BUFFER_SIZE}, console_stream, udp_recv_all};
+use crate::{model::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}, networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, Protocol, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}}, console_stream, udp_recv_all};
 
 use super::{tcp_buffering, config::MAX_UDP_MESSAGE_SIZE};
 
@@ -8,94 +8,146 @@ use super::{tcp_buffering, config::MAX_UDP_MESSAGE_SIZE};
 // note the types are TCP send, TCP recv, UDP send, UDP recv
 const MAX_PACKETS_PROCESS: usize = 256;
 
-pub struct Client {
-    pub tcp: Option<TcpStream>,
+#[derive(Debug)]
+pub enum ClientError {
+    NoError,
+    NoConnection,
+    Other(String)
+}
+
+impl Display for ClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+pub type ClientResult<T> = Result<T, ClientError>;
+
+pub struct Connection {
+    pub tcp: TcpStream,
     pub udp: UdpSocket,
-    pub addr_tcp: SocketAddr,
-    pub addr_udp: SocketAddr,
-    pub udp_message_queue: VecDeque<Vec<u8>>,
+    pub remote_addr_tcp: SocketAddr,
+    pub remote_addr_udp: SocketAddr,
+    pub udp_message_queue: VecDeque<Box<[u8]>>,
     pub tcp_send: tcp_buffering::TcpSendState,
     pub tcp_recv: tcp_buffering::TcpRecvState,
-    pub recv_buffer: Box<[u8]>
+    pub recv_buffer: Box<[u8]>,
+}
+
+type Connecting = (AddressPair, Receiver<std::io::Result<TcpStream>>);
+pub struct Client {
+    pub connection: Option<Connection>,
+    connecting: Option<Connecting>,
+    next_attempt: Option<AddressPair>
 }
 
 impl Client {
-    pub fn send_udp<T>(&mut self, packet: T)
+    pub fn send_udp<T>(&mut self, packet: T) -> ClientResult<()>
     where
         T: Into<SerializedServerCommand>
     {
-        let SerializedServerCommand(data) = packet.into();
-        if data.len() > MAX_UDP_MESSAGE_SIZE {
-            println!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE);
-            return;
+        if let Some(con) = &mut self.connection {
+            let SerializedServerCommand(data) = packet.into();
+            if data.len() > MAX_UDP_MESSAGE_SIZE {
+                println!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE);
+                return Ok(());
+            }
+            con.udp_message_queue.push_back(data);
+            Ok(())
+        } else {
+            Err(ClientError::NoConnection)
         }
-        self.udp_message_queue.push_back(data);
     }
-    pub fn send_tcp<T>(&mut self, message: T)
+
+    pub fn send_tcp<T>(&mut self, message: T) -> ClientResult<()>
     where
         T: Into<SerializedServerCommand>
     {
-        let SerializedServerCommand(data) = message.into();
-        self.tcp_send.enqueue(data).unwrap();
+        if let Some(con) = &mut self.connection {
+            let SerializedServerCommand(data) = message.into();
+            match con.tcp_send.enqueue(data) {
+                Ok(()) => Ok(()),
+                Err(msg) => Err(ClientError::Other(msg))
+            }
+        } else {
+            Err(ClientError::NoConnection)
+        }
     }
     pub fn disconnect(&mut self) {
-        println!("Disconnected from server");
-        self.tcp = None;
+        if self.connection.is_some() {
+            println!("Disconnected from server");
+        }
+        if self.connecting.is_some() || self.next_attempt.is_some() {
+            println!("Preventing reconnection");
+        }
+        self.connection = None;
+        self.connecting = None;
+        self.next_attempt = None;
     }
 
-    fn update_udp_recv(&mut self) -> Vec<Vec<u8>> {
-        let (recv, err) = udp_recv_all(&self.udp, self.recv_buffer.as_mut(), Some(MAX_PACKETS_PROCESS));
-        let mut messages = vec![];
-        for (addr, recvd) in recv {
-            for message in recvd {
-                println!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(message.as_slice()));
-                messages.push(message);
-                // let command = SerializedClientCommand {
-                //     data: message
-                // };
-                // match command.execute((Protocol::UDP, self)) {
-                //     Ok(()) => (),
-                //     Err(err) => println!("Error deserializing UDP command: {}", err)
-                // }
-            }
-        }
-        match err {
-            Some(err) => match err.kind() {
-                ErrorKind::WouldBlock => (),
-                _ => println!("Error receiving UDP: {}", err)
-            },
-            None => ()
-        }
-        messages
-    }
-
-    fn update_udp_send(&mut self) {
-        let mut processed = 0;
-        while let Some(message) = self.udp_message_queue.pop_front() {
-            match self.udp.send_to(message.as_slice(), &self.addr_udp) {
-                Ok(sent) => println!("Sent UDP {} bytes", sent),
-                Err(err) => {
-                    match err.kind() {
-                        ErrorKind::WouldBlock => break,
-                        _ => println!("Error sending UDP: {}", err)
-                    }
-                    self.udp_message_queue.push_front(message);
+    fn update_udp_recv(&mut self) -> ClientResult<Vec<Box<[u8]>>> {
+        if let Some(con) = &mut self.connection {
+            let (recv, err) = udp_recv_all(&con.udp, con.recv_buffer.as_mut(), Some(MAX_PACKETS_PROCESS));
+            let mut messages = vec![];
+            for (addr, recvd) in recv {
+                for message in recvd {
+                    println!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(message.as_ref()));
+                    messages.push(message);
+                    // let command = SerializedClientCommand {
+                    //     data: message
+                    // };
+                    // match command.execute((Protocol::UDP, self)) {
+                    //     Ok(()) => (),
+                    //     Err(err) => println!("Error deserializing UDP command: {}", err)
+                    // }
                 }
             }
-            processed += 1;
-            if processed >= MAX_PACKETS_PROCESS {
-                break;
+            match err {
+                Some(err) => match err.kind() {
+                    ErrorKind::WouldBlock => (),
+                    _ => println!("Error receiving UDP: {}", err)
+                },
+                None => ()
             }
+            Ok(messages)
+        } else {
+            Err(ClientError::NoConnection)
         }
     }
 
-    fn update_tcp_recv(&mut self) -> Vec<Vec<u8>> {
-        let mut messages = vec![];
-        if let Some(tcp) = &mut self.tcp {
+    fn update_udp_send(&mut self) -> ClientResult<()> {
+        if let Some(con) = &mut self.connection {
+            let mut processed = 0;
+            while let Some(message) = con.udp_message_queue.pop_front() {
+                match con.udp.send_to(message.as_ref(), &con.remote_addr_udp) {
+                    Ok(sent) => println!("Sent UDP {} bytes", sent),
+                    Err(err) => {
+                        match err.kind() {
+                            ErrorKind::WouldBlock => break,
+                            _ => println!("Error sending UDP: {}", err)
+                        }
+                        con.udp_message_queue.push_front(message);
+                    }
+                }
+                processed += 1;
+                if processed >= MAX_PACKETS_PROCESS {
+                    break;
+                }
+            }
+            Ok(())
+        } else {
+            Err(ClientError::NoConnection)
+        }
+    }
+
+    fn update_tcp_recv(&mut self) -> ClientResult<Vec<Box<[u8]>>> {
+        if let Some(con) = &mut self.connection {
+            let mut messages = vec![];
+            let tcp = &mut con.tcp;
             let mut quit = false;
             let mut approx_packets = 0;
             while approx_packets < MAX_PACKETS_PROCESS { // limit how much time we spend receiving
-                match tcp.read(self.recv_buffer.as_mut()) {
+                match tcp.read(con.recv_buffer.as_mut()) {
                     Ok(size) => match size {
                         0 => {
                             quit = true;
@@ -103,9 +155,9 @@ impl Client {
                         },
                         _ => {
                             println!("Received TCP bytes length: {}", size);
-                            for data in self.tcp_recv.receive(&self.recv_buffer[0..size]) {
+                            for data in con.tcp_recv.receive(&con.recv_buffer[0..size]) {
                                 let str = String::from_utf8_lossy(&data[0..cmp::min(data.len(), 1024)]);
-                                println!("Received full message TCP length {} from {}: {}", data.len(), self.addr_tcp, str);
+                                println!("Received full message TCP length {} from {}: {}", data.len(), con.remote_addr_tcp, str);
                                 messages.push(data);
                             }
                             approx_packets += 1 + (size - 1) / 1024;
@@ -119,35 +171,37 @@ impl Client {
                             break;
                         },
                         _ => {
-                            println!("Error receiving TCP from {}: {}", self.addr_tcp, err);
+                            println!("Error receiving TCP from {}: {}", con.remote_addr_tcp, err);
                             quit = true;
                             break;
                         }
                     }
                 }
             }
-            if let Some(error) = self.tcp_recv.failed() {
+            if let Some(error) = con.tcp_recv.failed() {
                 println!("Error in TCP recv stream: {}", error);
                 self.disconnect();
             }
             if quit {
                 self.disconnect();
             }
+            Ok(messages)
+        } else {
+            Err(ClientError::NoConnection)
         }
-        messages
     }
 
-    fn update_tcp_send(&mut self) {
-        // tcp stuff
-        if let Some(tcp) = &mut self.tcp {
+    fn update_tcp_send(&mut self) -> ClientResult<()> {
+        if let Some(con) = &mut self.connection {
+            // tcp stuff
             let mut quit = false;
             let mut processed = 0;
-            while let Some(buffer) = self.tcp_send.next_send() {
-                match tcp.write(buffer) {
+            while let Some(buffer) = con.tcp_send.next_send() {
+                match con.tcp.write(buffer) {
                     Ok(sent) => match sent {
                         0 => break,
                         _ => {
-                            self.tcp_send.update_buffer(sent);
+                            con.tcp_send.update_buffer(sent);
                             println!("Sent {} TCP bytes", sent);
                             processed += 1 + (sent - 1) / 1024;
                             if processed >= MAX_PACKETS_PROCESS {
@@ -158,7 +212,7 @@ impl Client {
                     Err(err) => match err.kind() {
                         std::io::ErrorKind::WouldBlock => break,
                         _ => {
-                            println!("Error writing TCP to {}: {}", self.addr_tcp, err);
+                            println!("Error writing TCP to {}: {}", con.remote_addr_tcp, err);
                             quit = true;
                         }
                     }
@@ -167,77 +221,127 @@ impl Client {
             if quit {
                 self.disconnect();
             }
+            Ok(())
+        } else {
+            Err(ClientError::NoConnection)
         }
     }
-}
 
-pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Result<()> {
-    let tcp = TcpStream::connect(addresses.1)?;
-    println!("Connected on {}", tcp.local_addr()?);
-    tcp.set_nonblocking(true)?;
-    let mut client = Client {
-        tcp: Some(tcp),
-        udp: UdpSocket::bind("0.0.0.0:0")?,
-        addr_tcp: addresses.1,
-        addr_udp: addresses.0,
-        udp_message_queue: VecDeque::new(),
-        tcp_send: TcpSendState::init(),
-        tcp_recv: TcpRecvState::init(),
-        recv_buffer: vec![0u8; RECV_BUFFER_SIZE].into_boxed_slice()
-    };
-    
-    client.udp.set_nonblocking(true)?;
-    let stdin_channel = console_stream();
-    loop {
-        match stdin_channel.try_recv() {
-            Ok(msg) => {
-                let split: Vec<&str> = msg.split(" ").collect();
-                match &split[..] {
-                    ["getaddr"] => {
-                        client.send_udp(GetAddress);
-                    },
-                    ["setaddr", _, ..] => {
-                        client.send_tcp(SetUDPAddress(msg["setaddr ".len()..msg.len()].into()));
-                    }
-                    ["udp", "echo", _, ..] => {
-                        client.send_udp(EchoMessage(msg["udp echo ".len()..msg.len()].into()));
-                    },
-                    ["tcp", "echo", _, ..] => {
-                        client.send_tcp(EchoMessage(msg["tcp echo ".len()..msg.len()].into()));
-                    },
-                    ["tcp", "big", len] => {
-                        client.send_tcp(EchoMessage({
-                            let mut s = String::new();
-                            for _ in 0..len.parse().unwrap() {
-                                s.push('t');
-                            }
-                            s
-                        }));
-                    }
-                    _ => println!("Invalid command: {}", msg)
-                };
-                // tcp_write_buffer.extend(msg.as_bytes());
-            },
-            Err(TryRecvError::Empty) => (),
-            Err(TryRecvError::Disconnected) => break,
-        }
-
+    pub fn update(&mut self) -> Vec<Box<[u8]>> {
+        self.check_connection();
         let mut messages = vec![];
-        messages.append(&mut client.update_udp_recv());
-        client.update_udp_send();
-        messages.append(&mut client.update_tcp_recv());
-        client.update_tcp_send();
-        for message in messages {
-            match SerializedClientCommand::from(message).execute((Protocol::TCP, &mut client)) {
-                Ok(()) => (),
-                Err(err) => {
-                    println!("{}", err);
-                }
+        match (|| -> ClientResult<()> {
+            messages.append(&mut self.update_udp_recv()?);
+            self.update_udp_send()?;
+            messages.append(&mut self.update_tcp_recv()?);
+            self.update_tcp_send()?;
+            Ok(())
+        })() {
+            Ok(()) => (),
+            Err(err) => match err {
+                ClientError::NoConnection => (),
+                _ => println!("Client error: {}", err)
             }
         }
-
-        std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+        messages
     }
-    println!("Disconnected from server.");
-    Ok(())
+
+    pub fn is_connected(&self) -> bool {
+        self.connection.is_some()
+    }
+
+    pub fn init_disconnected() -> Client {
+        Client {
+            connection: None,
+            connecting: None,
+            next_attempt: None
+        }
+    }
+
+    fn start_connecting(addr: &AddressPair) -> Connecting {
+        let connect_addr = addr.tcp;
+        let (tx, rx) = channel();
+        let _ = thread::spawn(move || {
+            tx.send(TcpStream::connect_timeout(&connect_addr, CONNECT_TIMEOUT))
+        });
+        (*addr, rx)
+    }
+
+    pub fn connect(&mut self, remote_addr_udp: SocketAddr, remote_addr_tcp: SocketAddr) {
+        let addr = AddressPair {
+            udp: remote_addr_udp,
+            tcp: remote_addr_tcp
+        };
+        if self.connecting.is_some() {
+            self.next_attempt = Some(addr);
+        } else {
+            self.connecting = Some(Self::start_connecting(&addr));
+        }
+    }
+
+    fn finish_connecting(&mut self, addr: &AddressPair, tcp: TcpStream, udp: UdpSocket) {
+        self.connection = Some(Connection {
+            tcp,
+            udp,
+            remote_addr_udp: addr.udp,
+            remote_addr_tcp: addr.tcp,
+            udp_message_queue: VecDeque::new(),
+            tcp_send: TcpSendState::init(),
+            tcp_recv: TcpRecvState::init(),
+            recv_buffer: vec![0u8; RECV_BUFFER_SIZE].into_boxed_slice()
+        });
+    }
+
+    pub fn check_connection(&mut self) {
+        if !self.is_connected() {
+            if let Some((addr, rx)) = &self.connecting {
+                match rx.try_recv() {
+                    Ok(Ok(tcp)) => {
+                        match UdpSocket::bind("0.0.0.0:0") {
+                            Ok(udp) => {
+                                // finish the connection
+                                if let Some(new_addr) = &self.next_attempt {
+                                    println!("Connection discarded: remote {}, new connection attempt is: remote {}", addr, new_addr);
+                                    self.connecting = Some(Self::start_connecting(new_addr));
+                                } else {
+                                    println!("Connected on TCP to {}", addr);
+                                    let addr = *addr;
+                                    self.connecting = None;
+                                    match (udp.set_nonblocking(true), tcp.set_nonblocking(true)) {
+                                        (Ok(_), Ok(_)) => {
+                                            self.finish_connecting(&addr, tcp, udp);
+                                        },
+                                        (Ok(_), Err(err)) => {
+                                            println!("Error setting TCP stream to nonblocking: {}", err);
+                                        }
+                                        (Err(err), _) => {
+                                            println!("Error setting UDP stream to nonblocking: {}", err);
+                                        }
+                                    }
+                                }
+                            },
+                            Err(err) => {
+                                println!("Error opening UDP socket at 0.0.0.0:0: {}", err);
+                                self.connecting = None;
+                            }
+                        }
+                    },
+                    Ok(Err(err)) => {
+                        println!("Error connecting TCP to {}: {}", addr.tcp, err);
+                        self.connecting = None;
+                    },
+                    Err(TryRecvError::Disconnected) => {
+                        println!("TCP connect thread disconnected unexpectedly");
+                        self.connecting = None;
+                    },
+                    Err(TryRecvError::Empty) => ()
+                }
+            } else if let Some(addr) = &self.next_attempt {
+                self.connecting = Some(Self::start_connecting(addr));
+            }
+        } else {
+            (self.connecting, self.next_attempt) = (None, None);
+        }
+    }
 }
+
