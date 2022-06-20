@@ -1,6 +1,8 @@
 use serde::{Serialize, Deserialize};
 use crate::{commands_id, _commands_id_static_def};
 
+// pub mod world;
+
 // define all client and server command data structures
 // they must all be listed in the macro below to auto generate an ID for them to be serialized
 // this enables commands to be serialized on both the client and the server

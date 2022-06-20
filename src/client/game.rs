@@ -10,17 +10,8 @@ use std::net::SocketAddr;
 use crate::{
     graphics,
     chatbox,
-    networking::{
-        self,
-        server::ConnectionID},
-    server::{
-        Server,
-        StopServer, EmptyCommand},
-    networking_wrapping::{
-        ClientCommand,
-        ServerCommand, SerializedClientCommand, SerializedServerCommand,
-	},
-    world::{
+    networking,
+    model::world::{
         World,
         GenerateCharacter,
         character::CharacterID, player::{PlayerLogIn, PlayerLogOut}

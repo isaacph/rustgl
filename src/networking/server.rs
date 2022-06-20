@@ -1,23 +1,21 @@
 use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, fmt::Display};
-
-use crate::{model::{SerializedClientCommand}};
-
+use crate::model::SerializedClientCommand;
 use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol, config::RECV_BUFFER_SIZE, common::udp_recv_all};
 
 pub struct ConnectionInfo {
-    pub stream: TcpStream,
-    pub tcp_address: SocketAddr,
-    pub udp_address: Option<SocketAddr>,
+    stream: TcpStream,
+    tcp_address: SocketAddr,
+    udp_address: Option<SocketAddr>,
     udp_send_queue: VecDeque<SerializedClientCommand>,
     tcp_recv: TcpRecvState,
     tcp_send: TcpSendState
 }
 
 pub struct Server {
-    pub udp: UdpSocket,
-    pub tcp: TcpListener,
-    pub connections: HashMap<SocketAddr, ConnectionInfo>,
-    pub corresponding_tcp_to_udp: HashMap<SocketAddr, SocketAddr>,
+    udp: UdpSocket,
+    tcp: TcpListener,
+    connections: HashMap<SocketAddr, ConnectionInfo>,
+    corresponding_tcp_to_udp: HashMap<SocketAddr, SocketAddr>,
     recv_buffer: Box<[u8]>
 }
 
@@ -50,6 +48,7 @@ impl Server {
             None => Err(format!("Client with TCP address {} not found", tcp_addr))
         }
     }
+
     pub fn send_udp(&mut self, tcp_addr: &SocketAddr, data: SerializedClientCommand) -> std::result::Result<(), String> {
         match self.connections.get_mut(tcp_addr) {
             Some(info) => {
@@ -61,9 +60,23 @@ impl Server {
     }
 
     pub fn get_tcp_address(&self, udp_addr: &SocketAddr) -> Option<SocketAddr> {
-        match self.corresponding_tcp_to_udp.get(udp_addr) {
-            Some(addr) => Some(*addr),
-            None => None
+        self.corresponding_tcp_to_udp.get(udp_addr).copied()
+    }
+
+    pub fn send_udp_to_unidentified(&mut self, udp_addr: &SocketAddr, data: SerializedClientCommand) -> std::io::Result<usize>{
+        self.udp.send_to(&data.0, udp_addr)
+    }
+
+    pub fn set_client_udp_addr(&mut self, tcp_addr: &SocketAddr, udp_addr: &SocketAddr) -> std::result::Result<(), String> {
+        match self.connections.get_mut(tcp_addr) {
+            Some(info) => {
+                info.udp_address = Some(*udp_addr);
+                self.corresponding_tcp_to_udp.insert(*udp_addr, *tcp_addr);
+                Ok(())
+            },
+            None => {
+                Err(format!("Client with TCP address {} not found", tcp_addr))
+            }
         }
     }
 

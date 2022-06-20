@@ -41,9 +41,9 @@ macro_rules! _commands_id_static_def {
                 $serialized_command_name(data.into_boxed_slice())
             }
         }
-        impl Into<Vec<u8>> for $serialized_command_name {
-            fn into(self) -> Vec<u8> {
-                self.0.to_vec()
+        impl From<$serialized_command_name> for Vec<u8> {
+            fn from(data: $serialized_command_name) -> Self {
+                data.0.to_vec()
             }
         }
         impl From<Box<[u8]>> for $serialized_command_name {
@@ -51,9 +51,9 @@ macro_rules! _commands_id_static_def {
                 $serialized_command_name(data)
             }
         }
-        impl Into<Box<[u8]>> for $serialized_command_name {
-            fn into(self) -> Box<[u8]> {
-                self.0
+        impl From<$serialized_command_name> for Box<[u8]> {
+            fn from(data: $serialized_command_name) -> Self {
+                data.0
             }
         }
     }
@@ -68,17 +68,17 @@ macro_rules! commands_id {
                 $idx
             }
         }
-        impl Into<$serialized_command_name> for &$head {
-            fn into(self) -> $serialized_command_name {
-                let mut data: Vec<u8> = bincode::serialize(self).unwrap(); // TODO: error handling
+        impl From<&$head> for $serialized_command_name {
+            fn from(data: &$head) -> Self {
+                let mut data: Vec<u8> = bincode::serialize(data).unwrap(); // TODO: error handling
                 let mut id = Vec::from(($idx as u16).to_be_bytes());
                 data.append(&mut id);
                 $serialized_command_name(data.into_boxed_slice())
             }
         }
-        impl Into<$serialized_command_name> for $head {
-            fn into(self) -> $serialized_command_name {
-                (&self).into()
+        impl From<$head> for $serialized_command_name {
+            fn from(data: $head) -> $serialized_command_name {
+                (&data).into()
             }
         }
         commands_id!($id_trait_name, $serialized_command_name, @step $idx + 1u16, $($tail,)*);

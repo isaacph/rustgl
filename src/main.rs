@@ -1,6 +1,6 @@
 extern crate glfw;
 
-// pub mod graphics;
+pub mod graphics;
 // pub mod chatbox;
 // pub mod networking_wrapping;
 pub mod networking;
