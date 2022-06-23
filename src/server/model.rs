@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::networking::Protocol;
 use crate::{commands_execute, _commands_execute_static_def};
-use crate::model::{GetAddress, SetUDPAddress, EchoMessage, SerializedServerCommand, SerializedClientCommand, SendAddress};
+use crate::model::commands::{GetAddress, SetUDPAddress, EchoMessage, SerializedServerCommand, SerializedClientCommand, SendAddress};
 use crate::networking::server::Server;
 
 commands_execute!(
@@ -58,6 +58,7 @@ impl<'a> ServerCommand<'a> for GetAddress {
         };
     }
 }
+
 impl<'a> ServerCommand<'a> for SetUDPAddress {
     fn run(self, ((protocol, addr), server): ((Protocol, &SocketAddr), &mut Server)) {
         match (protocol, self.0.parse()) {
@@ -71,6 +72,7 @@ impl<'a> ServerCommand<'a> for SetUDPAddress {
         }
     }
 }
+
 impl<'a> ServerCommand<'a> for EchoMessage {
     fn run(self, ((protocol, addr), server): ((Protocol, &SocketAddr), &mut Server)) {
         println!("Running echo");

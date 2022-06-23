@@ -1,6 +1,6 @@
 use std::cmp;
 
-use crate::{model::{SendAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}, networking::{client::Client, Protocol}};
+use crate::{model::commands::{SendAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}, networking::{client::Client, Protocol}};
 use crate::{commands_execute, _commands_execute_static_def};
 use serde::{Deserialize, Serialize};
 

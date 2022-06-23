@@ -1,5 +1,6 @@
 use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, fmt::Display};
-use crate::model::SerializedClientCommand;
+use crate::model::commands::SerializedClientCommand;
+
 use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol, config::RECV_BUFFER_SIZE, common::udp_recv_all};
 
 pub struct ConnectionInfo {
@@ -86,7 +87,7 @@ impl Server {
         for (addr, data) in recv {
             for packet in data {
                 let s = String::from_utf8_lossy(packet.as_ref()).to_string();
-                println!("Received UPD from {:?} of len {}: {}", addr, packet.len(), s);
+                println!("Received UDP from {:?} of len {}: {}", addr, packet.len(), s);
                 messages.push((Protocol::UDP, addr, packet));
                 // match command.execute(((Protocol::UDP, &addr), &mut server)) {
                 //     Ok(()) => println!("Ran UDP command from {:?}: {}", addr, str),

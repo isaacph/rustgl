@@ -1,6 +1,6 @@
 use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::mpsc::{TryRecvError, channel, Receiver}, io::{ErrorKind, Read, Write}, cmp, thread, fmt::Display};
 
-use crate::{model::{SerializedServerCommand}, networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}}};
+use crate::{networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}}, model::commands::SerializedServerCommand};
 
 use super::{tcp_buffering, config::MAX_UDP_MESSAGE_SIZE, common::udp_recv_all};
 

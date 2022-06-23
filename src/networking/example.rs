@@ -1,7 +1,7 @@
 use std::{net::{SocketAddr, UdpSocket, TcpStream, TcpListener, Shutdown}, io::{ErrorKind, self, Read, Write}, sync::mpsc::{TryRecvError, Receiver, self}, time::Duration, thread, collections::HashMap};
 use std::io::Result;
 
-use crate::{networking::{client::{Client, ClientResult}, Protocol}, model::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}};
+use crate::{networking::{client::{Client, ClientResult}, Protocol}, model::commands::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}};
 
 use super::{common::udp_recv_all, server::{Server, ServerUpdate}};
 

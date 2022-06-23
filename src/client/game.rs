@@ -1,85 +1,20 @@
 use nalgebra::{Vector2, Orthographic3};
 use ogl33::glViewport;
-use serde::{Serialize, Deserialize};
 
-use std::ffi::CStr;
+use std::{ffi::CStr, net::SocketAddr};
 use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
-use std::net::SocketAddr;
 use crate::{
     graphics,
-    chatbox,
-    networking,
+    client::chatbox,
     model::world::{
         World,
-        GenerateCharacter,
-        character::CharacterID, player::{PlayerLogIn, PlayerLogOut}
+        character::CharacterID,
     },
 };
 
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EchoMessage {
-    message: String
-}
-
-impl EchoMessage {
-    pub fn new(message: String) -> Self {
-        EchoMessage {
-            message
-        }
-    }
-}
-
-impl<'a> ClientCommand<'a> for EchoMessage {
-    fn run(self, client: &mut Game) {
-        client.chatbox.println(self.message.as_str());
-    }
-}
-
-impl<'a> ServerCommand<'a> for EchoMessage {
-    fn run(self, (source, server): (&ConnectionID, &mut Server)) {
-        let ser = SerializedClientCommand::from(&self);
-        server.connection.send_udp(vec![*source], ser.data);
-    }
-}
-
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChatMessage {
-    message: String
-}
-
-impl ChatMessage {
-    pub fn new(message: String) -> Self {
-        ChatMessage {
-            message
-        }
-    }
-}
-
-impl<'a> ClientCommand<'a> for ChatMessage {
-    fn run(self, client: &mut Game) {
-        client.chatbox.println(self.message.as_str());
-    } 
-}
-
-impl<'a> ServerCommand<'a> for ChatMessage {
-    fn run(mut self, (id, server): (&ConnectionID, &mut Server)) {
-        // reformat this message to include the sender's name or IP if they aren't signed in
-        let name = match server.player_manager.get_connected_player(id) {
-            None => match server.connection.get_address(id) {
-                None => return,
-                Some(addr) => format!("From {}", addr.to_string())
-            },
-            Some(player) => player.name.clone()
-        };
-        self.message = format!("<{}> {}", name, self.message);
-        let ser = SerializedClientCommand::from(&self);
-        server.connection.send_udp(server.connection.all_connection_ids(), ser.data);
-    }
-}
+use crate::networking::client::Client as Connection;
 
 #[derive(Clone)]
 pub enum State {
@@ -92,12 +27,12 @@ pub struct Game<'a> {
     pub ortho: Orthographic3<f32>,
     pub chatbox: chatbox::Chatbox<'a>,
     pub state: State,
-    pub connection: networking::client::Connection,
-    pub world: World
+    pub world: World,
+    pub connection: Connection
 }
 
 impl Game<'_> {
-    pub fn run(default_server: &SocketAddr) {
+    pub fn run() {
         let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
         let (width, height) = (800, 600);
 
@@ -119,27 +54,20 @@ impl Game<'_> {
             load_gl_with(|f_name| {
                 let cstr = CStr::from_ptr(f_name);
                 let str = cstr.to_str().expect("Failed to convert OGL function name");
-                window.get_proc_address(&str)
+                window.get_proc_address(str)
             });
         }
-        
+
         let mut font_library = graphics::text::FontLibrary::new();
         let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
         let simple_render = graphics::simple::Renderer::new_square();
-        let (connection, option_error) = networking::client::Connection::new(default_server);
         let mut game = Game {
             window_size: Vector2::<i32>::new(width, height),
             ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
             chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
             state: State::DEFAULT,
-            connection: connection,
-            world: World::new()
-        };
-        match option_error {
-            Some(error) => {
-                game.chatbox.println(format!("Error initializing connection: {:?}", error).as_str());
-            },
-            None => ()
+            world: World::new(),
+            connection: Connection::init_disconnected()
         };
         game.window_size(width, height);
         let render = graphics::textured::Renderer::new_square();
@@ -156,7 +84,6 @@ impl Game<'_> {
 //        let mut temp_id_gen = CharacterIDGenerator::new();
 //        GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
 
-        game.connection.send_udp(SerializedServerCommand::from(&EmptyCommand).data);
         let mut last_heartbeat = glfw.get_time();
 
         unsafe {
@@ -174,17 +101,8 @@ impl Game<'_> {
                 glClear(GL_COLOR_BUFFER_BIT);
             }
 
-            // update connection
-            // heartbeat to avoid disconnection
-            if current_time - last_heartbeat > 1.0 {
-                game.connection.send_udp(SerializedServerCommand::from(&EmptyCommand).data);
-                last_heartbeat = current_time;
-            }
-            game.connection.flush(); // send messages
-            let messages = game.connection.poll();
-            for data in messages {
-                let ser_cmd = SerializedClientCommand::new(data);
-                ser_cmd.execute(&mut game);
+            for message in game.connection.update() {
+                println!("Received message: {}", String::from_utf8_lossy(&message));
             }
 
             // update logic
@@ -292,14 +210,14 @@ impl Game<'_> {
                         game.chatbox.set_typing_flicker(true);
                         // game.chatbox.add_typing('/'); // this gets added automatically lol
                     },
-                    (State::DEFAULT, glfw::WindowEvent::Key(Key::G, _, Action::Press, _)) => {
-                        game.world.characters.iter().map(
-                            |id| game.world.make_cmd_update_character(*id)
-                        ).for_each(|cmd| match cmd {
-                            Some(cmd) => game.connection.send_udp(SerializedServerCommand::from(&cmd).data),
-                            _ => ()
-                        });
-                    },
+                    //(State::DEFAULT, glfw::WindowEvent::Key(Key::G, _, Action::Press, _)) => {
+                    //    game.world.characters.iter().map(
+                    //        |id| game.world.make_cmd_update_character(*id)
+                    //    ).for_each(|cmd| match cmd {
+                    //        Some(cmd) => game.connection.send_udp(SerializedServerCommand::from(&cmd).data),
+                    //        _ => ()
+                    //    });
+                    //},
                     (State::DEFAULT, glfw::WindowEvent::Key(Key::Tab, _, Action::Press, _)) => {
                         let ids: Vec<&CharacterID> = game.world.characters.iter().collect();
                         selected_char = match ids.len() {
@@ -344,62 +262,17 @@ impl Game<'_> {
         } else {
             let split: Vec<&str> = command[1..].split(' ').collect();
             match &split[..] {
-                ["hello", "world"] => Ok(Some(format!("Hello world!"))),
-                ["send", _, ..] => {
-                    let ser = SerializedServerCommand::from(&ChatMessage::new(String::from(&command[("send ".len() + 1)..])));
-                    self.connection.send_udp(ser.data);
-                    Ok(None)
-                },
-                ["echo", _, ..] => {
-                    let ser = SerializedServerCommand::from(&EchoMessage::new(String::from(&command[("echo ".len() + 1)..])));
-                    self.connection.send_udp(ser.data);
-                    Ok(None)
-                },
-                ["print", _, ..] => Ok(Some(String::from(&command[("/print ".len())..]))),
-                ["server", address] => {
-                    let address: SocketAddr = match address.parse() {
-                        Err(e) => return Err(format!("Error parsing address: {}", e)),
-                        Ok(address) => address
-                    };
-                    self.connection.set_server_address(&address);
-                    Ok(Some(format!("Successfully changed server address to {}", address.to_string())))
-                },
-                ["stopserver"] => {
-                    let ser = SerializedServerCommand::from(&StopServer());
-                    self.connection.send_udp(ser.data);
-                    Ok(Some(format!("Stop command sent")))
-                },
-                ["genchar"] => {
-                    let ser = SerializedServerCommand::from(&GenerateCharacter::new());
-                    self.connection.send_udp(ser.data);
-                    Ok(Some(format!("Character gen command sent")))
-                },
-                ["login", typ, ..] => {
-                    self.connection.send_udp(
-                        SerializedServerCommand::from(&PlayerLogIn {
-                            existing: match *typ {
-                                "new" => false,
-                                "old" => true,
-                                _ => return Err(format!(
-                                    "Unknown login type: {}. Options are: new old",
-                                    typ
-                                ))
-                            },
-                            name: match split.len() {
-                                2 => None,
-                                n => Some(String::from(split[2..n].join(" "))),
-                            }
-                        }).data
-                    );
-                    Ok(None)
-                },
-                ["logout"] => {
-                    self.connection.send_udp(
-                        SerializedServerCommand::from(&PlayerLogOut).data
-                    );
-                    Ok(None)
+                ["hello", "world"] => Ok(Some("Hello world!".to_string())),
+                ["connect", addr_udp, addr_tcp] => match (addr_udp.parse(), addr_tcp.parse()) {
+                    (Ok(addr_udp), Ok(addr_tcp)) => {
+                        let addr_udp: SocketAddr = addr_udp;
+                        let addr_tcp: SocketAddr = addr_tcp;
+                        self.connection.connect(addr_udp, addr_tcp);
+                        Ok(Some(format!("Starting connection with {}, {}", addr_udp, addr_tcp)))
+                    },
+                    (Err(err), _) | (_, Err(err)) => Err(format!("{}", err))
                 }
-                _ => Err(format!("Failed to parse command."))
+                _ => Err("Failed to parse command.".to_string())
             }
         }
     }
