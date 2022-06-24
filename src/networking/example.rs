@@ -1,7 +1,7 @@
 use std::{net::{SocketAddr, UdpSocket, TcpStream, TcpListener, Shutdown}, io::{ErrorKind, self, Read, Write}, sync::mpsc::{TryRecvError, Receiver, self}, time::Duration, thread, collections::HashMap};
 use std::io::Result;
 
-use crate::{networking::{client::{Client, ClientResult}, Protocol}, model::commands::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}};
+use crate::{networking::{client::{Client, ClientUpdate, ClientError}, Protocol}, model::commands::{GetAddress, SetUDPAddress, EchoMessage, SerializedClientCommand, SerializedServerCommand}};
 
 use super::{common::udp_recv_all, server::{Server, ServerUpdate}};
 
@@ -246,16 +246,19 @@ pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Resu
     let stdin_channel = console_stream();
     let mut run = true;
     while run {
+        let mut updates = vec![];
         match stdin_channel.try_recv() {
             Ok(msg) => {
-                match (|| -> ClientResult<()> {
+                match (|| -> std::result::Result<(), ClientError> {
                     let split: Vec<&str> = msg.split(' ').collect();
                     match &split[..] {
                         ["stop", ..] => {
                             run = false;
                         }
                         ["disconnect", ..] => {
-                            client.disconnect();
+                            if let Some(update) = client.disconnect(None) {
+                                updates.push(update);
+                            }
                         }
                         ["getaddr"] => {
                             client.send_udp(GetAddress)?;
@@ -306,12 +309,16 @@ pub fn console_client_both(addresses: (SocketAddr, SocketAddr)) -> std::io::Resu
             Err(TryRecvError::Disconnected) => break,
         }
 
-        for message in client.update() {
-            match SerializedClientCommand::from(message).execute((Protocol::TCP, &mut client)) {
-                Ok(()) => (),
-                Err(err) => {
-                    println!("{}", err);
-                }
+        updates.extend(client.update());
+        for update in updates {
+            match update {
+                ClientUpdate::Message(message) => match SerializedClientCommand::from(message).execute((Protocol::TCP, &mut client)) {
+                    Ok(()) => (),
+                    Err(err) => {
+                        println!("{}", err);
+                    }
+                },
+                _ => println!("{}", update)
             }
         }
 

@@ -11,7 +11,7 @@ use crate::{
     model::world::{
         World,
         character::CharacterID,
-    },
+    }, networking::client::ClientUpdate,
 };
 
 use crate::networking::client::Client as Connection;
@@ -101,8 +101,15 @@ impl Game<'_> {
                 glClear(GL_COLOR_BUFFER_BIT);
             }
 
-            for message in game.connection.update() {
-                println!("Received message: {}", String::from_utf8_lossy(&message));
+            for update in game.connection.update() {
+                let s = match update {
+                    ClientUpdate::Error(err) => format!("Connection error: {}", err),
+                    ClientUpdate::Log(log) => log.to_string(),
+                    ClientUpdate::Message(message) => format!("Received message: {}", String::from_utf8_lossy(&message)),
+                    _ => format!("{}", update)
+                };
+                println!("{}", s);
+                game.chatbox.println(s.as_str());
             }
 
             // update logic
