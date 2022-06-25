@@ -1,7 +1,7 @@
 pub mod model;
 use std::time::Duration;
 
-use crate::{model::world::{character::CharacterIDGenerator, World}, networking::{self, server::ServerUpdate, Protocol}};
+use crate::{model::world::{character::CharacterIDGenerator, World}, networking::{server::ServerUpdate, Protocol}};
 
 use crate::networking::server::Server as Connection;
 

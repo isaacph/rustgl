@@ -4,14 +4,13 @@ use serde::{Serialize, Deserialize};
 
 use crate::networking::Protocol;
 use crate::{commands_execute, _commands_execute_static_def};
-use crate::model::commands::{GetAddress, SetUDPAddress, EchoMessage, SerializedServerCommand, SerializedClientCommand, SendAddress};
+use crate::model::commands::{GetAddress, SetUDPAddress, EchoMessage, SendAddress, ClientCommandID};
 use crate::networking::server::Server;
 
 commands_execute!(
     execute_server_command,
     ServerCommand,
     ServerCommandID,
-    SerializedServerCommand,
     ((Protocol, &SocketAddr), &mut Server),
     // list all commands that the server can execute here here:
     [
@@ -20,6 +19,24 @@ commands_execute!(
         EchoMessage
     ]
 );
+
+pub trait SendCommands {
+    fn send_tcp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
+    fn send_udp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
+    fn send_udp_to_unidentified<T: ClientCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize>;
+}
+
+impl SendCommands for Server {
+    fn send_tcp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String> {
+        self.send_tcp_data(tcp_addr, command.make_bytes())
+    }
+    fn send_udp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String> {
+        self.send_udp_data(tcp_addr, command.make_bytes())
+    }
+    fn send_udp_to_unidentified<T: ClientCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize> {
+        self.send_udp_data_to_unidentified(udp_addr, &command.make_bytes())
+    }
+}
 
 // list how the server will respond to each command below
 
@@ -51,8 +68,7 @@ impl<'a, T> ServerCommand<'a> for T where T: ProtocolServerCommand<'a> {
 // these commands are special
 impl<'a> ServerCommand<'a> for GetAddress {
     fn run(self, ((_, addr), server): ((Protocol, &SocketAddr), &mut Server)) {
-        let packet: SerializedClientCommand = (&SendAddress(addr.to_string())).into();
-        match server.send_udp_to_unidentified(addr, packet) {
+        match server.send_udp_to_unidentified(addr, &SendAddress(addr.to_string())) {
             Ok(size) => println!("Sent UDP {} bytes", size),
             Err(err) => println!("Error UDP sending: {}", err)
         };
@@ -78,7 +94,7 @@ impl<'a> ServerCommand<'a> for EchoMessage {
         println!("Running echo");
         match protocol {
             Protocol::TCP => 
-            match server.send_tcp(addr, self.into()) {
+            match server.send_tcp(addr, &self) {
                 Ok(()) => (),
                 Err(err) => println!("Error echoing TCP to {}: {}", addr, err)
             },
@@ -87,7 +103,7 @@ impl<'a> ServerCommand<'a> for EchoMessage {
                 match server.get_tcp_address(&udp_addr) {
                     Some(tcp_addr) => {
                         let tcp_addr = tcp_addr;
-                        match server.send_udp(&tcp_addr, (&self).into()) {
+                        match server.send_udp(&tcp_addr, &self) {
                             Ok(()) => (),
                             Err(err) => println!("Error echoing UDP to client with TCP address {}: {}", udp_addr, err)
                         }

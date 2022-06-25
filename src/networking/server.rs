@@ -1,5 +1,4 @@
 use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, fmt::Display};
-use crate::model::commands::SerializedClientCommand;
 
 use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol, config::RECV_BUFFER_SIZE, common::udp_recv_all};
 
@@ -7,7 +6,7 @@ pub struct ConnectionInfo {
     stream: TcpStream,
     tcp_address: SocketAddr,
     udp_address: Option<SocketAddr>,
-    udp_send_queue: VecDeque<SerializedClientCommand>,
+    udp_send_queue: VecDeque<Box<[u8]>>,
     tcp_recv: TcpRecvState,
     tcp_send: TcpSendState
 }
@@ -42,15 +41,15 @@ pub struct ServerUpdate {
 }
 
 impl Server {
-    pub fn send_tcp(&mut self, tcp_addr: &SocketAddr, data: SerializedClientCommand) -> std::result::Result<(), String> {
-        println!("Sending message to {}, length {}", tcp_addr, data.0.len());
+    pub fn send_tcp_data(&mut self, tcp_addr: &SocketAddr, data: Box<[u8]>) -> std::result::Result<(), String> {
+        println!("Sending message to {}, length {}", tcp_addr, data.len());
         match self.connections.get_mut(tcp_addr) {
-            Some(info) => info.tcp_send.enqueue(data.0),
+            Some(info) => info.tcp_send.enqueue(data),
             None => Err(format!("Client with TCP address {} not found", tcp_addr))
         }
     }
 
-    pub fn send_udp(&mut self, tcp_addr: &SocketAddr, data: SerializedClientCommand) -> std::result::Result<(), String> {
+    pub fn send_udp_data(&mut self, tcp_addr: &SocketAddr, data: Box<[u8]>) -> std::result::Result<(), String> {
         match self.connections.get_mut(tcp_addr) {
             Some(info) => {
                 info.udp_send_queue.push_back(data);
@@ -64,8 +63,8 @@ impl Server {
         self.corresponding_tcp_to_udp.get(udp_addr).copied()
     }
 
-    pub fn send_udp_to_unidentified(&mut self, udp_addr: &SocketAddr, data: SerializedClientCommand) -> std::io::Result<usize>{
-        self.udp.send_to(&data.0, udp_addr)
+    pub fn send_udp_data_to_unidentified(&mut self, udp_addr: &SocketAddr, data: &[u8]) -> std::io::Result<usize>{
+        self.udp.send_to(data, udp_addr)
     }
 
     pub fn set_client_udp_addr(&mut self, tcp_addr: &SocketAddr, udp_addr: &SocketAddr) -> std::result::Result<(), String> {
@@ -204,9 +203,9 @@ impl ConnectionInfo {
         // send udp
         if let Some(udp_address) = self.udp_address {
             while let Some(packet) = self.udp_send_queue.pop_front() {
-                match udp.send_to(packet.0.as_ref(), udp_address) {
+                match udp.send_to(packet.as_ref(), udp_address) {
                     Ok(sent) => {
-                        if sent != packet.0.len() {
+                        if sent != packet.len() {
                             println!("Somehow didn't send entire UDP packet");
                         }
                     },

@@ -22,7 +22,6 @@ pub struct EchoMessage(pub String);
 
 commands_id!(
     ClientCommandID,
-    SerializedClientCommand,
     [
         SendAddress,
         EchoMessage
@@ -31,7 +30,6 @@ commands_id!(
 
 commands_id!(
     ServerCommandID,
-    SerializedServerCommand,
     [
         GetAddress,
         SetUDPAddress,

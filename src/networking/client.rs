@@ -1,7 +1,7 @@
 use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::mpsc::{TryRecvError, channel, Receiver}, io::{ErrorKind, Read, Write}, cmp, thread, fmt::Display};
 
 // where we're at right now is we need to finish changing from messages to ClientUpdate
-use crate::{networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}}, model::commands::SerializedServerCommand};
+use crate::{networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}}};
 
 use super::{tcp_buffering, config::{MAX_UDP_MESSAGE_SIZE, MAX_TCP_MESSAGE_SIZE}, common::udp_recv_all};
 
@@ -62,12 +62,12 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn send_udp<T>(&mut self, packet: T) -> Result<(), ClientError>
+    pub fn send_udp_data<T>(&mut self, packet: T) -> Result<(), ClientError>
     where
-        T: Into<SerializedServerCommand>
+        T: Into<Box<[u8]>>
     {
         if let Some(con) = &mut self.connection {
-            let SerializedServerCommand(data) = packet.into();
+            let data: Box<[u8]> = packet.into();
             if data.len() > MAX_UDP_MESSAGE_SIZE {
                 return Err(ClientError::BadCommand(format!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE)));
             }
@@ -78,12 +78,12 @@ impl Client {
         }
     }
 
-    pub fn send_tcp<T>(&mut self, message: T) -> Result<(), ClientError>
+    pub fn send_tcp_data<T>(&mut self, message: T) -> Result<(), ClientError>
     where
-        T: Into<SerializedServerCommand>
+        T: Into<Box<[u8]>>
     {
         if let Some(con) = &mut self.connection {
-            let SerializedServerCommand(data) = message.into();
+            let data: Box<[u8]> = message.into();
             if data.len() > MAX_TCP_MESSAGE_SIZE {
                 return Err(ClientError::BadCommand(format!("Attempted to send TCP message that was too big: {} > {}", data.len(), MAX_TCP_MESSAGE_SIZE)));
             }

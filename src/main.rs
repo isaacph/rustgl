@@ -16,7 +16,8 @@ use std::env;
 use std::io::{self, Write};
 
 use client::game;
-use networking::example::{echo_server_udp, console_client_udp, console_client_tcp, echo_server_tcp, echo_server_both, console_client_both};
+use networking::example::both::{echo_server_both, console_client_both};
+use networking::example::{echo_server_udp, console_client_udp, console_client_tcp, echo_server_tcp};
 
 pub fn grab_console_line(prompt: &str) -> String {
     let mut buffer = String::new();
