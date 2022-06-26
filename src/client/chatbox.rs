@@ -40,6 +40,7 @@ impl Chatbox<'_> {
     }
 
     pub fn println(&mut self, line: &str) {
+        println!("{}", line);
         let mut lines: Vec<String> = self.font.split_lines(line, Some(self.width));
         let add_len = std::cmp::min(self.history_length as usize, lines.len()) as i32;
         lines.drain(0..(std::cmp::max(0, lines.len() as i32 - add_len)) as usize);

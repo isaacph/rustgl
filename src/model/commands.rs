@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 use crate::{commands_id, _commands_id_static_def};
 
 // define all client and server command data structures
@@ -8,32 +8,61 @@ use crate::{commands_id, _commands_id_static_def};
 // the commands_execute macro list, and the method of execution must be specified by
 // implementing the ClientCommand or ServerCommand traits
 
-#[derive(Serialize, Deserialize)]
-pub struct GetAddress;
+pub mod core {
+    use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize)]
-pub struct SendAddress(pub String);
+    #[derive(Serialize, Deserialize)]
+    pub struct GetAddress;
+    
+    #[derive(Serialize, Deserialize)]
+    pub struct SendAddress(pub String);
+    
+    #[derive(Serialize, Deserialize)]
+    pub struct SetUDPAddress(pub String);
+    
+    #[derive(Serialize, Deserialize)]
+    pub struct EchoMessage(pub String);
+}
 
-#[derive(Serialize, Deserialize)]
-pub struct SetUDPAddress(pub String);
+pub mod player {
+    use serde::{Serialize, Deserialize};
+    use crate::model::world::player::PlayerData;
 
-#[derive(Serialize, Deserialize)]
-pub struct EchoMessage(pub String);
+    #[derive(Serialize, Deserialize)]
+    pub struct ChatMessage(pub String);
+
+    #[derive(Serialize, Deserialize)]
+    pub struct PlayerDataPayload(pub PlayerData);
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct PlayerLogIn {
+        pub existing: bool,
+        pub name: Option<String>
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub struct PlayerLogOut;
+}
 
 commands_id!(
     ClientCommandID,
     [
-        SendAddress,
-        EchoMessage
+        crate::model::commands::core::SendAddress,
+        crate::model::commands::core::EchoMessage,
+        crate::model::commands::player::PlayerDataPayload,
+        crate::model::commands::player::ChatMessage
     ]
 );
 
 commands_id!(
     ServerCommandID,
     [
-        GetAddress,
-        SetUDPAddress,
-        EchoMessage
+        crate::model::commands::core::GetAddress,
+        crate::model::commands::core::SetUDPAddress,
+        crate::model::commands::core::EchoMessage,
+        crate::model::commands::player::ChatMessage,
+        crate::model::commands::player::PlayerLogIn,
+        crate::model::commands::player::PlayerLogOut
     ]
 );
 

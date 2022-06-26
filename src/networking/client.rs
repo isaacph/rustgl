@@ -3,7 +3,7 @@ use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::
 // where we're at right now is we need to finish changing from messages to ClientUpdate
 use crate::{networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}}};
 
-use super::{tcp_buffering, config::{MAX_UDP_MESSAGE_SIZE, MAX_TCP_MESSAGE_SIZE}, common::udp_recv_all};
+use super::{tcp_buffering, config::{MAX_UDP_MESSAGE_SIZE, MAX_TCP_MESSAGE_SIZE}, common::udp_recv_all, Protocol};
 
 // maximum number of network commands to process for each type of processing in one cycle
 // note the types are TCP send, TCP recv, UDP send, UDP recv
@@ -25,7 +25,7 @@ pub enum ClientUpdate {
     PreventedReconnection(Option<ClientError>),
     Log(String),
     Error(ClientError),
-    Message(Box<[u8]>)
+    Message(Protocol, Box<[u8]>)
 }
 
 impl Display for ClientError {
@@ -62,34 +62,34 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn send_udp_data<T>(&mut self, packet: T) -> Result<(), ClientError>
+    pub fn send_data<T>(&mut self, protocol: Protocol, packet: T) -> Result<(), ClientError>
     where
         T: Into<Box<[u8]>>
     {
         if let Some(con) = &mut self.connection {
             let data: Box<[u8]> = packet.into();
-            if data.len() > MAX_UDP_MESSAGE_SIZE {
-                return Err(ClientError::BadCommand(format!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE)));
-            }
-            con.udp_message_queue.push_back(data);
-            Ok(())
-        } else {
-            Err(ClientError::NoConnection)
-        }
-    }
-
-    pub fn send_tcp_data<T>(&mut self, message: T) -> Result<(), ClientError>
-    where
-        T: Into<Box<[u8]>>
-    {
-        if let Some(con) = &mut self.connection {
-            let data: Box<[u8]> = message.into();
-            if data.len() > MAX_TCP_MESSAGE_SIZE {
-                return Err(ClientError::BadCommand(format!("Attempted to send TCP message that was too big: {} > {}", data.len(), MAX_TCP_MESSAGE_SIZE)));
-            }
-            match con.tcp_send.enqueue(data) {
-                Ok(()) => Ok(()),
-                Err(msg) => Err(ClientError::Other(msg))
+            match protocol {
+                Protocol::UDP => {
+                    if data.len() > MAX_UDP_MESSAGE_SIZE {
+                        return Err(ClientError::BadCommand(
+                            format!("Attempted to send UDP message that was too big: {} > {}",
+                                    data.len(),
+                                    MAX_UDP_MESSAGE_SIZE)));
+                    }
+                    con.udp_message_queue.push_back(data);
+                    Ok(())
+                }, Protocol::TCP => {
+                    if data.len() > MAX_TCP_MESSAGE_SIZE {
+                        return Err(ClientError::BadCommand(
+                            format!("Attempted to send TCP message that was too big: {} > {}",
+                                    data.len(),
+                                    MAX_TCP_MESSAGE_SIZE)));
+                    }
+                    match con.tcp_send.enqueue(data) {
+                        Ok(()) => Ok(()),
+                        Err(msg) => Err(ClientError::Other(msg))
+                    }
+                }
             }
         } else {
             Err(ClientError::NoConnection)
@@ -116,7 +116,7 @@ impl Client {
             for (addr, recvd) in recv {
                 for message in recvd {
                     updates.push(ClientUpdate::Log(format!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(message.as_ref()))));
-                    updates.push(ClientUpdate::Message(message));
+                    updates.push(ClientUpdate::Message(Protocol::UDP, message));
                 }
             }
             match err {
@@ -174,7 +174,7 @@ impl Client {
                             for data in con.tcp_recv.receive(&con.recv_buffer[0..size]) {
                                 let str = String::from_utf8_lossy(&data[0..cmp::min(data.len(), 1024)]);
                                 updates.push(ClientUpdate::Log(format!("Received full message TCP length {} from {}: {}", data.len(), con.remote_addr_tcp, str)));
-                                updates.push(ClientUpdate::Message(data));
+                                updates.push(ClientUpdate::Message(Protocol::TCP, data));
                             }
                             approx_packets += 1 + (size - 1) / 1024;
                         }

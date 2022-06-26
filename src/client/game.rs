@@ -7,14 +7,16 @@ use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use crate::{
     graphics,
-    client::chatbox,
-    model::world::{
+    client::{chatbox, commands::execute_client_command},
+    model::{world::{
         World,
         character::CharacterID,
-    }, networking::client::ClientUpdate,
+    }, commands::player::{PlayerLogIn, PlayerLogOut, ChatMessage}}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
+
+use super::commands::SendCommands;
 
 #[derive(Clone)]
 pub enum State {
@@ -84,7 +86,7 @@ impl Game<'_> {
 //        let mut temp_id_gen = CharacterIDGenerator::new();
 //        GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
 
-        let mut last_heartbeat = glfw.get_time();
+        // let mut last_heartbeat = glfw.get_time();
 
         unsafe {
             glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -102,14 +104,17 @@ impl Game<'_> {
             }
 
             for update in game.connection.update() {
-                let s = match update {
-                    ClientUpdate::Error(err) => format!("Connection error: {}", err),
-                    ClientUpdate::Log(log) => log.to_string(),
-                    ClientUpdate::Message(message) => format!("Received message: {}", String::from_utf8_lossy(&message)),
-                    _ => format!("{}", update)
-                };
-                println!("{}", s);
-                game.chatbox.println(s.as_str());
+                match update {
+                    ClientUpdate::Error(err) => game.chatbox.println(format!("Connection error: {}", err).as_str()),
+                    ClientUpdate::Log(log) => println!("{}", log),
+                    ClientUpdate::Message(protocol, message) => {
+                        match execute_client_command(&message, (protocol, &mut game)) {
+                            Ok(()) => (),
+                            Err(err) => game.chatbox.println(format!("Error executing message: {}, err: {}", String::from_utf8_lossy(&message), err).as_str())
+                        }
+                    },
+                    _ => game.chatbox.println(format!("{}", update).as_str())
+                }
             }
 
             // update logic
@@ -278,8 +283,41 @@ impl Game<'_> {
                         Ok(Some(format!("Starting connection with {}, {}", addr_udp, addr_tcp)))
                     },
                     (Err(err), _) | (_, Err(err)) => Err(format!("{}", err))
-                }
-                _ => Err("Failed to parse command.".to_string())
+                },
+                ["login", ..] => {
+                    let existing = if split.len() >= 2 {
+                        match split[1] {
+                            "new" => false,
+                            "old" => true,
+                            err => return Err(format!("Unknown login type: {}", err))
+                        }
+                    } else { false };
+                    let name = {
+                        if split.len() >= 3 {
+                            let x = split[2..].join(" ");
+                            if x.len() > 0 {
+                                Some(x)
+                            } else { None }
+                        } else {
+                            None
+                        }
+                    };
+                    match self.connection.send(Protocol::TCP, &PlayerLogIn {existing, name}) {
+                        Ok(()) => Ok(None),
+                        Err(err) => Err(format!("Error sending: {}", err))
+                    }
+                },
+                ["logout", ..] => {
+                    match self.connection.send(Protocol::TCP, &PlayerLogOut) {
+                        Ok(()) => Ok(None), Err(err) => Err(format!("Error sending: {}", err))
+                    }
+                },
+                ["send", _, ..] => {
+                    match self.connection.send(Protocol::TCP, &ChatMessage(command["send ".len()..].into())) {
+                        Ok(()) => Ok(None), Err(err) => Err(format!("Error sending: {}", err))
+                    }
+                },
+                _ => Err("Unknown command or incorrect parameters.".to_string())
             }
         }
     }

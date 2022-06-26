@@ -242,7 +242,7 @@ pub mod both {
     use std::{net::SocketAddr, sync::mpsc::TryRecvError, time::Duration};
 
     use serde::{Serialize, Deserialize};
-    use crate::{commands_id, _commands_id_static_def, networking::{client::{Client, ClientError, ClientUpdate}, example::{console_stream, both::{server::execute_server_command, client::{execute_client_command, SendCommands}}}, Protocol, server::{Server, ServerUpdate}}};
+    use crate::{commands_id, _commands_id_static_def, networking::{client::{Client, ClientError, ClientUpdate}, example::{console_stream, both::{server::execute_server_command, client::{execute_client_command, SendCommands}}}, server::{Server, ServerUpdate}, Protocol}};
     
 
     // define all client and server command data structures
@@ -306,17 +306,13 @@ pub mod both {
 
         // list how the server will respond to each command below
         pub trait SendCommands {
-            fn send_tcp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
-            fn send_udp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
+            fn send<T: ClientCommandID>(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
             fn send_udp_to_unidentified<T: ClientCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize>;
         }
 
         impl SendCommands for Server {
-            fn send_tcp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String> {
-                self.send_tcp_data(tcp_addr, command.make_bytes())
-            }
-            fn send_udp<T: ClientCommandID>(&mut self, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String> {
-                self.send_udp_data(tcp_addr, command.make_bytes())
+            fn send<T: ClientCommandID>(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String> {
+                self.send_data(protocol, tcp_addr, command.make_bytes())
             }
             fn send_udp_to_unidentified<T: ClientCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize> {
                 self.send_udp_data_to_unidentified(udp_addr, &command.make_bytes())
@@ -377,7 +373,7 @@ pub mod both {
                 println!("Running echo");
                 match protocol {
                     Protocol::TCP => 
-                    match server.send_tcp(addr, &self) {
+                    match server.send(protocol, addr, &self) {
                         Ok(()) => (),
                         Err(err) => println!("Error echoing TCP to {}: {}", addr, err)
                     },
@@ -386,7 +382,7 @@ pub mod both {
                         match server.get_tcp_address(&udp_addr) {
                             Some(tcp_addr) => {
                                 let tcp_addr = tcp_addr;
-                                match server.send_udp(&tcp_addr, &self) {
+                                match server.send(protocol, &tcp_addr, &self) {
                                     Ok(()) => (),
                                     Err(err) => println!("Error echoing UDP to client with TCP address {}: {}", udp_addr, err)
                                 }
@@ -445,16 +441,12 @@ pub mod both {
         );
 
         pub trait SendCommands {
-            fn send_tcp<T: ServerCommandID>(&mut self, command: &T) -> std::result::Result<(), ClientError>;
-            fn send_udp<T: ServerCommandID>(&mut self, command: &T) -> std::result::Result<(), ClientError>;
+            fn send<T: ServerCommandID>(&mut self, protocol: Protocol, command: &T) -> std::result::Result<(), ClientError>;
         }
 
         impl SendCommands for Client {
-            fn send_tcp<T: ServerCommandID>(&mut self, command: &T) -> std::result::Result<(), ClientError> {
-                self.send_tcp_data(command.make_bytes())
-            }
-            fn send_udp<T: ServerCommandID>(&mut self, command: &T) -> std::result::Result<(), ClientError> {
-                self.send_udp_data(command.make_bytes())
+            fn send<T: ServerCommandID>(&mut self, protocol: Protocol, command: &T) -> std::result::Result<(), ClientError> {
+                self.send_data(protocol, command.make_bytes())
             }
         }
 
@@ -463,7 +455,7 @@ pub mod both {
         impl<'a> ClientCommand<'a> for super::SendAddress {
             fn run(self, (_, client): (Protocol, &mut Client)) {
                 //println!("Server sent their view of client's address: {}", self.0);
-                match client.send_tcp(&super::SetUDPAddress(self.0)) {
+                match client.send(Protocol::TCP, &super::SetUDPAddress(self.0)) {
                     Ok(()) => (),
                     Err(err) => println!("Failed to send address to server: {}", err)
                 }
@@ -498,19 +490,19 @@ pub mod both {
                                 }
                             }
                             ["getaddr"] => {
-                                client.send_udp(&GetAddress)?;
+                                client.send(Protocol::UDP, &GetAddress)?;
                             },
                             ["setaddr", _, ..] => {
-                                client.send_tcp(&SetUDPAddress(msg["setaddr ".len()..msg.len()].into()))?;
+                                client.send(Protocol::TCP, &SetUDPAddress(msg["setaddr ".len()..msg.len()].into()))?;
                             }
                             ["udp", "echo", _, ..] => {
-                                client.send_udp(&EchoMessage(msg["udp echo ".len()..msg.len()].into()))?;
+                                client.send(Protocol::UDP, &EchoMessage(msg["udp echo ".len()..msg.len()].into()))?;
                             },
                             ["tcp", "echo", _, ..] => {
-                                client.send_tcp(&EchoMessage(msg["tcp echo ".len()..msg.len()].into()))?;
+                                client.send(Protocol::TCP, &EchoMessage(msg["tcp echo ".len()..msg.len()].into()))?;
                             },
                             ["tcp", "big", len] => {
-                                client.send_tcp(&EchoMessage({
+                                client.send(Protocol::TCP, &EchoMessage({
                                     let mut s = String::new();
                                     for _ in 0..len.parse().unwrap() {
                                         s.push('t');
@@ -549,7 +541,7 @@ pub mod both {
             updates.extend(client.update());
             for update in updates {
                 match update {
-                    ClientUpdate::Message(message) => match execute_client_command(&message, (Protocol::TCP, &mut client)) {
+                    ClientUpdate::Message(protocol, message) => match execute_client_command(&message, (protocol, &mut client)) {
                         Ok(()) => (),
                         Err(err) => {
                             println!("{}", err);

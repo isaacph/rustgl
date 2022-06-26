@@ -10,7 +10,7 @@ pub mod config;
 pub mod common;
 pub mod example;
 
-#[derive(Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Copy, Clone)]
 pub enum Protocol {
     TCP, UDP
 }

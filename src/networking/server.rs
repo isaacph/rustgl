@@ -1,5 +1,7 @@
 use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, fmt::Display};
 
+use crate::networking::config::{MAX_TCP_MESSAGE_SIZE, MAX_UDP_MESSAGE_SIZE};
+
 use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol, config::RECV_BUFFER_SIZE, common::udp_recv_all};
 
 pub struct ConnectionInfo {
@@ -41,30 +43,37 @@ pub struct ServerUpdate {
 }
 
 impl Server {
-    pub fn send_tcp_data(&mut self, tcp_addr: &SocketAddr, data: Box<[u8]>) -> std::result::Result<(), String> {
+    pub fn send_data(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, data: Box<[u8]>) -> std::result::Result<(), String> {
         println!("Sending message to {}, length {}", tcp_addr, data.len());
         match self.connections.get_mut(tcp_addr) {
-            Some(info) => info.tcp_send.enqueue(data),
-            None => Err(format!("Client with TCP address {} not found", tcp_addr))
-        }
-    }
-
-    pub fn send_udp_data(&mut self, tcp_addr: &SocketAddr, data: Box<[u8]>) -> std::result::Result<(), String> {
-        match self.connections.get_mut(tcp_addr) {
-            Some(info) => {
-                info.udp_send_queue.push_back(data);
-                Ok(())
+            Some(info) =>
+            match protocol {
+                Protocol::TCP => {
+                    if data.len() > MAX_TCP_MESSAGE_SIZE {
+                        Err(format!("Attempted to send TCP message that was too big: {} > {}", data.len(), MAX_TCP_MESSAGE_SIZE))
+                    } else {
+                        info.tcp_send.enqueue(data)
+                    }
+                },
+                Protocol::UDP => {
+                    if data.len() > MAX_UDP_MESSAGE_SIZE {
+                        Err(format!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE))
+                    } else {
+                        info.udp_send_queue.push_back(data);
+                        Ok(())
+                    }
+                }
             },
             None => Err(format!("Client with TCP address {} not found", tcp_addr))
         }
     }
 
-    pub fn get_tcp_address(&self, udp_addr: &SocketAddr) -> Option<SocketAddr> {
-        self.corresponding_tcp_to_udp.get(udp_addr).copied()
-    }
-
     pub fn send_udp_data_to_unidentified(&mut self, udp_addr: &SocketAddr, data: &[u8]) -> std::io::Result<usize>{
         self.udp.send_to(data, udp_addr)
+    }
+
+    pub fn get_tcp_address(&self, udp_addr: &SocketAddr) -> Option<SocketAddr> {
+        self.corresponding_tcp_to_udp.get(udp_addr).copied()
     }
 
     pub fn set_client_udp_addr(&mut self, tcp_addr: &SocketAddr, udp_addr: &SocketAddr) -> std::result::Result<(), String> {

@@ -43,7 +43,7 @@ fn main() -> Result<()> {
             );
             match args[1].as_str() {
                 "server" => {
-                    server::Server::run(ports)?
+                    server::main::Server::run(ports)?
                 },
                 "udpserver" => {
                     echo_server_udp(ports)?
