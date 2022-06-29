@@ -1,7 +1,5 @@
 use std::{collections::HashMap, fmt::Display, net::SocketAddr};
-
 use serde::{Serialize, Deserialize};
-
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TeamID(i32);
@@ -16,6 +14,12 @@ impl TeamIDGenerator {
     pub fn generate(&mut self) -> TeamID {
         self.0 += 1;
         TeamID(self.0 - 1)
+    }
+}
+
+impl Default for TeamIDGenerator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -45,6 +49,12 @@ impl PlayerIDGenerator {
        self.0 += 1;
        PlayerID(self.0 - 1)
    }
+}
+
+impl Default for PlayerIDGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -147,109 +157,126 @@ pub struct Player {
 //}
 
 pub trait PlayerDataView {
-   fn get_player(&self, id: &PlayerID) -> Option<&Player>;
-   fn get_player_with_name(&self, name: &str) -> Option<&Player>;
-   fn all_player_ids(&self) -> Box<[PlayerID]>;
+    fn get_player(&self, id: &PlayerID) -> Option<&Player>;
+    fn get_player_with_name(&self, name: &str) -> Option<&Player>;
+    fn all_player_ids(&self) -> Box<[PlayerID]>;
+}
+
+struct PlayerMetadata {
+    connection: Option<SocketAddr>
 }
 
 pub struct PlayerManager {
-   players: HashMap<PlayerID, Player>,
-   id_gen: PlayerIDGenerator,
-   connection_player: HashMap<SocketAddr, PlayerID>,
-   player_connection: HashMap<PlayerID, SocketAddr>,
-   name_player: HashMap<String, PlayerID>,
+    players: HashMap<PlayerID, Player>,
+    id_gen: PlayerIDGenerator,
+    player_metadata: HashMap<PlayerID, PlayerMetadata>,
+    pub updates: Vec<PlayerManagerUpdate>
+}
+
+pub enum PlayerManagerUpdate {
+    PlayerLogIn(PlayerID, SocketAddr),
+    PlayerLogOut(PlayerID, SocketAddr)
 }
 
 impl PlayerManager {
     pub fn new() -> PlayerManager {
         PlayerManager {
             players: HashMap::new(),
+            player_metadata: HashMap::new(),
             id_gen: PlayerIDGenerator::new(),
-            connection_player: HashMap::new(),
-            player_connection: HashMap::new(),
-            name_player: HashMap::new()
+            updates: vec![]
         }
     }
 
-    pub fn create_player(&mut self, con_id: Option<SocketAddr>, name: Option<String>) -> &mut Player {
+    pub fn create_player(&mut self, con: Option<SocketAddr>, name: Option<String>) -> &mut Player {
         let id = self.id_gen.generate();
         let name = {
             let base_name = match name {
                 None => format!("Player{}", id),
                 Some(name) => name
             };
-            match self.name_player.contains_key(&base_name) {
-                false => base_name,
-                true => {
-                    // search for a name
-                    let mut i = 1;
-                    let mut search = true;
-                    let mut name = String::from("");
-                    while search {
-                        name = format!("{} ({})", base_name, i);
-                        search = self.name_player.contains_key(&name);
-                        i += 1;
-                    }
-                    name
+            if self.players.values().any(|player| player.name == base_name) {
+                // search for a name
+                let mut i = 1;
+                let mut search = true;
+                let mut name = String::from("");
+                while search {
+                    name = format!("{} ({})", base_name, i);
+                    search = self.players.values().any(|player| player.name == name);
+                    i += 1;
+                    println!("searching name: {}", name);
                 }
+                name
+            } else {
+                base_name
             }
         };
-        if let Some(con_id) = con_id {
-            self.connection_player.insert(con_id, id);
-            self.player_connection.insert(id, con_id);
-        };
-        self.name_player.insert(name.clone(), id);
+
+        self.player_metadata.insert(id, PlayerMetadata {
+            connection: None
+        });
+
         self.players.insert(id, Player {
             id,
             name
         });
+        self.map_existing_player(con.as_ref(), Some(&id));
         self.players.get_mut(&id).unwrap()
     }
 
     pub fn map_existing_player(&mut self, con_id: Option<&SocketAddr>, player_id: Option<&PlayerID>) -> Option<&mut Player> {
         match (con_id, player_id) {
-            (Some(con_id), Some(player_id)) => match self.players.get_mut(player_id) {
-                Some(player) => {
-                    self.connection_player.insert(*con_id, *player_id);
-                    self.player_connection.insert(*player_id, *con_id);
-                    Some(player)
-                },
-                None => None
+            (Some(con_id), Some(player_id)) => {
+                if let Some(prev_player_id) = self.get_connected_player(con_id) { // check if connection had previous player
+                    if prev_player_id == *player_id {
+                        return self.players.get_mut(player_id); // if same player, then do nothing
+                    } else {
+                        self.map_existing_player(None, Some(&prev_player_id)); // log out this previous player
+                    }
+                }
+                match (self.players.get_mut(player_id), self.player_metadata.get_mut(player_id)) {
+                    (Some(player), Some(metadata)) => {
+                        if let Some(prev_connection) = metadata.connection { // check if player had previous connection
+                            self.updates.push(PlayerManagerUpdate::PlayerLogOut(*player_id, prev_connection));
+                        }
+                        self.updates.push(PlayerManagerUpdate::PlayerLogIn(*player_id, *con_id));
+                        metadata.connection = Some(*con_id);
+                        Some(player)
+                    },
+                    _ => None
+                }
             },
             (Some(con_id), None) => {
-                if let Some(player_id) = self.connection_player.remove(con_id) {
-                    self.player_connection.remove(&player_id);
-                    self.players.get_mut(&player_id)
-                } else { None }
+                self.player_metadata.iter_mut().for_each(|(player_id, metadata)| {
+                    match metadata.connection {
+                        Some(other_con) => if *con_id == other_con {
+                            self.updates.push(PlayerManagerUpdate::PlayerLogOut(*player_id, *con_id));
+                            metadata.connection = None;
+                        },
+                        None => ()
+                    }
+                });
+                None
             },
             (None, Some(player_id)) => {
-                if let Some(con_id) = self.player_connection.remove(player_id) {
-                    self.connection_player.remove(&con_id);
-                    self.players.get_mut(&player_id)
-                } else { None }
+                if let Some(metadata) = self.player_metadata.get_mut(player_id) {
+                    if let Some(con_id) = metadata.connection {
+                        self.updates.push(PlayerManagerUpdate::PlayerLogOut(*player_id, con_id));
+                        metadata.connection = None;
+                        return self.players.get_mut(player_id)
+                    }
+                }
+                None
             },
             (None, None) => None
         }
     }
 
     pub fn is_connected(&self, player_id: &PlayerID) -> Option<SocketAddr> {
-        match self.player_connection.get(player_id) {
-            Some(addr) => Some(addr.clone()),
+        match self.player_metadata.get(player_id) {
+            Some(metadata) => metadata.connection,
             None => None
         }
-    }
-
-    pub fn ensure_player(&mut self, con_id: &SocketAddr) -> &mut Player {
-        let id = match self.connection_player.get(con_id) {
-            Some(id) => if self.players.contains_key(id) {
-                Some(id.clone())
-            } else { None },
-            None => None
-        };
-        if let None = id {
-            self.create_player(Some(*con_id), None);
-        }
-        self.players.get_mut(&id.unwrap()).unwrap()
     }
 
     pub fn get_view(&self) -> PlayerData {
@@ -259,44 +286,51 @@ impl PlayerManager {
     }
 
     pub fn get_player_connection(&self, player_id: &PlayerID) -> Option<SocketAddr> {
-        match self.player_connection.get(player_id) {
-            Some(id) => Some(*id),
+        match self.player_metadata.get(player_id) {
+            Some(metadata) => metadata.connection,
             None => None
         }
     }
 
-    pub fn get_connected_player_mut(&mut self, con_id: &SocketAddr) -> Option<&mut Player> {
-        match self.connection_player.get(con_id) {
-            Some(id) => self.players.get_mut(id),
-            None => None
-        }
-    }
-
-    pub fn get_connected_player(&self, con_id: &SocketAddr) -> Option<&Player> {
-        match self.connection_player.get(con_id) {
-            Some(id) => self.players.get(id),
-            None => None
-        }
+    pub fn get_connected_player(&mut self, con_id: &SocketAddr) -> Option<PlayerID> {
+        self.player_metadata.iter_mut()
+            .fold(None, |found, (id, meta)| match (found, meta.connection) {
+                (Some(con), _) => Some(con),
+                (None, Some(con)) => if con == *con_id {
+                    Some(*id)
+                } else {
+                    None
+                },
+                (None, None) => None,
+            }
+        )
     }
 
     pub fn get_player_mut(&mut self, id: &PlayerID) -> Option<&mut Player> {
         self.players.get_mut(id)
     }
+
+    pub fn get_player_with_name_mut(&mut self, name: &str) -> Option<&mut Player> {
+        self.players.values_mut().find(|player| player.name == name)
+    }
+}
+
+impl Default for PlayerManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PlayerDataView for PlayerManager {
-   fn get_player(&self, id: &PlayerID) -> Option<&Player> {
-       self.players.get(id)
-   }
-   fn get_player_with_name(&self, name: &str) -> Option<&Player> {
-       match self.name_player.get(name) {
-           Some(id) => self.players.get(id),
-           None => None
-       }
-   }
-   fn all_player_ids(&self) -> Box<[PlayerID]> {
-       self.players.keys().map(|k| k.clone()).collect()
-   }
+    fn get_player(&self, id: &PlayerID) -> Option<&Player> {
+        self.players.get(id)
+    }
+    fn get_player_with_name(&self, name: &str) -> Option<&Player> {
+        self.players.values().find(|player| player.name == name)
+    }
+    fn all_player_ids(&self) -> Box<[PlayerID]> {
+        self.players.keys().copied().collect()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -305,18 +339,20 @@ pub struct PlayerData {
 }
 
 impl PlayerDataView for PlayerData {
-   fn get_player(&self, id: &PlayerID) -> Option<&Player> {
-       self.players.get(id)
-   }
-   fn get_player_with_name(&self, name: &str) -> Option<&Player> {
-       for (_, player) in &self.players {
-           if player.name == name {
-               return Some(player);
-           }
-       }
-       None
-   }
-   fn all_player_ids(&self) -> Box<[PlayerID]> {
-       self.players.keys().map(|k| k.clone()).collect()
-   }
+    fn get_player(&self, id: &PlayerID) -> Option<&Player> {
+        self.players.get(id)
+    }
+
+    fn get_player_with_name(&self, name: &str) -> Option<&Player> {
+        for (_, player) in &self.players {
+            if player.name == name {
+                return Some(player);
+            }
+        }
+        None
+    }
+
+    fn all_player_ids(&self) -> Box<[PlayerID]> {
+        self.players.keys().map(|k| k.clone()).collect()
+    }
 }

@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use serde::{Serialize, Deserialize};
 
-use crate::{model::{commands::{player::{ChatMessage, PlayerLogIn, PlayerLogOut, PlayerDataPayload}}, world::player::{PlayerDataView, PlayerID}}, networking::Protocol, server::main::Server};
+use crate::{model::{commands::player::{ChatMessage, PlayerLogIn, PlayerLogOut, PlayerDataPayload}, world::player::{PlayerDataView, PlayerID}}, networking::Protocol, server::main::Server};
 use super::{ProtocolServerCommand, ProtocolSpec, SendCommands};
 
 pub trait PlayerCommand<'a>: Deserialize<'a> + Serialize {
@@ -12,10 +12,10 @@ pub trait PlayerCommand<'a>: Deserialize<'a> + Serialize {
 impl<'a, T: PlayerCommand<'a>> ProtocolServerCommand<'a> for T {
     const PROTOCOL: ProtocolSpec = T::PROTOCOL;
     fn run(self, tcp_addr: &SocketAddr, server: &mut Server) {
-        match server.player_manager.get_connected_player_mut(tcp_addr) {
-            Some(player) => self.run(player.id, server),
+        match server.player_manager.get_connected_player(tcp_addr) {
+            Some(player_id) => self.run(player_id, server),
             None =>
-            match server.connection.send(Protocol::TCP, tcp_addr, &ChatMessage(format!("Could not run player command, you are not logged in"))) {
+            match server.connection.send(Protocol::TCP, tcp_addr, &ChatMessage("Could not run player command, you are not logged in".to_string())) {
                 Ok(()) => (), Err(err) => println!("Error sending error message to player that is not logged in: {}, err: {}", tcp_addr, err)
             }
         }
@@ -34,22 +34,23 @@ impl<'a> ProtocolServerCommand<'a> for PlayerLogIn {
                         Err(format!("Cannot sign in: player with name {} is not found", name))
                     } {
                         Ok(pid) => {
-                            Ok(server.player_manager.map_existing_player(Some(addr), Some(&pid)).unwrap().name.clone())
+                            if server.player_manager.is_connected(&pid).is_none() {
+                                Ok(server.player_manager.map_existing_player(Some(addr), Some(&pid)).unwrap().name.clone())
+                            } else {
+                                Err(format!("Cannot sign in: player already signed into {}", name))
+                            }
                         },
                         Err(x) => Err(x)
                     }
                 } else {
-                    Err(format!("Cannot sign into unnamed character"))
+                    Err("Cannot sign into unnamed character".to_string())
                 }
             } else {
                 let player = server.player_manager.create_player(Some(*addr), self.name);
                 Ok(player.name.clone())
             }
         } {
-            Ok(player_name) => {
-                server.broadcast(Protocol::TCP, &ChatMessage(format!("{} logged in.", player_name)));
-                server.broadcast(Protocol::TCP, &PlayerDataPayload(server.player_manager.get_view()));
-            },
+            Ok(_) => (),
             Err(e) => {
                 match server.connection.send(
                     Protocol::TCP,
@@ -67,14 +68,12 @@ impl<'a> ProtocolServerCommand<'a> for PlayerLogIn {
 impl<'a> ProtocolServerCommand<'a> for PlayerLogOut {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::TCP);
     fn run(self, addr: &SocketAddr, server: &mut Server) {
-        if let Some(player) = server.player_manager.map_existing_player(Some(addr), None) {
-            let msg = ChatMessage(format!("{} logged out.", player.name));
-            server.broadcast(Protocol::TCP, &msg);
-            match server.connection.send(Protocol::TCP, addr, &msg) {_ => ()}
-        } else {
-            match server.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Failed to log out, was not logged in"))) {
+        if server.player_manager.get_connected_player(addr).is_none() {
+            match server.connection.send(Protocol::TCP, addr, &ChatMessage("Failed to log out, was not logged in".to_string())) {
                 Ok(()) => (), Err(err) => println!("Error sending message to {}: {}", addr, err)
             }
+        } else {
+            server.player_manager.map_existing_player(Some(addr), None);
         }
     }
 }

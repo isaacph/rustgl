@@ -1,8 +1,9 @@
 use std::time::Duration;
 
-use crate::{model::{world::{character::CharacterIDGenerator, World, player::{PlayerManager, PlayerDataView}}, commands::ClientCommandID}, networking::{server::ServerUpdate, Protocol}, server::commands::execute_server_command};
+use crate::{model::{world::{character::CharacterIDGenerator, World, player::{PlayerManager, PlayerDataView, PlayerManagerUpdate}}, commands::{ClientCommandID, player::{ChatMessage, PlayerDataPayload}}}, networking::{server::ServerUpdate, Protocol}, server::commands::execute_server_command};
 
 use crate::networking::server::Server as Connection;
+use crate::server::commands::SendCommands;
 
 //pub mod update_loop {
 //    use std::time::{SystemTime, Duration};
@@ -109,6 +110,31 @@ impl Server {
                 disconnects
             } = server.connection.update();
 
+            let updates: Vec<PlayerManagerUpdate> = server.player_manager.updates.drain(0..).collect();
+            for update in updates {
+                match update {
+                    PlayerManagerUpdate::PlayerLogIn(player_id, _) => {
+                        if let Some(player) = server.player_manager.get_player(&player_id) {
+                            let name = String::from(&player.name);
+                            server.broadcast(Protocol::TCP, &ChatMessage(format!("{} logged in.", name)));
+                            server.broadcast(Protocol::TCP, &PlayerDataPayload(server.player_manager.get_view()));
+                        }
+                    },
+                    PlayerManagerUpdate::PlayerLogOut(player_id, addr) => {
+                        if let Some(player) = server.player_manager.get_player(&player_id) {
+                            let chat_msg = ChatMessage(format!("{} logged out.", player.name));
+                            server.broadcast(Protocol::TCP, &chat_msg);
+                            server.broadcast(Protocol::TCP, &PlayerDataPayload(server.player_manager.get_view()));
+                            // only send update to player if they are no longer logged into any
+                            // accounts
+                            if server.player_manager.get_connected_player(&addr).is_none() {
+                                server.connection.send(Protocol::TCP, &addr, &chat_msg).ok();
+                            }
+                        }
+                    }
+                }
+            }
+
             for addr in connects {
                 println!("Connection from {}", addr);
             }
@@ -126,12 +152,12 @@ impl Server {
                 }
             }
 
-            std::thread::sleep(Duration::new(0, 1000000 * 500)); // wait 500 ms
+            std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
         }
     }
 
     pub fn broadcast<T>(&mut self, protocol: Protocol, message: &T) where T: ClientCommandID {
-        for id in self.player_manager.all_player_ids().into_iter() {
+        for id in self.player_manager.all_player_ids().iter() {
             match self.player_manager.get_player_connection(id) {
                 Some(addr) => 
                 match protocol {
