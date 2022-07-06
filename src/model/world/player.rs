@@ -1,5 +1,6 @@
-use std::{collections::HashMap, fmt::Display, net::SocketAddr};
+use std::{collections::{HashMap, HashSet}, fmt::Display, net::SocketAddr};
 use serde::{Serialize, Deserialize};
+use crate::model::Subscription;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TeamID(i32);
@@ -63,98 +64,6 @@ pub struct Player {
    pub name: String,
 }
 
-//#[derive(Serialize, Deserialize, Debug)]
-//pub struct PlayerDataPayload {
-//    data: PlayerData
-//}
-//
-//impl PlayerDataPayload {
-//    pub fn from(data: PlayerData) -> PlayerDataPayload {
-//        PlayerDataPayload { data }
-//    }
-//}
-//
-//impl<'a> WorldCommand<'a> for PlayerDataPayload {
-//    fn run(self, world: &mut World) {
-//        world.players = self.data
-//    }
-//}
-//
-//#[derive(Serialize, Deserialize, Debug)]
-//pub struct PlayerLogIn {
-//    pub existing: bool,
-//    pub name: Option<String>
-//}
-//
-//impl<'a> ServerCommand<'a> for PlayerLogIn {
-//    fn run(self, (con_id, server): (&ConnectionID, &mut crate::server::Server)) {
-//        match {
-//            if self.existing {
-//                if let Some(name) = &self.name {
-//                    match if let Some(player) = server.player_manager.get_player_with_name(name) {
-//                        Ok(player.id)
-//                    } else {
-//                        Err(format!("Cannot sign in: player with name {} is not found", name))
-//                    } {
-//                        Ok(pid) => Ok(&server.player_manager.map_existing_player(Some(con_id), Some(&pid)).unwrap().name),
-//                        Err(x) => Err(x)
-//                    }
-//                } else {
-//                    Err(format!("Cannot sign into unnamed character"))
-//                }
-//            } else {
-//                let player = server.player_manager.create_player(Some(*con_id), self.name);
-//                Ok(&player.name)
-//            }
-//        } {
-//            Ok(player_name) => {
-//                server.connection.send_udp_all(
-//                    server.connection.all_connection_ids(),
-//                    vec![
-//                        SerializedClientCommand::from(
-//                            &ChatMessage::new(format!("{} logged in.", player_name))
-//                        ),
-//                        SerializedClientCommand::from(
-//                            &PlayerDataPayload::from(server.player_manager.get_view())
-//                        )
-//                    ].decay()
-//                );
-//                server.world.players = server.player_manager.get_view()
-//            },
-//            Err(e) => {
-//                server.connection.send_udp(
-//                    vec![*con_id],
-//                    SerializedClientCommand::from(
-//                        &ChatMessage::new(e)
-//                    ).data
-//                )
-//            }
-//        }
-//    }
-//}
-//
-//#[derive(Serialize, Deserialize, Debug)]
-//pub struct PlayerLogOut;
-//
-//impl<'a> ServerCommand<'a> for PlayerLogOut {
-//    fn run(self, (con_id, server): (&ConnectionID, &mut crate::server::Server)) {
-//        if let Some(player) = server.player_manager.map_existing_player(Some(con_id), None) {
-//            server.connection.send_udp(
-//                server.connection.all_connection_ids(),
-//                SerializedClientCommand::from(
-//                    &ChatMessage::new(format!("{} logged out.", player.name))
-//                ).data
-//            );
-//        } else {
-//            server.connection.send_udp(
-//                vec![*con_id],
-//                SerializedClientCommand::from(
-//                    &ChatMessage::new(format!("Failed to log out, was not logged in"))
-//                ).data
-//            );
-//        }
-//    }
-//}
 
 pub trait PlayerDataView {
     fn get_player(&self, id: &PlayerID) -> Option<&Player>;
@@ -163,7 +72,8 @@ pub trait PlayerDataView {
 }
 
 struct PlayerMetadata {
-    connection: Option<SocketAddr>
+    connection: Option<SocketAddr>,
+    subscriptions: HashSet<Subscription>
 }
 
 pub struct PlayerManager {
@@ -213,7 +123,8 @@ impl PlayerManager {
         };
 
         self.player_metadata.insert(id, PlayerMetadata {
-            connection: None
+            connection: None,
+            subscriptions: HashSet::new()
         });
 
         self.players.insert(id, Player {
@@ -313,6 +224,18 @@ impl PlayerManager {
     pub fn get_player_with_name_mut(&mut self, name: &str) -> Option<&mut Player> {
         self.players.values_mut().find(|player| player.name == name)
     }
+
+    pub fn get_player_subscriptions_mut(&mut self, id: &PlayerID) -> Option<&mut HashSet<Subscription>> {
+        if let Some(meta) = self.player_metadata.get_mut(id) {
+            Some(&mut meta.subscriptions)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_player_subscriptions(&self, id: &PlayerID) -> Option<HashSet<Subscription>> {
+        self.player_metadata.get(id).map(|meta| meta.subscriptions.clone())
+    }
 }
 
 impl Default for PlayerManager {
@@ -344,7 +267,7 @@ impl PlayerDataView for PlayerData {
     }
 
     fn get_player_with_name(&self, name: &str) -> Option<&Player> {
-        for (_, player) in &self.players {
+        for player in self.players.values() {
             if player.name == name {
                 return Some(player);
             }
@@ -353,6 +276,6 @@ impl PlayerDataView for PlayerData {
     }
 
     fn all_player_ids(&self) -> Box<[PlayerID]> {
-        self.players.keys().map(|k| k.clone()).collect()
+        self.players.keys().copied().collect()
     }
 }

@@ -1,7 +1,5 @@
 use std::{net::{TcpStream, SocketAddr, UdpSocket, TcpListener, Shutdown}, collections::{VecDeque, HashMap}, io::{Read, Write}, cmp, fmt::Display};
-
 use crate::networking::config::{MAX_TCP_MESSAGE_SIZE, MAX_UDP_MESSAGE_SIZE};
-
 use super::{tcp_buffering::{TcpRecvState, TcpSendState}, Protocol, config::RECV_BUFFER_SIZE, common::udp_recv_all};
 
 pub struct ConnectionInfo {
@@ -44,7 +42,7 @@ pub struct ServerUpdate {
 
 impl Server {
     pub fn send_data(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, data: Box<[u8]>) -> std::result::Result<(), String> {
-        println!("Sending message to {}, length {}", tcp_addr, data.len());
+        println!("Sending {} message to {}, length {}", protocol, tcp_addr, data.len());
         match self.connections.get_mut(tcp_addr) {
             Some(info) =>
             match protocol {
@@ -59,12 +57,19 @@ impl Server {
                     if data.len() > MAX_UDP_MESSAGE_SIZE {
                         Err(format!("Attempted to send UDP message that was too big: {} > {}", data.len(), MAX_UDP_MESSAGE_SIZE))
                     } else {
-                        info.udp_send_queue.push_back(data);
-                        Ok(())
+                        match info.udp_address {
+                            Some(_) => {
+                                info.udp_send_queue.push_back(data);
+                                Ok(())
+                            },
+                            None => Err(format!("Client does not have UDP address: {}", tcp_addr))
+                        }
                     }
                 }
             },
-            None => Err(format!("Client with TCP address {} not found", tcp_addr))
+            None => {
+                Err(format!("Client with TCP address {} not found", tcp_addr))
+            }
         }
     }
 

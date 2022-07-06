@@ -424,7 +424,6 @@ pub mod both {
         use std::cmp;
 
         use crate::{commands_execute, _commands_execute_static_def, networking::{Protocol, client::{Client, ClientError}}};
-        use serde::{Deserialize, Serialize};
 
         use super::ServerCommandID;
 

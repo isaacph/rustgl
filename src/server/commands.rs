@@ -7,6 +7,7 @@ use super::main::Server;
 
 pub mod core;
 pub mod player;
+pub mod world;
 
 commands_execute!(
     execute_server_command,
@@ -20,9 +21,14 @@ commands_execute!(
         crate::model::commands::core::EchoMessage,
         crate::model::commands::player::ChatMessage,
         crate::model::commands::player::PlayerLogIn,
-        crate::model::commands::player::PlayerLogOut
+        crate::model::commands::player::PlayerLogOut,
+        crate::model::commands::player::GetPlayerData,
+        crate::model::world::commands::GenerateCharacter,
+        crate::model::world::commands::UpdateCharacter,
+        crate::model::commands::player::PlayerSubs,
     ]
 );
+
 
 pub trait SendCommands {
     fn send<T: ClientCommandID>(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
@@ -45,7 +51,7 @@ pub enum ProtocolSpec {
 }
 pub trait ProtocolServerCommand<'a>: Deserialize<'a> + Serialize {
     const PROTOCOL: ProtocolSpec;
-    fn run(self, tcp_addr: &SocketAddr, server: &mut Server);
+    fn run(self, protocol: Protocol, tcp_addr: &SocketAddr, server: &mut Server);
 }
 
 impl<'a, T> ServerCommand<'a> for T where T: ProtocolServerCommand<'a> {
@@ -66,7 +72,7 @@ impl<'a, T> ServerCommand<'a> for T where T: ProtocolServerCommand<'a> {
                     }
                 }
             };
-            self.run(&addr, server);
+            self.run(protocol, &addr, server);
         }
     }
 }

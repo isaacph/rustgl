@@ -1,7 +1,7 @@
 use std::{net::{TcpStream, UdpSocket, SocketAddr}, collections::VecDeque, sync::mpsc::{TryRecvError, channel, Receiver}, io::{ErrorKind, Read, Write}, cmp, thread, fmt::Display};
 
 // where we're at right now is we need to finish changing from messages to ClientUpdate
-use crate::{networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}}};
+use crate::networking::{AddressPair, tcp_buffering::{TcpSendState, TcpRecvState}, config::{RECV_BUFFER_SIZE, CONNECT_TIMEOUT}};
 
 use super::{tcp_buffering, config::{MAX_UDP_MESSAGE_SIZE, MAX_TCP_MESSAGE_SIZE}, common::udp_recv_all, Protocol};
 
@@ -16,6 +16,12 @@ pub enum ClientError {
     FailedConnection(String),
     BadCommand(String),
     Other(String)
+}
+
+impl From<ClientError> for String {
+    fn from(e: ClientError) -> Self {
+        format!("{}", e)
+    }
 }
 
 #[derive(Debug)]

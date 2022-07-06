@@ -6,6 +6,7 @@ use super::{ClientCommand, SendCommands};
 impl<'a> ClientCommand<'a> for SendAddress {
     fn run(self, (_, game): (Protocol, &mut Game)) {
         //println!("Server sent their view of client's address: {}", self.0);
+        game.finding_addr = false;
         match game.connection.send(Protocol::TCP, &SetUDPAddress(self.0)) {
             Ok(()) => (),
             Err(err) => println!("Failed to send address to server: {}", err)

@@ -1,50 +1,24 @@
 // use serde::{Serialize, Deserialize};
 
-
 #[macro_export]
+#[doc(hidden)]
 macro_rules! _commands_execute_static_def {
     ($command_trait_name:ident,
         $context_type:ty) => {
-        pub trait $command_trait_name<'a>: Serialize + Deserialize<'a> {
+        pub trait $command_trait_name<'a>: serde::Serialize + serde::Deserialize<'a> {
             fn run(self, context: $context_type);
         }
     }
 }
+
 #[macro_export]
+#[doc(hidden)]
 macro_rules! _commands_id_static_def {
     ($id_trait_name:ident) => {
-        pub trait $id_trait_name: Serialize {
+        pub trait $id_trait_name: serde::Serialize {
             fn id(&self) -> u16;
             fn make_bytes(&self) -> Box<[u8]>;
         }
-        // impl<T: $id_trait_name> From<&T> for $serialized_command_name {
-        //     fn from(command: &T) -> Self {
-        //         let mut data: Vec<u8> = bincode::serialize(&command).unwrap(); // TODO: error handling
-        //         let mut id = Vec::from(command.id().to_be_bytes());
-        //         data.append(&mut id);
-        //         $serialized_command_name(data)
-        //     }
-        // }
-        // impl From<Vec<u8>> for $serialized_command_name {
-        //     fn from(data: Vec<u8>) -> Self {
-        //         $serialized_command_name(data.into_boxed_slice())
-        //     }
-        // }
-        // impl From<$serialized_command_name> for Vec<u8> {
-        //     fn from(data: $serialized_command_name) -> Self {
-        //         data.0.to_vec()
-        //     }
-        // }
-        // impl From<Box<[u8]>> for $serialized_command_name {
-        //     fn from(data: Box<[u8]>) -> Self {
-        //         $serialized_command_name(data)
-        //     }
-        // }
-        // impl From<$serialized_command_name> for Box<[u8]> {
-        //     fn from(data: $serialized_command_name) -> Self {
-        //         data.0
-        //     }
-        // }
     }
 }
 

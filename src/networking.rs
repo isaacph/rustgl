@@ -15,6 +15,12 @@ pub enum Protocol {
     TCP, UDP
 }
 
+impl Display for Protocol {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        write!(out, "{:?}", self)
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct AddressPair {
     pub tcp: SocketAddr,

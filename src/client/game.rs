@@ -1,7 +1,7 @@
 use nalgebra::{Vector2, Orthographic3};
 use ogl33::glViewport;
 
-use std::{ffi::CStr, net::SocketAddr};
+use std::{ffi::CStr, net::SocketAddr, collections::{HashMap, HashSet}, str::FromStr};
 use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
@@ -10,8 +10,8 @@ use crate::{
     client::{chatbox, commands::execute_client_command},
     model::{world::{
         World,
-        character::CharacterID,
-    }, commands::player::{PlayerLogIn, PlayerLogOut, ChatMessage}}, networking::{client::ClientUpdate, Protocol},
+        character::CharacterID, player::PlayerData, component::{CharacterHealth, CharacterBase, ComponentStorage}, commands::GenerateCharacter,
+    }, commands::{player::{PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData, PlayerSubCommand, PlayerSubs}, core::GetAddress}, Subscription, PrintError}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
@@ -30,7 +30,9 @@ pub struct Game<'a> {
     pub chatbox: chatbox::Chatbox<'a>,
     pub state: State,
     pub world: World,
-    pub connection: Connection
+    pub connection: Connection,
+    pub finding_addr: bool,
+    pub finding_addr_timer: f32,
 }
 
 impl Game<'_> {
@@ -68,8 +70,16 @@ impl Game<'_> {
             ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
             chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
             state: State::DEFAULT,
-            world: World::new(),
-            connection: Connection::init_disconnected()
+            world: World {
+                    teams: HashMap::new(),
+                    characters: HashSet::new(),
+                    players: PlayerData { players: HashMap::new() },
+                    base: ComponentStorage::<CharacterBase>::new(),
+                    health: ComponentStorage::<CharacterHealth>::new(),
+                },
+            connection: Connection::init_disconnected(),
+            finding_addr: true,
+            finding_addr_timer: 0.0,
         };
         game.window_size(width, height);
         let render = graphics::textured::Renderer::new_square();
@@ -83,8 +93,8 @@ impl Game<'_> {
 
         let mut selected_char: Option<CharacterID> = None;
 
-//        let mut temp_id_gen = CharacterIDGenerator::new();
-//        GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
+        //let mut temp_id_gen = CharacterIDGenerator::new();
+        //GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
 
         // let mut last_heartbeat = glfw.get_time();
 
@@ -103,6 +113,15 @@ impl Game<'_> {
                 glClear(GL_COLOR_BUFFER_BIT);
             }
 
+            // UDP address pings: send GetAddress -> receive SetAddress ->
+            //   falsify game.finding_addr and send SetAddress
+            if game.finding_addr && game.connection.is_connected() {
+                game.finding_addr_timer -= delta_time;
+                if game.finding_addr_timer <= 0.0 {
+                    game.connection.send(Protocol::UDP, &GetAddress).print();
+                    game.finding_addr_timer = 0.5;
+                }
+            }
             for update in game.connection.update() {
                 match update {
                     ClientUpdate::Error(err) => game.chatbox.println(format!("Connection error: {}", err).as_str()),
@@ -201,7 +220,7 @@ impl Game<'_> {
                     },
                     (State::TYPING, glfw::WindowEvent::Key(Key::Enter, _, Action::Press, _)) => {
                         let line = game.chatbox.get_typing().clone();
-                        if line.len() != 0 {
+                        if !line.is_empty() {
                             game.chatbox.erase_typing();
                             match game.process_chat(line.as_str()) {
                                 Ok(Some(message)) => game.chatbox.println(message.as_str()),
@@ -222,14 +241,13 @@ impl Game<'_> {
                         game.chatbox.set_typing_flicker(true);
                         // game.chatbox.add_typing('/'); // this gets added automatically lol
                     },
-                    //(State::DEFAULT, glfw::WindowEvent::Key(Key::G, _, Action::Press, _)) => {
-                    //    game.world.characters.iter().map(
-                    //        |id| game.world.make_cmd_update_character(*id)
-                    //    ).for_each(|cmd| match cmd {
-                    //        Some(cmd) => game.connection.send_udp(SerializedServerCommand::from(&cmd).data),
-                    //        _ => ()
-                    //    });
-                    //},
+                    (State::DEFAULT, glfw::WindowEvent::Key(Key::G, _, Action::Press, _)) => {
+                        if let Some(cid) = selected_char {
+                            if let Some(cmd) = game.world.make_cmd_update_character(cid) {
+                                game.connection.send(Protocol::UDP, &cmd).ok();
+                            }
+                        }
+                    },
                     (State::DEFAULT, glfw::WindowEvent::Key(Key::Tab, _, Action::Press, _)) => {
                         let ids: Vec<&CharacterID> = game.world.characters.iter().collect();
                         selected_char = match ids.len() {
@@ -280,9 +298,32 @@ impl Game<'_> {
                         let addr_udp: SocketAddr = addr_udp;
                         let addr_tcp: SocketAddr = addr_tcp;
                         self.connection.connect(addr_udp, addr_tcp);
+                        self.finding_addr = true;
+                        self.finding_addr_timer = 0.0;
                         Ok(Some(format!("Starting connection with {}, {}", addr_udp, addr_tcp)))
                     },
                     (Err(err), _) | (_, Err(err)) => Err(format!("{}", err))
+                },
+                ["purelogin", ..] => {
+                    let existing = if split.len() >= 2 {
+                        match split[1] {
+                            "new" => false,
+                            "old" => true,
+                            err => return Err(format!("Unknown login type: {}", err))
+                        }
+                    } else { false };
+                    let name = {
+                        if split.len() >= 3 {
+                            let x = split[2..].join(" ");
+                            if !x.is_empty() {
+                                Some(x)
+                            } else { None }
+                        } else {
+                            None
+                        }
+                    };
+                    self.connection.send(Protocol::TCP, &PlayerLogIn {existing, name})?;
+                    Ok(None)
                 },
                 ["login", ..] => {
                     let existing = if split.len() >= 2 {
@@ -295,28 +336,69 @@ impl Game<'_> {
                     let name = {
                         if split.len() >= 3 {
                             let x = split[2..].join(" ");
-                            if x.len() > 0 {
+                            if !x.is_empty() {
                                 Some(x)
                             } else { None }
                         } else {
                             None
                         }
                     };
-                    match self.connection.send(Protocol::TCP, &PlayerLogIn {existing, name}) {
-                        Ok(()) => Ok(None),
-                        Err(err) => Err(format!("Error sending: {}", err))
-                    }
+                    self.connection.send(Protocol::TCP, &PlayerLogIn {existing, name})?;
+                    self.connection.send(Protocol::TCP, &PlayerSubs(PlayerSubCommand::SetSubs(vec![Subscription::Chat, Subscription::World])))?;
+                    // todo: generate character
+                    Ok(None)
                 },
                 ["logout", ..] => {
-                    match self.connection.send(Protocol::TCP, &PlayerLogOut) {
-                        Ok(()) => Ok(None), Err(err) => Err(format!("Error sending: {}", err))
-                    }
+                    self.connection.send(Protocol::TCP, &PlayerLogOut)?;
+                    Ok(None)
                 },
                 ["send", _, ..] => {
-                    match self.connection.send(Protocol::TCP, &ChatMessage(command["send ".len()..].into())) {
-                        Ok(()) => Ok(None), Err(err) => Err(format!("Error sending: {}", err))
-                    }
+                    self.connection.send(Protocol::TCP, &ChatMessage(command["send ".len()..].into()))?;
+                    Ok(None)
                 },
+                ["get", "players"] => {
+                    self.connection.send(Protocol::TCP, &GetPlayerData)?;
+                    Ok(None)
+                },
+                ["gen", "char"] => {
+                    self.connection.send(Protocol::TCP, &GenerateCharacter)?;
+                    Ok(None)
+                }
+                ["sub"] | ["sub", "list", ..] => {
+                    self.connection.send(Protocol::TCP, &PlayerSubs(PlayerSubCommand::ListSubs))?;
+                    Ok(None)
+                },
+                ["sub", op, ..] => {
+                    let list: Result<Vec<Subscription>, String> = match split.len() {
+                        0 | 1 | 2 => Ok(vec![]),
+                        _ => split[2..].iter().fold(Ok(vec![]), |acc, n| match acc {
+                            Ok(mut acc) => match Subscription::from_str(*n) {
+                                Ok(s) => {
+                                    acc.push(s);
+                                    Ok(acc)
+                                },
+                                Err(e) => Err(e.to_string())
+                            },
+                            x => x
+                        }),
+                    };
+                    match (*op, list) {
+                        ("add", Ok(list)) => {
+                            self.connection.send(Protocol::TCP, &PlayerSubs(PlayerSubCommand::AddSubs(list)))?;
+                            Ok(None)
+                        },
+                        ("del", Ok(list)) => {
+                            self.connection.send(Protocol::TCP, &PlayerSubs(PlayerSubCommand::DelSubs(list)))?;
+                            Ok(None)
+                        },
+                        ("set", Ok(list)) => {
+                            self.connection.send(Protocol::TCP, &PlayerSubs(PlayerSubCommand::SetSubs(list)))?;
+                            Ok(None)
+                        },
+                        (_, Err(e)) => Err(format!("Error parsing list: {}", e)),
+                        _ => Err(format!("Invalid option: {}", op))
+                    }
+                }
                 _ => Err("Unknown command or incorrect parameters.".to_string())
             }
         }
