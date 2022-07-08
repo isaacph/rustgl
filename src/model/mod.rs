@@ -3,6 +3,7 @@ use std::fmt::Display;
 use serde::{Serialize, Deserialize};
 use strum_macros::EnumString;
 
+pub mod player;
 pub mod world;
 pub mod commands;
 

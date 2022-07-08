@@ -1,6 +1,5 @@
 use nalgebra::{Vector2, Orthographic3};
 use ogl33::glViewport;
-
 use std::{ffi::CStr, net::SocketAddr, collections::{HashMap, HashSet}, str::FromStr};
 use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
@@ -10,8 +9,8 @@ use crate::{
     client::{chatbox, commands::execute_client_command},
     model::{world::{
         World,
-        character::CharacterID, player::PlayerData, component::{CharacterHealth, CharacterBase, ComponentStorage}, commands::GenerateCharacter,
-    }, commands::{player::{PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData, PlayerSubCommand, PlayerSubs}, core::GetAddress}, Subscription, PrintError}, networking::{client::ClientUpdate, Protocol},
+        character::CharacterID, component::{CharacterHealth, CharacterBase, ComponentStorage}, commands::GenerateCharacter,
+    }, commands::core::GetAddress, Subscription, PrintError, player::{model::PlayerData, commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}}}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;

@@ -1,13 +1,12 @@
 use strum::IntoEnumIterator;
 use std::collections::{HashMap, HashSet};
-
 use serde::{Serialize, de::DeserializeOwned};
 
 use self::{
-    player::{
-        TeamID,
-        Team, PlayerData
-    },
+//    player::{
+//        TeamID,
+//        Team, PlayerData
+//    },
     character::CharacterID,
     component::{
         CharacterBase,
@@ -18,10 +17,14 @@ use self::{
     }, commands::UpdateCharacter
 };
 
-pub mod player;
+use super::player::model::{TeamID, Team, PlayerData};
+
+//pub mod player;
 pub mod character;
 pub mod component;
 pub mod commands;
+pub mod server;
+pub mod client;
 
 pub struct World {
     pub teams: HashMap<TeamID, Team>,

@@ -1,18 +1,19 @@
 use std::time::Duration;
-
-use crate::{model::{world::{character::CharacterIDGenerator, World, player::{PlayerManager, PlayerDataView, PlayerManagerUpdate}}, commands::{ClientCommandID, player::{ChatMessage, PlayerDataPayload}}, Subscription}, networking::{server::ServerUpdate, Protocol}, server::commands::execute_server_command};
-
-use crate::networking::server::Server as Connection;
-use crate::server::commands::SendCommands;
-
+use crate::model::Subscription;
+use crate::model::commands::ClientCommandID;
+use crate::model::player::commands::{ChatMessage, PlayerDataPayload};
+use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
+use crate::model::world::World;
+use crate::model::world::character::CharacterIDGenerator;
+use crate::networking::Protocol;
+use crate::networking::server::{Server as Connection, ServerUpdate};
+use crate::server::commands::{SendCommands, execute_server_command};
 use self::update_loop::UpdateLoop;
 
 pub mod update_loop {
     use std::time::{SystemTime, Duration};
+    use crate::model::{commands::ClientCommandID, world::World};
 
-    use crate::model::commands::ClientCommandID;
-
-    use super::World;
     pub struct UpdateLoop {
         last_update: Option<SystemTime>,
         update_interval: Duration

@@ -23,47 +23,13 @@ pub mod core {
     pub struct EchoMessage(pub String);
 }
 
-pub mod player {
-    use serde::{Serialize, Deserialize};
-    use crate::model::{world::player::PlayerData, Subscription};
-
-    #[derive(Serialize, Deserialize)]
-    pub struct ChatMessage(pub String);
-
-    #[derive(Serialize, Deserialize)]
-    pub struct PlayerDataPayload(pub PlayerData);
-
-    #[derive(Serialize, Deserialize)]
-    pub struct GetPlayerData;
-
-    #[derive(Serialize, Deserialize, Debug)]
-    pub struct PlayerLogIn {
-        pub existing: bool,
-        pub name: Option<String>
-    }
-
-    #[derive(Serialize, Deserialize)]
-    pub struct PlayerLogOut;
-
-    #[derive(Serialize, Deserialize)]
-    pub enum PlayerSubCommand {
-        ListSubs,
-        AddSubs(Vec<Subscription>),
-        DelSubs(Vec<Subscription>),
-        SetSubs(Vec<Subscription>),
-    }
-
-    #[derive(Serialize, Deserialize)]
-    pub struct PlayerSubs(pub PlayerSubCommand);
-}
-
 commands_id!(
     ClientCommandID,
     [
         crate::model::commands::core::SendAddress,
         crate::model::commands::core::EchoMessage,
-        crate::model::commands::player::ChatMessage,
-        crate::model::commands::player::PlayerDataPayload,
+        crate::model::player::commands::ChatMessage,
+        crate::model::player::commands::PlayerDataPayload,
         crate::model::world::commands::UpdateCharacter,
     ]
 );
@@ -74,13 +40,13 @@ commands_id!(
         crate::model::commands::core::GetAddress,
         crate::model::commands::core::SetUDPAddress,
         crate::model::commands::core::EchoMessage,
-        crate::model::commands::player::ChatMessage,
-        crate::model::commands::player::PlayerLogIn,
-        crate::model::commands::player::PlayerLogOut,
-        crate::model::commands::player::GetPlayerData,
+        crate::model::player::commands::ChatMessage,
+        crate::model::player::commands::PlayerLogIn,
+        crate::model::player::commands::PlayerLogOut,
+        crate::model::player::commands::GetPlayerData,
+        crate::model::player::commands::PlayerSubs,
         crate::model::world::commands::GenerateCharacter,
         crate::model::world::commands::UpdateCharacter,
-        crate::model::commands::player::PlayerSubs,
     ]
 );
 

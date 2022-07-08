@@ -1,6 +1,5 @@
-use crate::{model::commands::player::{PlayerDataPayload, ChatMessage}, networking::Protocol, client::game::Game};
-
-use super::ClientCommand;
+use crate::{client::{commands::ClientCommand, game::Game}, networking::Protocol};
+use super::commands::{PlayerDataPayload, ChatMessage};
 
 impl <'a> ClientCommand<'a> for PlayerDataPayload {
     fn run(self, (_, game): (Protocol, &mut Game)) {

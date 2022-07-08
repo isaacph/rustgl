@@ -1,5 +1,5 @@
-use crate::{model::{world::{commands::{UpdateCharacter, GenerateCharacter}, player::PlayerID}, commands::player::ChatMessage, Subscription, PrintError}, networking::Protocol, server::main::Server};
-use super::{ProtocolSpec, SendCommands, player::PlayerCommand};
+use crate::{model::{player::{server::PlayerCommand, model::PlayerID, commands::ChatMessage}, Subscription, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
+use super::commands::{UpdateCharacter, GenerateCharacter};
 
 impl<'a> PlayerCommand<'a> for UpdateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;

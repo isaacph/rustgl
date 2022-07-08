@@ -1,8 +1,7 @@
 use std::net::SocketAddr;
 use serde::{Serialize, Deserialize};
-
-use crate::{model::{commands::player::{ChatMessage, PlayerLogIn, PlayerLogOut, GetPlayerData, PlayerDataPayload, PlayerSubs, PlayerSubCommand}, world::player::{PlayerDataView, PlayerID}, Subscription, PrintError}, networking::Protocol, server::main::Server};
-use super::{ProtocolServerCommand, ProtocolSpec, SendCommands};
+use crate::{server::{commands::{ProtocolSpec, ProtocolServerCommand, SendCommands}, main::Server}, networking::Protocol, model::{Subscription, PrintError}};
+use super::{model::{PlayerID, PlayerDataView}, commands::{ChatMessage, PlayerLogIn, PlayerLogOut, GetPlayerData, PlayerSubs, PlayerSubCommand, PlayerDataPayload}};
 
 pub trait PlayerCommand<'a>: Deserialize<'a> + Serialize {
     const PROTOCOL: ProtocolSpec;
