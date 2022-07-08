@@ -46,3 +46,9 @@ impl Default for GenerateCharacter {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MoveCharacter {
+    pub id: CharacterID,
+    pub dest: Vector2<f32>
+}
+
