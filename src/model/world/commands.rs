@@ -44,7 +44,7 @@ impl GenerateCharacter {
         world.base.components.insert(id, CharacterBase {
             ctype: character::CharacterType::HERO,
             position: Vector2::new(200.0, 200.0),
-            speed: 500.0
+            speed: 200.0
         });
         world.health.components.insert(id, CharacterHealth {
             health: 100.0

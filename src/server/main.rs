@@ -11,11 +11,11 @@ use crate::server::commands::{SendCommands, execute_server_command};
 use self::update_loop::UpdateLoop;
 
 pub mod update_loop {
-    use std::time::{SystemTime, Duration};
+    use std::time::{Duration, Instant};
     use crate::model::{world::World, commands::MakeBytes};
 
     pub struct UpdateLoop {
-        last_update: Option<SystemTime>,
+        last_update: Option<Instant>,
         update_interval: Duration,
         pub errors: Vec<String>
     }
@@ -23,21 +23,21 @@ pub mod update_loop {
     impl UpdateLoop {
         pub fn init(_world: &World) -> UpdateLoop {
             UpdateLoop {
-                last_update: Some(SystemTime::now()),
+                last_update: Some(Instant::now()),
                 update_interval: Duration::new(1, 0),
                 errors: vec![],
             }
         }
 
-        pub fn send_next_update(&mut self, world: &World) -> Vec<Box<[u8]>> {
-            let now = SystemTime::now();
+        pub fn send_next_update(&mut self, world: &World, now: Instant) -> Vec<Box<[u8]>> {
             let should_update = match self.last_update {
                 None => true,
-                Some(time) => now.duration_since(time).unwrap() > self.update_interval
+                Some(time) => now - time > self.update_interval
             };
             match should_update {
                 false => vec![],
-                true =>
+                true => {
+                    self.last_update = Some(now);
                     world.characters.iter()
                         .filter_map(|cid| world.make_cmd_update_character(*cid))
                         .filter_map(|cmd| match (&cmd).make_bytes() {
@@ -48,6 +48,7 @@ pub mod update_loop {
                             }
                         })
                         .collect()
+                }
             }
         }
     }
@@ -137,14 +138,14 @@ impl Server {
                 }
             }
 
-            let update_data = update_loop.send_next_update(&server.world);
+            let update_data = update_loop.send_next_update(&server.world, current_time);
             server.broadcast_data(Subscription::World, Protocol::UDP, &update_data);
-            
+
             for error in update_loop.errors.drain(0..update_loop.errors.len()) {
                 println!("Update loop error: {}", error);
             }
 
-            std::thread::sleep(Duration::new(0, 1000000 * 1)); // wait 100 ms
+            std::thread::sleep(Duration::new(0, 1000000 * 16)); // wait 16 ms
         }
         Ok(())
     }

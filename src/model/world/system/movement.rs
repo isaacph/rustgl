@@ -45,6 +45,7 @@ pub fn movement_system_update(world: &mut World, delta_time: f32) {
 
                         let v = dest - base.position;
                         if v.magnitude() <= travel {
+                            base.position = dest;
                             movement.destination = None;
                         } else {
                             base.position += v.normalize() * travel;

@@ -100,11 +100,22 @@ impl Game<'_> {
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         }
 
+        let mut left_right: f32 = 0.0;
+        let mut fpsc: i32 = 0;
+        let mut fps: i32 = 0;
+        let mut last_fps_time = glfw.get_time();
         let mut last_time = glfw.get_time();
         while !window.should_close() {
             let current_time = glfw.get_time();
             let delta_time = (current_time - last_time) as f32;
             last_time = current_time;
+            fpsc += 1;
+            if current_time - last_fps_time >= 1.0 {
+                fps = fpsc;
+                fpsc = 0;
+                last_fps_time = current_time;
+            }
+
             unsafe {
                 glClear(GL_COLOR_BUFFER_BIT);
             }
@@ -206,6 +217,14 @@ impl Game<'_> {
 
             game.chatbox.render(game.ortho.as_matrix(), delta_time);
 
+            // show fps
+            let sim = Similarity3::<f32>::new(
+                Vector3::new(width as f32 - 80.0, 60.0, 0.0),
+                Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+                1.0
+            );
+            text.render(&(game.ortho.as_matrix() * sim.to_homogeneous()), format!("FPS: {}", fps).as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
+
             window.swap_buffers();
             glfw.poll_events();
             for (_, event) in glfw::flush_messages(&events) {
@@ -276,7 +295,7 @@ impl Game<'_> {
                             }
                         }
                     },
-                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
                         if game.connection.is_connected() {
                             if let Some(char_id) = selected_char {
                                 game.connection.send(Protocol::UDP, &MoveCharacterRequest {
