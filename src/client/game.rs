@@ -9,7 +9,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command},
     model::{world::{
         World,
-        character::CharacterID, commands::GenerateCharacter,
+        character::CharacterID, commands::{GenerateCharacter, ListChar}, system::movement::MoveCharacterRequest,
     }, commands::core::GetAddress, Subscription, PrintError, player::commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -32,6 +32,7 @@ pub struct Game<'a> {
     pub connection: Connection,
     pub finding_addr: bool,
     pub finding_addr_timer: f32,
+    pub mouse_pos: Vector2<f32>
 }
 
 impl Game<'_> {
@@ -51,6 +52,7 @@ impl Game<'_> {
         window.set_key_polling(true);
         window.set_char_polling(true);
         window.set_size_polling(true);
+        window.set_mouse_button_polling(true);
         window.make_current();
 
         unsafe {
@@ -73,6 +75,7 @@ impl Game<'_> {
             connection: Connection::init_disconnected(),
             finding_addr: true,
             finding_addr_timer: 0.0,
+            mouse_pos: Vector2::<f32>::new(0.0, 0.0)
         };
         game.window_size(width, height);
         let render = graphics::textured::Renderer::new_square();
@@ -106,6 +109,11 @@ impl Game<'_> {
                 glClear(GL_COLOR_BUFFER_BIT);
             }
 
+            game.mouse_pos = {
+                let (x, y) = window.get_cursor_pos();
+                Vector2::new(x as f32, y as f32)
+            };
+
             // UDP address pings: send GetAddress -> receive SetAddress ->
             //   falsify game.finding_addr and send SetAddress
             if game.finding_addr && game.connection.is_connected() {
@@ -128,29 +136,29 @@ impl Game<'_> {
                     _ => game.chatbox.println(format!("{}", update).as_str())
                 }
             }
-            game.world.update();
+            game.world.update(delta_time);
             for error in game.world.errors.drain(0..game.world.errors.len()) {
                 // client side errors usually will be a result of lag
-                println!("World error: {:?}", error);
+                println!("Client world error: {:?}", error);
             }
 
             // update logic
-            let key_dir = {
-                let w = match window.get_key(Key::W) { Action::Press => 1.0, _ => 0.0 };
-                let s = match window.get_key(Key::S) { Action::Press => 1.0, _ => 0.0 };
-                let a = match window.get_key(Key::A) { Action::Press => 1.0, _ => 0.0 };
-                let d = match window.get_key(Key::D) { Action::Press => 1.0, _ => 0.0 };
-                let mut v = Vector2::<f32>::new(d - a, s - w);
-                if v.magnitude_squared() > 0.0 {
-                    v.normalize_mut();
-                }
-                v
-            };
-            if let Some(char_id) = selected_char {
-                if let Some(base) = game.world.base.components.get_mut(&char_id) {
-                    base.position += key_dir * delta_time as f32 * 100.0;
-                }
-            }
+            // let key_dir = {
+            //     let w = match window.get_key(Key::W) { Action::Press => 1.0, _ => 0.0 };
+            //     let s = match window.get_key(Key::S) { Action::Press => 1.0, _ => 0.0 };
+            //     let a = match window.get_key(Key::A) { Action::Press => 1.0, _ => 0.0 };
+            //     let d = match window.get_key(Key::D) { Action::Press => 1.0, _ => 0.0 };
+            //     let mut v = Vector2::<f32>::new(d - a, s - w);
+            //     if v.magnitude_squared() > 0.0 {
+            //         v.normalize_mut();
+            //     }
+            //     v
+            // };
+            // if let Some(char_id) = selected_char {
+            //     // if let Some(base) = game.world.base.components.get_mut(&char_id) {
+            //     //     base.position += key_dir * delta_time as f32 * 100.0;
+            //     // }
+            // }
 
             // random text
             let sim = Similarity3::<f32>::new(
@@ -268,6 +276,16 @@ impl Game<'_> {
                             }
                         }
                     },
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
+                        if game.connection.is_connected() {
+                            if let Some(char_id) = selected_char {
+                                game.connection.send(Protocol::UDP, &MoveCharacterRequest {
+                                    id: char_id,
+                                    dest: game.mouse_pos,
+                                }).ok();
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -396,7 +414,21 @@ impl Game<'_> {
                         (_, Err(e)) => Err(format!("Error parsing list: {}", e)),
                         _ => Err(format!("Invalid option: {}", op))
                     }
-                }
+                },
+                ["listchar"] => {
+                    self.connection.send(Protocol::TCP, &ListChar)?;
+                    Ok(Some(format!("Local:\n{}", {
+                        let x: Vec<String> = self.world.characters.iter().map(
+                            |cid| format!(
+                                "{:?}: base: {:?} health: {:?} move: {:?}",
+                                cid,
+                                self.world.base.components.get(cid),
+                                self.world.health.components.get(cid),
+                                self.world.movement.components.get(cid))
+                        ).collect();
+                        x.join(", ")
+                    })))
+                },
                 _ => Err("Unknown command or incorrect parameters.".to_string())
             }
         }

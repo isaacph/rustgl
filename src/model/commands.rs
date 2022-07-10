@@ -1,14 +1,42 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
-use crate::{commands_id, _commands_id_static_def};
-
+// no longer applies --
 // define all client and server command data structures
 // they must all be listed in the macro below to auto generate an ID for them to be serialized
 // this enables commands to be serialized on both the client and the server
 // to execute a command, the client or server side must add the command name to
 // the commands_execute macro list, and the method of execution must be specified by
 // implementing the ClientCommand or ServerCommand traits
+
+#[derive(IntoPrimitive, TryFromPrimitive, Debug)]
+#[repr(u16)]
+pub enum CommandID {
+    // place all internal command IDs here
+    
+    // commands to run on server
+    GetAddress,
+    SetUDPAddress,
+    PlayerLogIn,
+    PlayerLogOut,
+    GetPlayerData,
+    PlayerSubs,
+    GenerateCharacter,
+    MoveCharacterRequest,
+    ListChar,
+
+    // commands to run on client
+    SendAddress,
+    PlayerDataPayload,
+
+    // commands to run on both
+    EchoMessage,
+    ChatMessage,
+    UpdateCharacter,
+
+    // world commands (also on both, but focus run on world)
+    MoveCharacter
+}
 
 pub mod core {
     use serde::{Serialize, Deserialize};
@@ -49,30 +77,6 @@ pub mod core {
             super::CommandID::EchoMessage
         }
     }
-}
-
-#[derive(IntoPrimitive, TryFromPrimitive, Debug)]
-#[repr(u16)]
-pub enum CommandID {
-    // place all internal command IDs here
-    
-    // commands to run on server
-    GetAddress,
-    SetUDPAddress,
-    PlayerLogIn,
-    PlayerLogOut,
-    GetPlayerData,
-    PlayerSubs,
-    GenerateCharacter,
-
-    // commands to run on client
-    SendAddress,
-    PlayerDataPayload,
-
-    // commands to run on both
-    EchoMessage,
-    ChatMessage,
-    UpdateCharacter,
 }
 
 // commands_id!(

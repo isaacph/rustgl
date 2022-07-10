@@ -14,7 +14,7 @@ use self::{
         ComponentID,
         CharacterHealth,
         ComponentStorageContainer
-    }, commands::UpdateCharacter, system::movement::{Movement, movement_system_update}
+    }, commands::{UpdateCharacter, WorldCommand}, system::movement::{Movement, movement_system_update}
 };
 
 use super::player::model::{TeamID, Team, PlayerData};
@@ -29,7 +29,8 @@ pub mod system;
 
 #[derive(Debug)]
 pub enum WorldError {
-    MissingCharacter(CharacterID)
+    MissingCharacter(CharacterID),
+    MissingCharacterComponent(CharacterID, ComponentID)
 }
 
 pub struct World {
@@ -106,8 +107,15 @@ impl World {
         }
     }
 
-    pub fn update(&mut self) {
-        movement_system_update(self);
+    pub fn update(&mut self, delta_time: f32) {
+        movement_system_update(self, delta_time);
+    }
+
+    pub fn run_command<'a, T: WorldCommand<'a>>(&mut self, command: T) {
+        match T::run(command, self) {
+            Ok(()) => (),
+            Err(err) => self.errors.push(err)
+        }
     }
 }
 

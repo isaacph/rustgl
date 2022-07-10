@@ -77,7 +77,15 @@ impl Server {
         };
         let mut update_loop = UpdateLoop::init(&server.world);
 
+        let mut last_time = std::time::Instant::now();
         while !server.stop {
+            let current_time = std::time::Instant::now();
+            let delta_duration = current_time - last_time;
+            last_time = current_time;
+            let delta_time = delta_duration.as_secs_f32();
+
+            server.world.update(delta_time);
+
             let ServerUpdate {
                 messages,
                 connects,
@@ -136,7 +144,7 @@ impl Server {
                 println!("Update loop error: {}", error);
             }
 
-            std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
+            std::thread::sleep(Duration::new(0, 1000000 * 1)); // wait 100 ms
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
 use std::cmp;
 use serde::Deserialize;
 
-use crate::{model::commands::{core::{SendAddress, EchoMessage, SetUDPAddress}, GetCommandID, MakeBytes, CommandID}, networking::{client::{Client, ClientError}, Protocol}};
+use crate::{model::{commands::{core::{SendAddress, EchoMessage, SetUDPAddress}, GetCommandID, MakeBytes, CommandID}, world::commands::WorldCommand}, networking::{client::{Client, ClientError}, Protocol}};
 use super::game::Game;
 
 //pub mod core;
@@ -28,9 +28,19 @@ pub trait ClientCommand<'a>: Deserialize<'a> {
 }
 
 // tell how to deserialize and run each type of command
+// stands for "deserialize and run"
 fn drun<'a, T: ClientCommand<'a>>(data: &'a [u8], context: (Protocol, &mut Game)) -> Result<(), bincode::Error> {
     let deserialized: T = bincode::deserialize::<'a>(data)?; // TODO: error handling
     T::run(deserialized, context);
+    Ok(())
+}
+// stands for "deserialize and run in world"
+fn drun_w<'a, T: WorldCommand<'a>>(data: &'a [u8], (_, game): (Protocol, &mut Game)) -> Result<(), bincode::Error> {
+    let deserialized: T = bincode::deserialize::<'a>(data)?; // TODO: error handling
+    match T::run(deserialized, &mut game.world) {
+        Ok(()) => (),
+        Err(err) => game.world.errors.push(err),
+    }
     Ok(())
 }
 
@@ -47,6 +57,7 @@ pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) ->
             ChatMessage => drun::<crate::model::player::commands::ChatMessage>(data, context),
             SetUDPAddress => drun::<crate::model::player::commands::PlayerDataPayload>(data, context),
             UpdateCharacter => drun::<crate::model::world::commands::UpdateCharacter>(data, context),
+            MoveCharacter => drun_w::<crate::model::world::system::movement::MoveCharacter>(data, context),
             _ => {
                 println!("Command ID not implemented on client: {:?}", id);
                 Ok(())

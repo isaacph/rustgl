@@ -1,5 +1,5 @@
 use crate::{model::{player::{server::PlayerCommand, model::PlayerID, commands::ChatMessage}, Subscription, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
-use super::commands::{UpdateCharacter, GenerateCharacter, MoveCharacter};
+use super::commands::{UpdateCharacter, GenerateCharacter};
 
 impl<'a> PlayerCommand<'a> for UpdateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
@@ -21,16 +21,5 @@ impl<'a> PlayerCommand<'a> for GenerateCharacter {
         } else {
             server.connection.send(Protocol::TCP, tcp_addr, &ChatMessage("Failed to generate character".to_string())).print();
         };
-    }
-}
-
-impl<'a> PlayerCommand<'a> for MoveCharacter {
-    const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::UDP);
-
-    fn run(self, _: &std::net::SocketAddr, player_id: &PlayerID, server: &mut Server) {
-        // get the character at self.id
-        // check if character can move the character
-        // start the movement of the character
-        // tell everyone the character has started moving
     }
 }

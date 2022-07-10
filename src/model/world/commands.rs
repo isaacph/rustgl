@@ -1,9 +1,13 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, net::SocketAddr};
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-use crate::model::commands::GetCommandID;
+use crate::{model::{commands::GetCommandID, player::{server::PlayerCommand, model::PlayerID, commands::ChatMessage}, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
 
-use super::{World, character::{CharacterID, CharacterIDGenerator, self}, component::{ComponentID, CharacterHealth, CharacterBase}};
+use super::{World, character::{CharacterID, CharacterIDGenerator, self}, component::{ComponentID, CharacterHealth, CharacterBase}, WorldError, system::movement::Movement};
+
+pub trait WorldCommand<'a>: Deserialize<'a> {
+    fn run(self, world: &mut World) -> Result<(), WorldError>;
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateCharacter {
@@ -40,10 +44,13 @@ impl GenerateCharacter {
         world.base.components.insert(id, CharacterBase {
             ctype: character::CharacterType::HERO,
             position: Vector2::new(200.0, 200.0),
-            speed: 5.0
+            speed: 500.0
         });
         world.health.components.insert(id, CharacterHealth {
             health: 100.0
+        });
+        world.movement.components.insert(id, Movement {
+            destination: None
         });
         id
     }
@@ -62,7 +69,25 @@ impl Default for GenerateCharacter {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct MoveCharacter {
-    pub id: CharacterID,
-    pub dest: Vector2<f32>
+pub struct ListChar;
+
+impl GetCommandID for ListChar {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        crate::model::commands::CommandID::ListChar
+    }
+}
+
+impl<'a> PlayerCommand<'a> for ListChar {
+    const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::TCP);
+
+    fn run(self, addr: &SocketAddr, _: &PlayerID, server: &mut Server) {
+        server.connection.send(Protocol::TCP, addr, &ChatMessage(
+            format!("Character list:\n{}", {
+                let x: Vec<String> = server.world.characters.iter().map(
+                    |cid| format!("{:?}", cid)
+                ).collect();
+                x.join(", ")
+            })
+        )).print();
+    }
 }
