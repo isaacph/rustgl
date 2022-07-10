@@ -92,7 +92,9 @@ impl<'a> ProtocolServerCommand<'a> for PlayerLogOut {
 impl<'a> PlayerCommand<'a> for ChatMessage {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::TCP);
     fn run(self, _: &SocketAddr, id: &PlayerID, server: &mut Server) {
-        server.broadcast(Subscription::Chat, Protocol::TCP, &ChatMessage(format!("<{}> {}", server.player_manager.get_player(id).unwrap().name, self.0)))
+        let msg = format!("<{}> {}", server.player_manager.get_player(id).unwrap().name, self.0);
+        println!("{}", msg);
+        server.broadcast(Subscription::Chat, Protocol::TCP, &ChatMessage(msg))
     }
 }
 

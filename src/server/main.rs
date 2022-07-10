@@ -133,10 +133,10 @@ impl Server {
                 }
             }
             for (protocol, addr, message) in messages {
-                println!("Message from {} over {}: {}", addr, match protocol {
+                println!("Message from {} over {}", addr, match protocol {
                     Protocol::TCP => "TCP",
                     Protocol::UDP => "UDP"
-                }, String::from_utf8_lossy(&message));
+                });
                 match execute_server_command(&message, ((protocol, &addr), &mut server)) {
                     Ok(()) => println!("Ran command"),
                     Err(err) => println!("Error running command: {}", err)

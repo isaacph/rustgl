@@ -99,8 +99,8 @@ impl Server {
         let (recv, err) = udp_recv_all(&self.udp, &mut self.recv_buffer, None);
         for (addr, data) in recv {
             for packet in data {
-                let s = String::from_utf8_lossy(packet.as_ref()).to_string();
-                println!("Received UDP from {:?} of len {}: {}", addr, packet.len(), s);
+                //let s = String::from_utf8_lossy(packet.as_ref()).to_string();
+                println!("Received UDP from {:?} of len {}", addr, packet.len());
                 messages.push((Protocol::UDP, addr, packet));
                 // match command.execute(((Protocol::UDP, &addr), &mut server)) {
                 //     Ok(()) => println!("Ran UDP command from {:?}: {}", addr, str),
@@ -250,8 +250,8 @@ impl ConnectionInfo {
                     println!("Received TCP bytes: {}", size);
                     let data = self.tcp_recv.receive(&buffer[0..size]);
                     for message in &data {
-                        let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
-                        println!("Received full message TCP length {} from {}: {}", message.len(), addr, str);
+                        //let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
+                        println!("Received full message TCP length {} from {}", message.len(), addr);
                     }
                     messages.extend(data.into_iter().map(|data| (Protocol::TCP, addr, data.into())));
                 }
