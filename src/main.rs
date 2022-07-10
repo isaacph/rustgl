@@ -1,11 +1,15 @@
+#[cfg(feature = "client")]
 extern crate glfw;
 
+#[cfg(feature = "client")]
 pub mod graphics;
 // pub mod chatbox;
 // pub mod networking_wrapping;
 pub mod networking;
 pub mod model;
+#[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "server")]
 pub mod server;
 // pub mod game;
 // pub mod server;
@@ -16,6 +20,7 @@ use std::{io::Result, net::SocketAddr};
 use std::env;
 use std::io::{self, Write};
 
+#[cfg(feature = "client")]
 use client::game;
 use networking::example::both::{echo_server_both, console_client_both};
 use networking::example::{echo_server_udp, console_client_udp, console_client_tcp, echo_server_tcp};
@@ -31,8 +36,14 @@ pub fn grab_console_line(prompt: &str) -> String {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let auto_addr = Some(("test.neotrias.link:1234".to_socket_addrs().unwrap().next().unwrap(), "test.neotrias.link:1235".to_socket_addrs().unwrap().next().unwrap()));
+    if args.len() == 1 {
+        #[cfg(feature = "client")]
+        game::Game::run(auto_addr);
+        return Ok(());
+    }
     match args[1].as_str() {
         "client" => {
+            #[cfg(feature = "client")]
             game::Game::run(auto_addr);
         },
         _ => {
@@ -45,6 +56,7 @@ fn main() -> Result<()> {
             );
             match args[1].as_str() {
                 "server" => {
+                    #[cfg(feature = "server")]
                     server::main::Server::run(ports)?
                 },
                 "udpserver" => {

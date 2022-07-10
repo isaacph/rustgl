@@ -1,9 +1,8 @@
-use std::net::SocketAddr;
 
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
 
-use crate::{model::{world::{World, character::CharacterID, WorldError, commands::WorldCommand, component::ComponentID}, commands::GetCommandID, player::{server::PlayerCommand, model::PlayerID, commands::ChatMessage}, Subscription, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
+use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::ComponentID}, commands::GetCommandID};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Movement {
@@ -73,29 +72,38 @@ impl GetCommandID for MoveCharacterRequest {
     }
 }
 
-impl<'a> PlayerCommand<'a> for MoveCharacterRequest {
-    const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::UDP);
-    fn run(self, addr: &SocketAddr, _: &PlayerID, server: &mut Server) {
-        // check if character can move the character at self.id
-        // currently only validation is that the character exists and destination is not NaN
-        match (server.world.characters.get(&self.id), self.dest.x.is_nan(), self.dest.y.is_nan()) {
-            (None, _, _) => server.connection.send(Protocol::TCP, addr, &ChatMessage(
-                format!("Invalid character ID: {:?}", self.id)
-            )).print(),
-            (_, true, _) |
-            (_, _, true) => server.connection.send(Protocol::TCP, addr, &ChatMessage(
-                format!("Invalid numbers")
-            )).print(),
-            (Some(_), false, false) => {
-                let cmd = MoveCharacter {
-                    to_move: self.id,
-                    destination: self.dest,
-                };
-                // tell everyone the character has started moving
-                server.broadcast(Subscription::World, Protocol::UDP, &cmd);
-                // start the movement of the character locally
-                server.world.run_command(cmd);
-            },
+#[cfg(feature = "server")]
+pub mod server {
+    use std::net::SocketAddr;
+
+    use crate::{model::{player::{server::PlayerCommand, model::PlayerID, commands::ChatMessage}, PrintError, Subscription}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
+
+    use super::{MoveCharacterRequest, MoveCharacter};
+
+    impl<'a> PlayerCommand<'a> for MoveCharacterRequest {
+        const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::UDP);
+        fn run(self, addr: &SocketAddr, _: &PlayerID, server: &mut Server) {
+            // check if character can move the character at self.id
+            // currently only validation is that the character exists and destination is not NaN
+            match (server.world.characters.get(&self.id), self.dest.x.is_nan(), self.dest.y.is_nan()) {
+                (None, _, _) => server.connection.send(Protocol::TCP, addr, &ChatMessage(
+                    format!("Invalid character ID: {:?}", self.id)
+                )).print(),
+                (_, true, _) |
+                (_, _, true) => server.connection.send(Protocol::TCP, addr, &ChatMessage(
+                    "Invalid numbers".to_string()
+                )).print(),
+                (Some(_), false, false) => {
+                    let cmd = MoveCharacter {
+                        to_move: self.id,
+                        destination: self.dest,
+                    };
+                    // tell everyone the character has started moving
+                    server.broadcast(Subscription::World, Protocol::UDP, &cmd);
+                    // start the movement of the character locally
+                    server.world.run_command(cmd);
+                },
+            }
         }
     }
 }

@@ -22,10 +22,15 @@ use super::player::model::{TeamID, Team, PlayerData};
 //pub mod player;
 pub mod character;
 pub mod component;
-pub mod commands;
-pub mod server;
-pub mod client;
 pub mod system;
+pub mod commands;
+
+#[cfg(feature = "server")]
+pub mod server;
+
+#[cfg(feature = "client")]
+pub mod client;
+
 
 #[derive(Debug)]
 pub enum WorldError {

@@ -287,25 +287,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
 
 [[package]]
-name = "hello_cargo2"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "bytemuck",
- "encode_unicode",
- "freetype-sys",
- "glfw",
- "image",
- "nalgebra",
- "num-traits",
- "num_enum",
- "ogl33",
- "serde",
- "strum",
- "strum_macros",
-]
-
-[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -680,6 +661,25 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
  "num_cpus",
+]
+
+[[package]]
+name = "rustgl"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bytemuck",
+ "encode_unicode",
+ "freetype-sys",
+ "glfw",
+ "image",
+ "nalgebra",
+ "num-traits",
+ "num_enum",
+ "ogl33",
+ "serde",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]
