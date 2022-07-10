@@ -30,7 +30,7 @@ pub fn grab_console_line(prompt: &str) -> String {
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let auto_addr = Some(("neotrias.link:1234".to_socket_addrs().unwrap().next().unwrap(), "neotrias.link:1235".to_socket_addrs().unwrap().next().unwrap()));
+    let auto_addr = Some(("test.neotrias.link:1234".to_socket_addrs().unwrap().next().unwrap(), "test.neotrias.link:1235".to_socket_addrs().unwrap().next().unwrap()));
     match args[1].as_str() {
         "client" => {
             game::Game::run(auto_addr);
