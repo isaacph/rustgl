@@ -1,6 +1,6 @@
 use std::time::Duration;
 use crate::model::Subscription;
-use crate::model::commands::ClientCommandID;
+use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
 use crate::model::world::World;
@@ -12,18 +12,20 @@ use self::update_loop::UpdateLoop;
 
 pub mod update_loop {
     use std::time::{SystemTime, Duration};
-    use crate::model::{commands::ClientCommandID, world::World};
+    use crate::model::{world::World, commands::MakeBytes};
 
     pub struct UpdateLoop {
         last_update: Option<SystemTime>,
-        update_interval: Duration
+        update_interval: Duration,
+        pub errors: Vec<String>
     }
 
     impl UpdateLoop {
         pub fn init(_world: &World) -> UpdateLoop {
             UpdateLoop {
                 last_update: Some(SystemTime::now()),
-                update_interval: Duration::new(1, 0)
+                update_interval: Duration::new(1, 0),
+                errors: vec![],
             }
         }
 
@@ -38,7 +40,13 @@ pub mod update_loop {
                 true =>
                     world.characters.iter()
                         .filter_map(|cid| world.make_cmd_update_character(*cid))
-                        .map(|cmd| (&cmd).make_bytes())
+                        .filter_map(|cmd| match (&cmd).make_bytes() {
+                            Ok(bytes) => Some(bytes),
+                            Err(err) => {
+                                self.errors.push(format!("Error serializing update command: {}", err));
+                                None
+                            }
+                        })
                         .collect()
             }
         }
@@ -123,14 +131,21 @@ impl Server {
 
             let update_data = update_loop.send_next_update(&server.world);
             server.broadcast_data(Subscription::World, Protocol::UDP, &update_data);
+            
+            for error in update_loop.errors.drain(0..update_loop.errors.len()) {
+                println!("Update loop error: {}", error);
+            }
 
             std::thread::sleep(Duration::new(0, 1000000 * 100)); // wait 100 ms
         }
         Ok(())
     }
 
-    pub fn broadcast<T>(&mut self, sub: Subscription, protocol: Protocol, message: &T) where T: ClientCommandID {
-        self.broadcast_data(sub, protocol, &vec![message.make_bytes()]);
+    pub fn broadcast<T>(&mut self, sub: Subscription, protocol: Protocol, message: &T) where T: GetCommandID {
+        match message.make_bytes() {
+            Ok(bytes) => self.broadcast_data(sub, protocol, &vec![bytes]),
+            Err(err) => println!("Error serializing broadcast command {:?}: {}", message.command_id(), err),
+        }
     }
 
     pub fn broadcast_data(&mut self, sub: Subscription, protocol: Protocol, message: &Vec<Box<[u8]>>) {

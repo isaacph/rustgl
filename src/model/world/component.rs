@@ -6,14 +6,11 @@ use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use super::character::{CharacterID, CharacterType};
 use strum_macros::EnumIter;
 
-pub trait ComponentIdentified {
-    fn component_id() -> ComponentID;
-}
-
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter)]
 pub enum ComponentID {
     Base,
-    Health
+    Health,
+    Movement
 }
 
 impl Display for ComponentID {
@@ -25,18 +22,13 @@ impl Display for ComponentID {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CharacterBase {
     pub ctype: CharacterType,
-    pub position: Vector2<f32>
+    pub position: Vector2<f32>,
+    pub speed: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CharacterHealth {
     pub health: f32
-}
-
-impl ComponentIdentified for CharacterBase {
-    fn component_id() -> ComponentID {
-        ComponentID::Base
-    }
 }
 
 pub trait ComponentStorageContainer<T: Sized + Serialize> {
@@ -58,12 +50,6 @@ impl<T> ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned {
             None => None,
             Some(c) => Some(bincode::serialize(c).unwrap())
         }
-    }
-}
-
-impl<T> ComponentIdentified for ComponentStorage<T> where T: ComponentIdentified + Sized + Serialize + DeserializeOwned {
-    fn component_id() -> ComponentID {
-        T::component_id()
     }
 }
 

@@ -1,34 +1,79 @@
 use std::cmp;
-use crate::{model::commands::{ServerCommandID, core::{SendAddress, EchoMessage, SetUDPAddress}}, networking::{client::{Client, ClientError}, Protocol}};
-use crate::{commands_execute, _commands_execute_static_def};
+use serde::Deserialize;
+
+use crate::{model::commands::{core::{SendAddress, EchoMessage, SetUDPAddress}, GetCommandID, MakeBytes, CommandID}, networking::{client::{Client, ClientError}, Protocol}};
 use super::game::Game;
 
 //pub mod core;
 //pub mod player;
 //pub mod world;
 
-commands_execute!(
-    execute_client_command,
-    ClientCommand,
-    ClientCommandID,
-    (Protocol, &mut Game),
-    // list all commands the client can execute here:
-    [
-        crate::model::commands::core::SendAddress,
-        crate::model::commands::core::EchoMessage,
-        crate::model::player::commands::ChatMessage,
-        crate::model::player::commands::PlayerDataPayload,
-        crate::model::world::commands::UpdateCharacter,
-    ]
-);
+// commands_execute!(
+//     execute_client_command,
+//     ClientCommand,
+//     ClientCommandID,
+//     (Protocol, &mut Game),
+//     // list all commands the client can execute here:
+//     [
+//         crate::model::commands::core::SendAddress,
+//         crate::model::commands::core::EchoMessage,
+//         crate::model::player::commands::ChatMessage,
+//         crate::model::player::commands::PlayerDataPayload,
+//         crate::model::world::commands::UpdateCharacter,
+//     ]
+// );
+
+pub trait ClientCommand<'a>: Deserialize<'a> {
+    fn run(self, context: (Protocol, &mut Game));
+}
+
+// tell how to deserialize and run each type of command
+fn drun<'a, T: ClientCommand<'a>>(data: &'a [u8], context: (Protocol, &mut Game)) -> Result<(), bincode::Error> {
+    let deserialized: T = bincode::deserialize::<'a>(data)?; // TODO: error handling
+    T::run(deserialized, context);
+    Ok(())
+}
+
+pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) -> Result<(), String> {
+    let id_num = u16::from_be_bytes([command[command.len() - 2], command[command.len() - 1]]);
+    let data = &command[..command.len() - 2];
+
+    use crate::model::commands::CommandID::*;
+    match CommandID::try_from(id_num) {
+        Ok(id) => match (|| match id {
+            // place all command deserializations here
+            SendAddress => drun::<crate::model::commands::core::SendAddress>(data, context),
+            EchoMessage => drun::<crate::model::commands::core::EchoMessage>(data, context),
+            ChatMessage => drun::<crate::model::player::commands::ChatMessage>(data, context),
+            SetUDPAddress => drun::<crate::model::player::commands::PlayerDataPayload>(data, context),
+            UpdateCharacter => drun::<crate::model::world::commands::UpdateCharacter>(data, context),
+            _ => {
+                println!("Command ID not implemented on client: {:?}", id);
+                Ok(())
+            }
+        })() {
+            Ok(()) => Ok(()),
+            // handle bincode error
+            Err(err) => Err(format!("Bincode deserialize fail: {}", err.to_string()))
+        },
+        // handle id not found error
+        Err(err) => Err(format!("Failure to find client command ID: {}", err.to_string()))
+    }
+}
 
 pub trait SendCommands {
-    fn send<T: ServerCommandID>(&mut self, protocol: Protocol, command: &T) -> std::result::Result<(), ClientError>;
+    fn send<T: GetCommandID>(&mut self, protocol: Protocol, command: &T) -> std::result::Result<(), ClientError>;
 }
 
 impl SendCommands for Client {
-    fn send<T: ServerCommandID>(&mut self, protocol: Protocol, command: &T) -> std::result::Result<(), ClientError> {
-        self.send_data(protocol, command.make_bytes())
+    fn send<T: GetCommandID>(&mut self, protocol: Protocol, command: &T) -> std::result::Result<(), ClientError> {
+        match command.make_bytes() {
+            Ok(bytes) => self.send_data(protocol, bytes),
+            Err(err) => Err(ClientError::Other(format!(
+                "Command {:?} serialize fail: {}",
+                command.command_id(), err.to_string()
+            )))
+        }
     }
 }
 

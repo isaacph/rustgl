@@ -1,45 +1,73 @@
 use std::net::SocketAddr;
 use serde::{Serialize, Deserialize};
-use crate::{commands_execute, _commands_execute_static_def};
-use crate::model::commands::ClientCommandID;
+use crate::model::commands::{CommandID, GetCommandID, MakeBytes};
 use crate::{model::commands::core::{GetAddress, SendAddress, SetUDPAddress, EchoMessage}, networking::Protocol, server::main::Server};
 
 //pub mod core;
 //pub mod player;
 //pub mod world;
 
-commands_execute!(
-    execute_server_command,
-    ServerCommand,
-    ServerCommandID,
-    ((Protocol, &SocketAddr), &mut Server),
-    // list all commands that the server can execute here here:
-    [
-        crate::model::commands::core::GetAddress,
-        crate::model::commands::core::SetUDPAddress,
-        crate::model::commands::core::EchoMessage,
-        crate::model::player::commands::ChatMessage,
-        crate::model::player::commands::PlayerLogIn,
-        crate::model::player::commands::PlayerLogOut,
-        crate::model::player::commands::GetPlayerData,
-        crate::model::player::commands::PlayerSubs,
-        crate::model::world::commands::GenerateCharacter,
-        crate::model::world::commands::UpdateCharacter,
-    ]
-);
 
+// commands_execute!(
+//     execute_server_command,
+//     ServerCommand,
+//     ServerCommandID,
+//     ((Protocol, &SocketAddr), &mut Server),
+//     // list all commands that the server can execute here here:
+//     [
+//         crate::model::commands::core::GetAddress,
+//         crate::model::commands::core::SetUDPAddress,
+//         crate::model::commands::core::EchoMessage,
+//         crate::model::player::commands::ChatMessage,
+//         crate::model::player::commands::PlayerLogIn,
+//         crate::model::player::commands::PlayerLogOut,
+//         crate::model::player::commands::GetPlayerData,
+//         crate::model::player::commands::PlayerSubs,
+//         crate::model::world::commands::GenerateCharacter,
+//         crate::model::world::commands::UpdateCharacter,
+//     ]
+// );
 
-pub trait SendCommands {
-    fn send<T: ClientCommandID>(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
-    fn send_udp_to_unidentified<T: ClientCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize>;
+pub trait ServerCommand<'a>: Deserialize<'a> {
+    fn run(self, context: ((Protocol, &SocketAddr), &mut Server));
 }
 
-impl SendCommands for crate::networking::server::Server {
-    fn send<T: ClientCommandID>(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String> {
-        self.send_data(protocol, tcp_addr, command.make_bytes())
-    }
-    fn send_udp_to_unidentified<T: ClientCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize> {
-        self.send_udp_data_to_unidentified(udp_addr, &command.make_bytes())
+// tell how to deserialize and run each type of command
+fn drun<'a, T: ServerCommand<'a>>(data: &'a [u8], context: ((Protocol, &SocketAddr), &mut Server)) -> Result<(), bincode::Error> {
+    let deserialized: T = bincode::deserialize::<'a>(data)?; // TODO: error handling
+    T::run(deserialized, context);
+    Ok(())
+}
+
+pub fn execute_server_command(command: &[u8], context: ((Protocol, &SocketAddr), &mut Server)) -> Result<(), String> {
+    let id_num = u16::from_be_bytes([command[command.len() - 2], command[command.len() - 1]]);
+    let data = &command[..command.len() - 2];
+
+    use crate::model::commands::CommandID::*;
+    match CommandID::try_from(id_num) {
+        Ok(id) => match (|| match id {
+            // place all command deserializations here
+            GetAddress => drun::<crate::model::commands::core::GetAddress>(data, context),
+            SetUDPAddress => drun::<crate::model::commands::core::SetUDPAddress>(data, context),
+            EchoMessage => drun::<crate::model::commands::core::EchoMessage>(data, context),
+            ChatMessage => drun::<crate::model::player::commands::ChatMessage>(data, context),
+            PlayerLogIn => drun::<crate::model::player::commands::PlayerLogIn>(data, context),
+            PlayerLogOut => drun::<crate::model::player::commands::PlayerLogOut>(data, context),
+            GetPlayerData => drun::<crate::model::player::commands::GetPlayerData>(data, context),
+            PlayerSubs => drun::<crate::model::player::commands::PlayerSubs>(data, context),
+            GenerateCharacter => drun::<crate::model::world::commands::GenerateCharacter>(data, context),
+            UpdateCharacter => drun::<crate::model::world::commands::UpdateCharacter>(data, context),
+            _ => {
+                println!("Command ID not implemented on server: {:?}", id);
+                Ok(())
+            }
+        })() {
+            Ok(()) => Ok(()),
+            // handle bincode error
+            Err(err) => Err(format!("Bincode deserialize fail: {}", err.to_string()))
+        },
+        // handle id not found error
+        Err(err) => Err(format!("Failure to find server command ID: {}", err.to_string()))
     }
 }
 
@@ -71,6 +99,29 @@ impl<'a, T> ServerCommand<'a> for T where T: ProtocolServerCommand<'a> {
                 }
             };
             self.run(protocol, &addr, server);
+        }
+    }
+}
+
+pub trait SendCommands {
+    fn send<T: GetCommandID>(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String>;
+    fn send_udp_to_unidentified<T: GetCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize>;
+}
+
+impl SendCommands for crate::networking::server::Server {
+    fn send<T: GetCommandID>(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, command: &T) -> std::result::Result<(), String> {
+        match command.make_bytes() {
+            Ok(bytes) => self.send_data(protocol, tcp_addr, bytes),
+            Err(err) => Err(format!("Failed to serialize command {:?}: {}", command.command_id(), err))
+        }
+    }
+    fn send_udp_to_unidentified<T: GetCommandID>(&mut self, udp_addr: &SocketAddr, command: &T) -> std::io::Result<usize> {
+        match command.make_bytes() {
+            Ok(bytes) => self.send_udp_data_to_unidentified(udp_addr, &bytes),
+            Err(err) => {
+                println!("Failed to serialize command {:?}: {}", command.command_id(), err);
+                Err(std::io::Error::from(std::io::ErrorKind::Other))
+            }
         }
     }
 }

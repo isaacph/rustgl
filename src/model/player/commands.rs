@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use crate::model::Subscription;
+use crate::model::{Subscription, commands::{GetCommandID, CommandID}};
 use super::model::PlayerData;
 
 #[derive(Serialize, Deserialize)]
@@ -30,3 +30,39 @@ pub enum PlayerSubCommand {
 
 #[derive(Serialize, Deserialize)]
 pub struct PlayerSubs(pub PlayerSubCommand);
+
+impl GetCommandID for ChatMessage {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        CommandID::ChatMessage
+    }
+}
+
+impl GetCommandID for PlayerDataPayload {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        CommandID::PlayerDataPayload
+    }
+}
+
+impl GetCommandID for GetPlayerData {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        CommandID::GetPlayerData
+    }
+}
+
+impl GetCommandID for PlayerLogIn {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        CommandID::PlayerLogIn
+    }
+}
+
+impl GetCommandID for PlayerLogOut {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        CommandID::PlayerLogOut
+    }
+}
+
+impl GetCommandID for PlayerSubs {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        CommandID::PlayerSubs
+    }
+}

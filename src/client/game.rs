@@ -1,6 +1,6 @@
 use nalgebra::{Vector2, Orthographic3};
 use ogl33::glViewport;
-use std::{ffi::CStr, net::SocketAddr, collections::{HashMap, HashSet}, str::FromStr};
+use std::{ffi::CStr, str::FromStr, net::SocketAddr};
 use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
@@ -9,8 +9,8 @@ use crate::{
     client::{chatbox, commands::execute_client_command},
     model::{world::{
         World,
-        character::CharacterID, component::{CharacterHealth, CharacterBase, ComponentStorage}, commands::GenerateCharacter,
-    }, commands::core::GetAddress, Subscription, PrintError, player::{model::PlayerData, commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}}}, networking::{client::ClientUpdate, Protocol},
+        character::CharacterID, commands::GenerateCharacter,
+    }, commands::core::GetAddress, Subscription, PrintError, player::commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
@@ -69,13 +69,7 @@ impl Game<'_> {
             ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
             chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
             state: State::DEFAULT,
-            world: World {
-                    teams: HashMap::new(),
-                    characters: HashSet::new(),
-                    players: PlayerData { players: HashMap::new() },
-                    base: ComponentStorage::<CharacterBase>::new(),
-                    health: ComponentStorage::<CharacterHealth>::new(),
-                },
+            world: World::new(),
             connection: Connection::init_disconnected(),
             finding_addr: true,
             finding_addr_timer: 0.0,
@@ -133,6 +127,11 @@ impl Game<'_> {
                     },
                     _ => game.chatbox.println(format!("{}", update).as_str())
                 }
+            }
+            game.world.update();
+            for error in game.world.errors.drain(0..game.world.errors.len()) {
+                // client side errors usually will be a result of lag
+                println!("World error: {:?}", error);
             }
 
             // update logic

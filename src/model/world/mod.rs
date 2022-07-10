@@ -14,7 +14,7 @@ use self::{
         ComponentID,
         CharacterHealth,
         ComponentStorageContainer
-    }, commands::UpdateCharacter
+    }, commands::UpdateCharacter, system::movement::{Movement, movement_system_update}
 };
 
 use super::player::model::{TeamID, Team, PlayerData};
@@ -25,24 +25,35 @@ pub mod component;
 pub mod commands;
 pub mod server;
 pub mod client;
+pub mod system;
+
+#[derive(Debug)]
+pub enum WorldError {
+    MissingCharacter(CharacterID)
+}
 
 pub struct World {
+    pub errors: Vec<WorldError>,
+
     pub teams: HashMap<TeamID, Team>,
     pub characters: HashSet<CharacterID>,
     pub players: PlayerData,
 
     pub base: ComponentStorage<CharacterBase>,
     pub health: ComponentStorage<CharacterHealth>,
+    pub movement: ComponentStorage<Movement>
 }
 
 impl World {
     pub fn new() -> World {
         World {
+            errors: vec![],
             teams: HashMap::new(),
             characters: HashSet::new(),
             players: PlayerData { players: HashMap::new() },
             base: ComponentStorage::<CharacterBase>::new(),
             health: ComponentStorage::<CharacterHealth>::new(),
+            movement: ComponentStorage::<Movement>::new()
         }
     }
 
@@ -54,6 +65,7 @@ impl World {
         match cid {
             ComponentID::Base => ser(&self.base, id),
             ComponentID::Health => ser(&self.health, id),
+            ComponentID::Movement => ser(&self.movement, id),
             // _ => panic!("Serialization not implemented for component id: {}", cid)
         }
     }
@@ -73,6 +85,7 @@ impl World {
         match cid {
             ComponentID::Base => insert(&mut self.base, id, cid, data),
             ComponentID::Health => insert(&mut self.health, id, cid, data),
+            ComponentID::Movement => insert(&mut self.movement, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }
@@ -91,6 +104,10 @@ impl World {
                 })
             }
         }
+    }
+
+    pub fn update(&mut self) {
+        movement_system_update(self);
     }
 }
 
