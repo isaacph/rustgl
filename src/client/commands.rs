@@ -50,7 +50,7 @@ pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) ->
 
     use crate::model::commands::CommandID::*;
     match CommandID::try_from(id_num) {
-        Ok(id) => match (|| match id {
+        Ok(id) => match match id {
             // place all command deserializations here
             SendAddress => drun::<crate::model::commands::core::SendAddress>(data, context),
             EchoMessage => drun::<crate::model::commands::core::EchoMessage>(data, context),
@@ -58,17 +58,19 @@ pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) ->
             SetUDPAddress => drun::<crate::model::player::commands::PlayerDataPayload>(data, context),
             UpdateCharacter => drun::<crate::model::world::commands::UpdateCharacter>(data, context),
             MoveCharacter => drun_w::<crate::model::world::system::movement::MoveCharacter>(data, context),
+            IndicateClientPlayer => drun::<crate::model::player::commands::IndicateClientPlayer>(data, context),
+            PlayerDataPayload => drun::<crate::model::player::commands::PlayerDataPayload>(data, context),
             _ => {
                 println!("Command ID not implemented on client: {:?}", id);
                 Ok(())
             }
-        })() {
+        } {
             Ok(()) => Ok(()),
             // handle bincode error
-            Err(err) => Err(format!("Bincode deserialize fail: {}", err.to_string()))
+            Err(err) => Err(format!("Bincode deserialize fail: {}", err))
         },
         // handle id not found error
-        Err(err) => Err(format!("Failure to find client command ID: {}", err.to_string()))
+        Err(err) => Err(format!("Failure to find client command ID: {}", err))
     }
 }
 
@@ -82,7 +84,7 @@ impl SendCommands for Client {
             Ok(bytes) => self.send_data(protocol, bytes),
             Err(err) => Err(ClientError::Other(format!(
                 "Command {:?} serialize fail: {}",
-                command.command_id(), err.to_string()
+                command.command_id(), err
             )))
         }
     }

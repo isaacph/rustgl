@@ -1,6 +1,6 @@
 use nalgebra::{Vector2, Orthographic3};
 use ogl33::glViewport;
-use std::{ffi::CStr, str::FromStr, net::SocketAddr};
+use std::{ffi::CStr, str::FromStr, net::SocketAddr, collections::HashMap};
 use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
@@ -9,8 +9,8 @@ use crate::{
     client::{chatbox, commands::execute_client_command},
     model::{world::{
         World,
-        character::CharacterID, commands::{GenerateCharacter, ListChar}, system::movement::MoveCharacterRequest,
-    }, commands::core::GetAddress, Subscription, PrintError, player::commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}}, networking::{client::ClientUpdate, Protocol},
+        character::CharacterID, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::movement::MoveCharacterRequest,
+    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}, self}}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
@@ -32,7 +32,10 @@ pub struct Game<'a> {
     pub connection: Connection,
     pub finding_addr: bool,
     pub finding_addr_timer: f32,
-    pub mouse_pos: Vector2<f32>
+    pub mouse_pos: Vector2<f32>,
+    pub move_timer: f32,
+    pub selected_player: Option<PlayerID>,
+    pub character_name: HashMap<CharacterID, String>
 }
 
 impl Game<'_> {
@@ -64,8 +67,10 @@ impl Game<'_> {
         }
 
         let mut font_library = graphics::text::FontLibrary::new();
+        let mut texture_library = graphics::TextureLibrary::new();
         let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
         let simple_render = graphics::simple::Renderer::new_square();
+        let texture_render = graphics::textured::Renderer::new_square();
         let mut game = Game {
             window_size: Vector2::<i32>::new(width, height),
             ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
@@ -75,7 +80,10 @@ impl Game<'_> {
             connection: Connection::init_disconnected(),
             finding_addr: true,
             finding_addr_timer: 0.0,
-            mouse_pos: Vector2::<f32>::new(0.0, 0.0)
+            mouse_pos: Vector2::<f32>::new(0.0, 0.0),
+            move_timer: 0.0,
+            selected_player: None,
+            character_name: HashMap::new()
         };
         game.window_size(width, height);
         let render = graphics::textured::Renderer::new_square();
@@ -87,20 +95,26 @@ impl Game<'_> {
         let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
         let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
 
-        let mut selected_char: Option<CharacterID> = None;
+        let character_walk_textures: Vec<graphics::Texture> = (1..=12).map(
+            |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str())
+        ).collect();
 
-        //let mut temp_id_gen = CharacterIDGenerator::new();
-        //GenerateCharacter::generate_character(&mut game.world, &mut temp_id_gen);
-
-        // let mut last_heartbeat = glfw.get_time();
+        enum Direction {
+            Left, Right
+        }
+        struct Animation {
+            timer: f32,
+            direction: Direction
+        }
+        let mut animation_data: HashMap<CharacterID, Animation> = HashMap::new();
+        let animation_fps = 12.0;
 
         unsafe {
-            glClearColor(0.0, 0.0, 0.0, 1.0);
+            glClearColor(0.1, 0.2, 0.1, 1.0);
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         }
 
-        let mut left_right: f32 = 0.0;
         let mut fpsc: i32 = 0;
         let mut fps: i32 = 0;
         let mut last_fps_time = glfw.get_time();
@@ -182,6 +196,33 @@ impl Game<'_> {
             let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
             text.render(&matrix, msg.as_str(), &color);
 
+            let selected_char = {
+                let mut c = None;
+                if let Some(pid) = game.selected_player {
+                    if let Some(player) = game.world.players.get_player(&pid) {
+                        if let Some(cid) = player.selected_char {
+                            c = Some(cid)
+                        }
+                    }
+                }
+                c
+            };
+
+            game.move_timer += delta_time;
+            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonLeft) == glfw::Action::Press {
+                if let Some(pid) = game.selected_player {
+                    if let Some(player) = game.world.players.get_player(&pid) {
+                        if let Some(cid) = player.selected_char {
+                            game.move_timer = 0.0;
+                            game.connection.send(Protocol::UDP, &MoveCharacterRequest {
+                                id: cid,
+                                dest: game.mouse_pos,
+                            }).ok();
+                        }
+                    }
+                }
+            }
+
             // font spritesheet
             let sim = Similarity3::<f32>::new(
                 Vector3::new(400.0, 400.0, 0.0),
@@ -189,8 +230,8 @@ impl Game<'_> {
                 800.0
             );
             render.render(
-                game.ortho.as_matrix() * sim.to_homogeneous(),
-                Vector4::new(1.0, 1.0, 1.0, 1.0),
+                &(game.ortho.as_matrix() * sim.to_homogeneous()),
+                &Vector4::new(1.0, 1.0, 1.0, 1.0),
                 &font_texture,
                 graphics::VertexRange::Full
             );
@@ -198,20 +239,58 @@ impl Game<'_> {
             // characters
             for cid in &game.world.characters {
                 if let Some(base) = game.world.base.components.get(cid) {
-                    let sim = Similarity3::<f32>::new(
-                        Vector3::new(base.position.x, base.position.y, 0.0),
-                        Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
-                        100.0
-                    );
-                    let color = match Some(*cid) == selected_char {
-                        true => Vector4::new(1.0, 0.0, 0.0, 1.0),
-                        false => Vector4::new(1.0, 1.0, 1.0, 1.0)
+                    let Animation { timer: animation_time, direction } = match animation_data.get_mut(cid) {
+                        None => {
+                            animation_data.insert(*cid, Animation {
+                                timer: 0.0,
+                                direction: Direction::Right,
+                            });
+                            animation_data.get_mut(cid).unwrap()
+                        },
+                        Some(time) => time,
                     };
-                    simple_render.render(
-                        &(game.ortho.as_matrix() * sim.to_homogeneous()),
+                    let mut frame = 0usize;
+                    if let Some(movement) = game.world.movement.components.get(cid) {
+                        if let Some(dest) = movement.destination {
+                            *animation_time += delta_time;
+                            *animation_time -= f32::floor(*animation_time * animation_fps / (character_walk_textures.len() as f32))
+                                * character_walk_textures.len() as f32 / animation_fps;
+                            *direction = if dest.x - base.position.x >= 0.0 {
+                                Direction::Right
+                            } else {
+                                Direction::Left
+                            };
+                            frame = (*animation_time * character_walk_textures.len() as f32) as usize;
+                        }
+                    }
+                    let flip_dir: f32 = match direction {
+                        Direction::Left => -1.0,
+                        Direction::Right => 1.0
+                    };
+                    let offset = Vector2::new(0.0, -100.0);
+                    let matrix = graphics::make_matrix(base.position + offset, Vector2::new(flip_dir * 256.0, 256.0), 0.0);
+                    let color = match Some(*cid) == selected_char {
+                        true => Vector4::new(1.0, 1.0, 1.0, 1.0),
+                        false => Vector4::new(1.0, 0.9, 0.9, 1.0)
+                    };
+                    texture_render.render(
+                        &(game.ortho.as_matrix() * matrix),
                         &color,
+                        &character_walk_textures[frame],
                         graphics::VertexRange::Full
                     );
+
+                    // render player name below player
+                    if let Some(name) = game.character_name.get(cid) {
+                        let text_width = text.text_width(name.as_str());
+                        let offset = Vector2::new(-text_width / 2.0, 32.0);
+                        let sim = Similarity3::<f32>::new(
+                            Vector3::new(base.position.x + offset.x, base.position.y + offset.y, 0.0),
+                            Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+                            1.0
+                        );
+                        text.render(&(game.ortho.as_matrix() * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
+                    }
                 }
             }
 
@@ -266,42 +345,40 @@ impl Game<'_> {
                         game.chatbox.set_typing_flicker(true);
                         // game.chatbox.add_typing('/'); // this gets added automatically lol
                     },
-                    (State::DEFAULT, glfw::WindowEvent::Key(Key::G, _, Action::Press, _)) => {
-                        if let Some(cid) = selected_char {
-                            if let Some(cmd) = game.world.make_cmd_update_character(cid) {
-                                game.connection.send(Protocol::UDP, &cmd).ok();
-                            }
-                        }
-                    },
-                    (State::DEFAULT, glfw::WindowEvent::Key(Key::Tab, _, Action::Press, _)) => {
-                        let ids: Vec<&CharacterID> = game.world.characters.iter().collect();
-                        selected_char = match ids.len() {
-                            0 => None,
-                            _ => {
-                                let index = match selected_char {
-                                    None => 0,
-                                    Some(id) => {
-                                        let mut index = 0;
-                                        for i in 0..ids.len() {
-                                            if *ids[i] == id {
-                                                index = (i + 1) % ids.len();
-                                                break;
-                                            }
-                                        }
-                                        index
-                                    }
-                                };
-                                Some(*ids[index])
-                            }
-                        }
-                    },
+                    //(State::DEFAULT, glfw::WindowEvent::Key(Key::Tab, _, Action::Press, _)) => {
+                    //    let ids: Vec<&CharacterID> = game.world.characters.iter().collect();
+                    //    game.selected_char = match ids.len() {
+                    //        0 => None,
+                    //        _ => {
+                    //            let index = match game.selected_char {
+                    //                None => 0,
+                    //                Some(id) => {
+                    //                    let mut index = 0;
+                    //                    for i in 0..ids.len() {
+                    //                        if *ids[i] == id {
+                    //                            index = (i + 1) % ids.len();
+                    //                            break;
+                    //                        }
+                    //                    }
+                    //                    index
+                    //                }
+                    //            };
+                    //            Some(*ids[index])
+                    //        }
+                    //    }
+                    //},
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
                         if game.connection.is_connected() {
-                            if let Some(char_id) = selected_char {
-                                game.connection.send(Protocol::UDP, &MoveCharacterRequest {
-                                    id: char_id,
-                                    dest: game.mouse_pos,
-                                }).ok();
+                            if let Some(pid) = game.selected_player {
+                                if let Some(player) = game.world.players.get_player(&pid) {
+                                    if let Some(cid) = player.selected_char {
+                                        game.move_timer = 0.0;
+                                        game.connection.send(Protocol::UDP, &MoveCharacterRequest {
+                                            id: cid,
+                                            dest: game.mouse_pos,
+                                        }).ok();
+                                    }
+                                }
                             }
                         }
                     }
@@ -380,7 +457,7 @@ impl Game<'_> {
                     };
                     self.connection.send(Protocol::TCP, &PlayerLogIn {existing, name})?;
                     self.connection.send(Protocol::TCP, &PlayerSubs(PlayerSubCommand::SetSubs(vec![Subscription::Chat, Subscription::World])))?;
-                    // todo: generate character
+                    self.connection.send(Protocol::TCP, &EnsureCharacter)?;
                     Ok(None)
                 },
                 ["logout", ..] => {
@@ -436,7 +513,16 @@ impl Game<'_> {
                 },
                 ["listchar"] => {
                     self.connection.send(Protocol::TCP, &ListChar)?;
-                    Ok(Some(format!("Local:\n{}", {
+                    Ok(Some(format!("Selected: {}\nLocal:\n{}", {
+                        if let Some(player) = self.selected_player {
+                            match self.world.players.get_player(&player) {
+                                None => format!("Selected player not found: {:?}", player),
+                                Some(player) => format!("{:?}", player.selected_char)
+                            }
+                        } else {
+                            "No player selected".to_string()
+                        }
+                    }, {
                         let x: Vec<String> = self.world.characters.iter().map(
                             |cid| format!(
                                 "{:?}: base: {:?} health: {:?} move: {:?}",

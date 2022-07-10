@@ -52,7 +52,7 @@ fn shader() -> Shader {
         &vec![Attribute::Position]);
     let u_color = get_uniform(shader_program, "color");
     let u_matrix = get_uniform(shader_program, "matrix");
-    Shader { handle: shader_program, u_color: u_color, u_matrix: u_matrix }
+    Shader { handle: shader_program, u_color, u_matrix }
 }
 
 pub struct Renderer {
@@ -68,7 +68,7 @@ impl Renderer {
             GL_STATIC_DRAW
         );
         Renderer {
-            vao: vao,
+            vao,
             shader: shader()
         }
     }

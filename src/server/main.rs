@@ -1,7 +1,7 @@
 use std::time::Duration;
-use crate::model::Subscription;
+use crate::model::{Subscription, PrintError};
 use crate::model::commands::{GetCommandID, MakeBytes};
-use crate::model::player::commands::{ChatMessage, PlayerDataPayload};
+use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
 use crate::model::world::World;
 use crate::model::world::character::CharacterIDGenerator;
@@ -94,28 +94,33 @@ impl Server {
             } = server.connection.update();
 
             let updates: Vec<PlayerManagerUpdate> = server.player_manager.updates.drain(0..).collect();
+            let changed = !updates.is_empty();
             for update in updates {
                 match update {
-                    PlayerManagerUpdate::PlayerLogIn(player_id, _) => {
+                    PlayerManagerUpdate::PlayerLogIn(player_id, addr) => {
                         if let Some(player) = server.player_manager.get_player(&player_id) {
                             let name = String::from(&player.name);
                             server.broadcast(Subscription::Chat, Protocol::TCP, &ChatMessage(format!("{} logged in.", name)));
-                            server.broadcast(Subscription::Chat, Protocol::TCP, &PlayerDataPayload(server.player_manager.get_view()));
+                            server.connection.send(Protocol::TCP, &addr, &IndicateClientPlayer(Some(player_id))).print()
                         }
                     },
                     PlayerManagerUpdate::PlayerLogOut(player_id, addr) => {
                         if let Some(player) = server.player_manager.get_player(&player_id) {
                             let chat_msg = ChatMessage(format!("{} logged out.", player.name));
                             server.broadcast(Subscription::Chat, Protocol::TCP, &chat_msg);
-                            server.broadcast(Subscription::Chat, Protocol::TCP, &PlayerDataPayload(server.player_manager.get_view()));
                             // only send update to player if they are no longer logged into any
                             // accounts
                             if server.player_manager.get_connected_player(&addr).is_none() {
                                 server.connection.send(Protocol::TCP, &addr, &chat_msg).ok();
+                                server.connection.send(Protocol::TCP, &addr, &IndicateClientPlayer(None)).print()
                             }
                         }
-                    }
+                    },
+                    PlayerManagerUpdate::PlayerInfoUpdate(_) => ()
                 }
+            }
+            if changed {
+                server.broadcast(Subscription::Chat, Protocol::TCP, &PlayerDataPayload(server.player_manager.get_view()));
             }
 
             for addr in connects {

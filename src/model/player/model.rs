@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, fmt::Display, net::SocketAddr};
 use serde::{Serialize, Deserialize};
-use crate::model::Subscription;
+use crate::model::{Subscription, world::character::CharacterID};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TeamID(i32);
@@ -62,6 +62,7 @@ impl Default for PlayerIDGenerator {
 pub struct Player {
    pub id: PlayerID,
    pub name: String,
+   pub selected_char: Option<CharacterID>
 }
 
 
@@ -85,7 +86,8 @@ pub struct PlayerManager {
 
 pub enum PlayerManagerUpdate {
     PlayerLogIn(PlayerID, SocketAddr),
-    PlayerLogOut(PlayerID, SocketAddr)
+    PlayerLogOut(PlayerID, SocketAddr),
+    PlayerInfoUpdate(PlayerID)
 }
 
 impl PlayerManager {
@@ -129,8 +131,10 @@ impl PlayerManager {
 
         self.players.insert(id, Player {
             id,
-            name
+            name,
+            selected_char: None
         });
+        self.updates.push(PlayerManagerUpdate::PlayerInfoUpdate(id));
         self.map_existing_player(con.as_ref(), Some(&id));
         self.players.get_mut(&id).unwrap()
     }
@@ -218,11 +222,18 @@ impl PlayerManager {
     }
 
     pub fn get_player_mut(&mut self, id: &PlayerID) -> Option<&mut Player> {
+        self.updates.push(PlayerManagerUpdate::PlayerInfoUpdate(*id));
         self.players.get_mut(id)
     }
 
     pub fn get_player_with_name_mut(&mut self, name: &str) -> Option<&mut Player> {
-        self.players.values_mut().find(|player| player.name == name)
+        if let Some(player) = self.players.values().find(|player| player.name == name) {
+            let id = player.id;
+            self.updates.push(PlayerManagerUpdate::PlayerInfoUpdate(id));
+            self.players.get_mut(&id)
+        } else {
+            None
+        }
     }
 
     pub fn get_player_subscriptions_mut(&mut self, id: &PlayerID) -> Option<&mut HashSet<Subscription>> {

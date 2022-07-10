@@ -1,7 +1,8 @@
-use std::{collections::HashMap, net::SocketAddr};
+use std::collections::HashMap;
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-use crate::{model::{commands::GetCommandID, player::{server::PlayerCommand, model::PlayerID, commands::ChatMessage}, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
+
+use crate::model::commands::GetCommandID;
 
 use super::{World, character::{CharacterID, CharacterIDGenerator, self}, component::{ComponentID, CharacterHealth, CharacterBase}, WorldError, system::movement::Movement};
 
@@ -35,7 +36,7 @@ impl UpdateCharacter {
 pub struct GenerateCharacter;
 
 impl GenerateCharacter {
-    pub fn new() -> Self {
+    pub fn new(indicate: bool) -> Self {
         GenerateCharacter
     }
     pub fn generate_character(world: &mut World, idgen: &mut CharacterIDGenerator) -> CharacterID {
@@ -64,7 +65,7 @@ impl GetCommandID for GenerateCharacter {
 
 impl Default for GenerateCharacter {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
@@ -77,17 +78,12 @@ impl GetCommandID for ListChar {
     }
 }
 
-impl<'a> PlayerCommand<'a> for ListChar {
-    const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::TCP);
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EnsureCharacter;
 
-    fn run(self, addr: &SocketAddr, _: &PlayerID, server: &mut Server) {
-        server.connection.send(Protocol::TCP, addr, &ChatMessage(
-            format!("Character list:\n{}", {
-                let x: Vec<String> = server.world.characters.iter().map(
-                    |cid| format!("{:?}", cid)
-                ).collect();
-                x.join(", ")
-            })
-        )).print();
+impl GetCommandID for EnsureCharacter {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        crate::model::commands::CommandID::EnsureCharacter
     }
 }
+

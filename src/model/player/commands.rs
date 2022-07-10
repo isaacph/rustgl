@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 use crate::model::{Subscription, commands::{GetCommandID, CommandID}};
-use super::model::PlayerData;
+use super::model::{PlayerData, PlayerID};
 
 #[derive(Serialize, Deserialize)]
 pub struct ChatMessage(pub String);
@@ -64,5 +64,14 @@ impl GetCommandID for PlayerLogOut {
 impl GetCommandID for PlayerSubs {
     fn command_id(&self) -> crate::model::commands::CommandID {
         CommandID::PlayerSubs
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct IndicateClientPlayer(pub Option<PlayerID>);
+
+impl GetCommandID for IndicateClientPlayer {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        CommandID::IndicateClientPlayer
     }
 }

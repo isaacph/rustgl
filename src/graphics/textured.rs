@@ -94,7 +94,7 @@ impl Renderer {
         ].to_vec())
     }
 
-    pub fn render(&self, matrix: Matrix4<f32>, color: Vector4<f32>, texture: &Texture, range: VertexRange) {
+    pub fn render(&self, matrix: &Matrix4<f32>, color: &Vector4<f32>, texture: &Texture, range: VertexRange) {
         unsafe {
             glUseProgram(self.shader.handle);
             glUniformMatrix4fv(self.shader.u_matrix, 1, GL_FALSE, matrix.as_slice().as_ptr());

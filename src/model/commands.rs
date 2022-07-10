@@ -24,6 +24,8 @@ pub enum CommandID {
     GenerateCharacter,
     MoveCharacterRequest,
     ListChar,
+    EnsureCharacter,
+    IndicateClientPlayer,
 
     // commands to run on client
     SendAddress,

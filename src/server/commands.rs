@@ -51,7 +51,7 @@ pub fn execute_server_command(command: &[u8], context: ((Protocol, &SocketAddr),
 
     use crate::model::commands::CommandID::*;
     match CommandID::try_from(id_num) {
-        Ok(id) => match (|| match id {
+        Ok(id) => match match id {
             // place all command deserializations here
             GetAddress => drun::<crate::model::commands::core::GetAddress>(data, context),
             SetUDPAddress => drun::<crate::model::commands::core::SetUDPAddress>(data, context),
@@ -66,17 +66,18 @@ pub fn execute_server_command(command: &[u8], context: ((Protocol, &SocketAddr),
             // UpdateCharacter => drun::<crate::model::world::commands::UpdateCharacter>(data, context),
             // MoveCharacter => drun_w::<crate::model::world::system::movement::MoveCharacter>(data, context),
             MoveCharacterRequest => drun::<crate::model::world::system::movement::MoveCharacterRequest>(data, context),
+            EnsureCharacter => drun::<crate::model::world::commands::EnsureCharacter>(data, context),
             _ => {
                 println!("Command ID not implemented on server: {:?}", id);
                 Ok(())
             }
-        })() {
+        } {
             Ok(()) => Ok(()),
             // handle bincode error
-            Err(err) => Err(format!("Bincode deserialize fail: {}", err.to_string()))
+            Err(err) => Err(format!("Bincode deserialize fail: {}", err))
         },
         // handle id not found error
-        Err(err) => Err(format!("Failure to find server command ID: {}", err.to_string()))
+        Err(err) => Err(format!("Failure to find server command ID: {}", err))
     }
 }
 
