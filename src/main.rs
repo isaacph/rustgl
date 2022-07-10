@@ -11,6 +11,7 @@ pub mod server;
 // pub mod server;
 // pub mod world;
 
+use std::net::ToSocketAddrs;
 use std::{io::Result, net::SocketAddr};
 use std::env;
 use std::io::{self, Write};
@@ -29,9 +30,10 @@ pub fn grab_console_line(prompt: &str) -> String {
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    let auto_addr = Some(("neotrias.link:1234".to_socket_addrs().unwrap().next().unwrap(), "neotrias.link:1235".to_socket_addrs().unwrap().next().unwrap()));
     match args[1].as_str() {
         "client" => {
-            game::Game::run();
+            game::Game::run(auto_addr);
         },
         _ => {
             let ports: (u16, u16) =

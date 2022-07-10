@@ -10,7 +10,7 @@ use crate::{
     model::{world::{
         World,
         character::CharacterID, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::movement::MoveCharacterRequest,
-    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}, self}}, networking::{client::ClientUpdate, Protocol},
+    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
@@ -39,7 +39,7 @@ pub struct Game<'a> {
 }
 
 impl Game<'_> {
-    pub fn run() {
+    pub fn run(addr: Option<(SocketAddr, SocketAddr)>) {
         let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
         let (width, height) = (800, 600);
 
@@ -85,6 +85,12 @@ impl Game<'_> {
             selected_player: None,
             character_name: HashMap::new()
         };
+
+        if let Some((udp_addr, tcp_addr)) = addr {
+            game.chatbox.println("Autoconnecting to server...");
+            game.connection.connect(udp_addr, tcp_addr);
+        }
+
         game.window_size(width, height);
         let render = graphics::textured::Renderer::new_square();
 
