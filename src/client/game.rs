@@ -158,6 +158,8 @@ impl Game<'_> {
                 match update {
                     ClientUpdate::Error(err) => game.chatbox.println(format!("Connection error: {}", err).as_str()),
                     ClientUpdate::Log(log) => println!("{}", log),
+                    ClientUpdate::LogExtra(_) => (), // if you uncomment this, you will get windows
+                                                     // alarm spam
                     ClientUpdate::Message(protocol, message) => {
                         match execute_client_command(&message, (protocol, &mut game)) {
                             Ok(()) => (),

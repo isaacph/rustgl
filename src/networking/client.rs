@@ -30,6 +30,7 @@ pub enum ClientUpdate {
     Disconnected(Option<ClientError>),
     PreventedReconnection(Option<ClientError>),
     Log(String),
+    LogExtra(String),
     Error(ClientError),
     Message(Protocol, Box<[u8]>)
 }
@@ -121,7 +122,8 @@ impl Client {
             let (recv, err) = udp_recv_all(&con.udp, con.recv_buffer.as_mut(), Some(MAX_PACKETS_PROCESS));
             for (addr, recvd) in recv {
                 for message in recvd {
-                    updates.push(ClientUpdate::Log(format!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(message.as_ref()))));
+                    updates.push(ClientUpdate::LogExtra(format!("Received UDP from {:?}: {}", addr, String::from_utf8_lossy(message.as_ref()))));
+                    updates.push(ClientUpdate::Log(format!("Received UDP from {:?} length {}", addr, message.len())));
                     updates.push(ClientUpdate::Message(Protocol::UDP, message));
                 }
             }
@@ -142,7 +144,13 @@ impl Client {
             let mut processed = 0;
             while let Some(message) = con.udp_message_queue.pop_front() {
                 match con.udp.send_to(message.as_ref(), &con.remote_addr_udp) {
-                    Ok(sent) => updates.push(ClientUpdate::Log(format!("Sent UDP {} bytes", sent))),
+                    Ok(sent) => {
+                        updates.push(ClientUpdate::LogExtra(format!(
+                                    "Sent UDP to {:?}: {}",
+                                    con.remote_addr_udp,
+                                    String::from_utf8_lossy(&message))));
+                        updates.push(ClientUpdate::Log(format!("Sent UDP {} bytes", sent)))
+                    },
                     Err(err) => {
                         con.udp_message_queue.push_front(message);
                         return match err.kind() {
@@ -179,7 +187,8 @@ impl Client {
                             updates.push(ClientUpdate::Log(format!("Received TCP bytes length: {}", size)));
                             for data in con.tcp_recv.receive(&con.recv_buffer[0..size]) {
                                 let str = String::from_utf8_lossy(&data[0..cmp::min(data.len(), 1024)]);
-                                updates.push(ClientUpdate::Log(format!("Received full message TCP length {} from {}: {}", data.len(), con.remote_addr_tcp, str)));
+                                updates.push(ClientUpdate::LogExtra(format!("Received full message TCP length {} from {}: {}", data.len(), con.remote_addr_tcp, str)));
+                                updates.push(ClientUpdate::Log(format!("Received full message TCP length {} from {}", data.len(), con.remote_addr_tcp)));
                                 updates.push(ClientUpdate::Message(Protocol::TCP, data));
                             }
                             approx_packets += 1 + (size - 1) / 1024;
