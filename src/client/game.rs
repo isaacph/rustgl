@@ -37,7 +37,8 @@ pub struct Game<'a> {
     pub move_timer: f32,
     pub selected_player: Option<PlayerID>,
     pub character_name: HashMap<CharacterID, String>,
-    pub camera: CameraContext
+    pub camera: CameraContext,
+    pub ui_scale: f32
 }
 
 impl Game<'_> {
@@ -79,30 +80,34 @@ impl Game<'_> {
             .collect();
         let simple_render = graphics::simple::Renderer::new_square();
         let texture_render = graphics::textured::Renderer::new_square();
-        let mut game = Game {
-            window_size: Vector2::<i32>::new(start_width, start_height),
-            chatbox: chatbox::Chatbox::new({
-                let approx_font_size = 32.0;
-                match text.range((Included(approx_font_size as i32), Unbounded)).next() {
-                    Some((_, font)) => &font,
-                    None => text.iter().next().expect("No fonts loaded").1
-                }
-            }, &simple_render, 7, 40, 800.0),
-            state: State::DEFAULT,
-            world: World::new(),
-            connection: Connection::init_disconnected(),
-            finding_addr: true,
-            finding_addr_timer: 0.0,
-            mouse_pos: Vector2::<f32>::new(0.0, 0.0),
-            mouse_pos_world: Vector2::<f32>::new(0.0, 0.0),
-            move_timer: 0.0,
-            selected_player: None,
-            character_name: HashMap::new(),
-            camera: CameraContext {
-                width: start_width,
-                height: start_height,
-                position: Vector2::new(0.0, 0.0),
-                zoom: 4.0
+        let mut game = {
+            let ui_scale = 32.0;
+            Game {
+                window_size: Vector2::<i32>::new(start_width, start_height),
+                chatbox: chatbox::Chatbox::new({
+                    let approx_font_size = ui_scale;
+                    match text.range((Included(approx_font_size as i32), Unbounded)).next() {
+                        Some((_, font)) => font,
+                        None => text.iter().next().expect("No fonts loaded").1
+                    }
+                }, &simple_render, 7, 40, 800.0),
+                state: State::DEFAULT,
+                world: World::new(),
+                connection: Connection::init_disconnected(),
+                finding_addr: true,
+                finding_addr_timer: 0.0,
+                mouse_pos: Vector2::<f32>::new(0.0, 0.0),
+                mouse_pos_world: Vector2::<f32>::new(0.0, 0.0),
+                move_timer: 0.0,
+                selected_player: None,
+                character_name: HashMap::new(),
+                camera: CameraContext {
+                    width: start_width,
+                    height: start_height,
+                    position: Vector2::new(0.0, 0.0),
+                    zoom: 4.0
+                },
+                ui_scale
             }
         };
 
@@ -112,14 +117,14 @@ impl Game<'_> {
         }
 
         game.window_size(start_width, start_height);
-        let render = graphics::textured::Renderer::new_square();
+        // let render = graphics::textured::Renderer::new_square();
 
         // let mut texture_library = graphics::TextureLibrary::new();
         // let texture = texture_library.make_texture("tree.png");
         game.chatbox.println("Hello");
 
-        let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
-        let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
+        // let fontinfo = graphics::text::make_font(&font_library, "arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
+        // let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
 
         let character_walk_textures: Vec<graphics::Texture> = (1..=12).map(
             |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str())
@@ -197,10 +202,10 @@ impl Game<'_> {
             }
 
             // draw
-            let approx_font_size = std::cmp::min(game.window_size.x, game.window_size.y) as f32 / 20.0;
+            let approx_font_size = game.ui_scale;
             let x = (Included(approx_font_size as i32), Unbounded);
             let game_font = match text.range(x).next() {
-                Some((_, font)) => &font,
+                Some((_, font)) => font,
                 None => {
                     text.iter().next_back().expect("No fonts loaded").1
                 }
@@ -224,7 +229,7 @@ impl Game<'_> {
             };
 
             game.move_timer += delta_time;
-            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press {
+            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonLeft) == glfw::Action::Press {
                 if let Some(pid) = game.selected_player {
                     if let Some(player) = game.world.players.get_player(&pid) {
                         if let Some(cid) = player.selected_char {
@@ -401,7 +406,7 @@ impl Game<'_> {
                     //        }
                     //    }
                     //},
-                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
