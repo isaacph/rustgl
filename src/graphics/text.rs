@@ -6,7 +6,7 @@ use nalgebra::{Vector2, Translation3};
 use crate::graphics::*;
 use freetype_sys::{FT_Library, FT_Init_FreeType, FT_Done_FreeType, FT_Face, FT_New_Memory_Face, FT_Set_Pixel_Sizes, FT_Get_Char_Index, FT_UInt, FT_LOAD_DEFAULT, FT_Load_Glyph, FT_GLYPH_FORMAT_BITMAP, FT_Render_Glyph, FT_RENDER_MODE_NORMAL, FT_Glyph_Metrics, FT_Pos};
 
-use self::packing::{GlyphSize, GlyphPacking};
+use self::packing::{GlyphSize, GlyphPacking, GlyphInfo};
 
 pub fn default_characters() -> Vec<char> {
     let mut chars = vec![0];
@@ -157,7 +157,7 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
         }
         let load_flags = FT_LOAD_DEFAULT;
         let mut found_not_found_char = false;
-        let glyphs = char_codes.map(|c| {
+        let glyphs: Vec<GlyphBitmap> = char_codes.map(|c| {
             // load glyph
             // check if it fulfills the not_found_char requirement (if needed)
             match not_found_char {
@@ -215,8 +215,17 @@ pub fn make_font<'a, T>(library: &FontLibrary, path: &str, font_size: i32, char_
             _ => ()
         }
 
+        // make this padded thing pad each glyph by 1 px, and then send it to do_font_packing
+        let padded: Vec<GlyphInfo<u32>> = glyphs.iter().map(|glyph| {
+            GlyphInfo {
+                id: glyph.char_index,
+                width: glyph.width as u32 + 1,
+                height: glyph.height as u32 + 1
+            }
+        }).collect();
+
         // pack the glyphs
-        let packing = match packing::do_font_packing(&glyphs) {
+        let packing = match packing::do_font_packing(&padded) {
             Some(packing) => packing,
             None => panic!("Error loading font {} size {}: could not pack", path, font_size)
         };
@@ -362,10 +371,13 @@ impl Font {
                 let index = index_counter;
                 index_map.insert(*c, index);
 
-                let min_u = data.glyph_pos.x / info.image_size.x as f32;
-                let min_v = data.glyph_pos.y / info.image_size.y as f32;
-                let max_u = min_u + data.glyph_size.x / info.image_size.x as f32;
-                let max_v = min_v + data.glyph_size.y / info.image_size.y as f32;
+                // not needed with padding added
+                let margin = 0.0;
+
+                let min_u = data.glyph_pos.x / info.image_size.x as f32 + margin;
+                let min_v = data.glyph_pos.y / info.image_size.y as f32 + margin;
+                let max_u = min_u + data.glyph_size.x / info.image_size.x as f32 - margin;
+                let max_v = min_v + data.glyph_size.y / info.image_size.y as f32 - margin;
                 let min_x = 0.0;
                 let min_y = 0.0;
                 let max_x = min_x + data.glyph_size.x;

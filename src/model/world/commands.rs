@@ -36,7 +36,7 @@ impl UpdateCharacter {
 pub struct GenerateCharacter;
 
 impl GenerateCharacter {
-    pub fn new(indicate: bool) -> Self {
+    pub fn new() -> Self {
         GenerateCharacter
     }
     pub fn generate_character(world: &mut World, idgen: &mut CharacterIDGenerator) -> CharacterID {
@@ -44,8 +44,8 @@ impl GenerateCharacter {
         world.characters.insert(id);
         world.base.components.insert(id, CharacterBase {
             ctype: character::CharacterType::HERO,
-            position: Vector2::new(200.0, 200.0),
-            speed: 200.0
+            position: Vector2::new(0.0, 0.0),
+            speed: 1.0
         });
         world.health.components.insert(id, CharacterHealth {
             health: 100.0
@@ -65,7 +65,7 @@ impl GetCommandID for GenerateCharacter {
 
 impl Default for GenerateCharacter {
     fn default() -> Self {
-        Self::new(false)
+        Self::new()
     }
 }
 

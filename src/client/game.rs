@@ -1,12 +1,13 @@
-use nalgebra::{Vector2, Orthographic3};
+use nalgebra::Vector2;
 use ogl33::glViewport;
-use std::{ffi::CStr, str::FromStr, net::SocketAddr, collections::HashMap};
+use std::{ffi::CStr, str::FromStr, net::SocketAddr, collections::{HashMap, BTreeMap}};
+use std::ops::Bound::{Included, Unbounded};
 use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use crate::{
     graphics,
-    client::{chatbox, commands::execute_client_command},
+    client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
         character::CharacterID, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::movement::MoveCharacterRequest,
@@ -25,7 +26,6 @@ pub enum State {
 
 pub struct Game<'a> {
     pub window_size: Vector2<i32>,
-    pub ortho: Orthographic3<f32>,
     pub chatbox: chatbox::Chatbox<'a>,
     pub state: State,
     pub world: World,
@@ -33,22 +33,24 @@ pub struct Game<'a> {
     pub finding_addr: bool,
     pub finding_addr_timer: f32,
     pub mouse_pos: Vector2<f32>,
+    pub mouse_pos_world: Vector2<f32>,
     pub move_timer: f32,
     pub selected_player: Option<PlayerID>,
-    pub character_name: HashMap<CharacterID, String>
+    pub character_name: HashMap<CharacterID, String>,
+    pub camera: CameraContext
 }
 
 impl Game<'_> {
     pub fn run(addr: Option<(SocketAddr, SocketAddr)>) {
         let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
-        let (width, height) = (800, 600);
+        let (start_width, start_height) = (800, 600);
 
         glfw.window_hint(glfw::WindowHint::ContextVersionMajor(3));
         glfw.window_hint(glfw::WindowHint::ContextVersionMinor(3));
         glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
         let (mut window, events) = 
-            glfw.create_window(width as u32, height as u32, "Hello Window",
+            glfw.create_window(start_width as u32, start_height as u32, "Hello Window",
                 glfw::WindowMode::Windowed)
                 .expect("Failed to create GLFW window.");
 
@@ -68,22 +70,40 @@ impl Game<'_> {
 
         let mut font_library = graphics::text::FontLibrary::new();
         let mut texture_library = graphics::TextureLibrary::new();
-        let text = font_library.make_font("arial.ttf", 32, graphics::text::default_characters().iter(), Some('\0'));
+        let text: BTreeMap<i32, graphics::text::Font> = (8..=48).step_by(4).map(
+            |i| (i, font_library.make_font(
+                "arial.ttf",
+                i,
+                graphics::text::default_characters().iter(),
+                Some('\0'))))
+            .collect();
         let simple_render = graphics::simple::Renderer::new_square();
         let texture_render = graphics::textured::Renderer::new_square();
         let mut game = Game {
-            window_size: Vector2::<i32>::new(width, height),
-            ortho: Orthographic3::<f32>::new(0.0, width as f32, height as f32, 0.0, 0.0, 1.0),
-            chatbox: chatbox::Chatbox::new(&text, &simple_render, 7, 40, 800.0),
+            window_size: Vector2::<i32>::new(start_width, start_height),
+            chatbox: chatbox::Chatbox::new({
+                let approx_font_size = 32.0;
+                match text.range((Included(approx_font_size as i32), Unbounded)).next() {
+                    Some((_, font)) => &font,
+                    None => text.iter().next().expect("No fonts loaded").1
+                }
+            }, &simple_render, 7, 40, 800.0),
             state: State::DEFAULT,
             world: World::new(),
             connection: Connection::init_disconnected(),
             finding_addr: true,
             finding_addr_timer: 0.0,
             mouse_pos: Vector2::<f32>::new(0.0, 0.0),
+            mouse_pos_world: Vector2::<f32>::new(0.0, 0.0),
             move_timer: 0.0,
             selected_player: None,
-            character_name: HashMap::new()
+            character_name: HashMap::new(),
+            camera: CameraContext {
+                width: start_width,
+                height: start_height,
+                position: Vector2::new(0.0, 0.0),
+                zoom: 4.0
+            }
         };
 
         if let Some((udp_addr, tcp_addr)) = addr {
@@ -91,7 +111,7 @@ impl Game<'_> {
             game.connection.connect(udp_addr, tcp_addr);
         }
 
-        game.window_size(width, height);
+        game.window_size(start_width, start_height);
         let render = graphics::textured::Renderer::new_square();
 
         // let mut texture_library = graphics::TextureLibrary::new();
@@ -144,6 +164,7 @@ impl Game<'_> {
                 let (x, y) = window.get_cursor_pos();
                 Vector2::new(x as f32, y as f32)
             };
+            game.mouse_pos_world = game.camera.view_to_world_pos(game.mouse_pos);
 
             // UDP address pings: send GetAddress -> receive SetAddress ->
             //   falsify game.finding_addr and send SetAddress
@@ -158,7 +179,7 @@ impl Game<'_> {
                 match update {
                     ClientUpdate::Error(err) => game.chatbox.println(format!("Connection error: {}", err).as_str()),
                     ClientUpdate::Log(log) => println!("{}", log),
-                    ClientUpdate::LogExtra(_) => (), // if you uncomment this, you will get windows
+                    ClientUpdate::LogExtra(_) => (), // if you print this, you will get windows
                                                      // alarm spam
                     ClientUpdate::Message(protocol, message) => {
                         match execute_client_command(&message, (protocol, &mut game)) {
@@ -175,34 +196,20 @@ impl Game<'_> {
                 println!("Client world error: {:?}", error);
             }
 
-            // update logic
-            // let key_dir = {
-            //     let w = match window.get_key(Key::W) { Action::Press => 1.0, _ => 0.0 };
-            //     let s = match window.get_key(Key::S) { Action::Press => 1.0, _ => 0.0 };
-            //     let a = match window.get_key(Key::A) { Action::Press => 1.0, _ => 0.0 };
-            //     let d = match window.get_key(Key::D) { Action::Press => 1.0, _ => 0.0 };
-            //     let mut v = Vector2::<f32>::new(d - a, s - w);
-            //     if v.magnitude_squared() > 0.0 {
-            //         v.normalize_mut();
-            //     }
-            //     v
-            // };
-            // if let Some(char_id) = selected_char {
-            //     // if let Some(base) = game.world.base.components.get_mut(&char_id) {
-            //     //     base.position += key_dir * delta_time as f32 * 100.0;
-            //     // }
-            // }
+            // draw
+            let approx_font_size = std::cmp::min(game.window_size.x, game.window_size.y) as f32 / 20.0;
+            let x = (Included(approx_font_size as i32), Unbounded);
+            let game_font = match text.range(x).next() {
+                Some((_, font)) => &font,
+                None => {
+                    text.iter().next_back().expect("No fonts loaded").1
+                }
+            };
 
-            // random text
-            let sim = Similarity3::<f32>::new(
-                Vector3::new(100.0, 500.0, 0.0),
-                Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
-                1.0
-            );
-            let matrix = game.ortho.as_matrix() * sim.to_homogeneous();
-            let msg = String::from("Hihfas \u{2122} dhofhoas dohfaho hoh7o  H&AH&*( (&*DF(&SD(&*F&*(SD^*(F(&^!)*#$^&$^!_$^)$&*)RUHR\"");
-            let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
-            text.render(&matrix, msg.as_str(), &color);
+            let CameraMatrix {
+                proj, view
+            } = game.camera.matrix();
+            let proj_view = proj * view;
 
             let selected_char = {
                 let mut c = None;
@@ -217,32 +224,43 @@ impl Game<'_> {
             };
 
             game.move_timer += delta_time;
-            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonLeft) == glfw::Action::Press {
+            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press {
                 if let Some(pid) = game.selected_player {
                     if let Some(player) = game.world.players.get_player(&pid) {
                         if let Some(cid) = player.selected_char {
                             game.move_timer = 0.0;
                             game.connection.send(Protocol::UDP, &MoveCharacterRequest {
                                 id: cid,
-                                dest: game.mouse_pos,
+                                dest: game.mouse_pos_world,
                             }).ok();
                         }
                     }
                 }
             }
 
+            // random text
+            // let sim = Similarity3::<f32>::new(
+            //     Vector3::new(100.0, 500.0, 0.0),
+            //     Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+            //     1.0
+            // );
+            // let matrix = proj_view * sim.to_homogeneous();
+            // let msg = String::from("Hihfas \u{2122} dhofhoas dohfaho hoh7o  H&AH&*( (&*DF(&SD(&*F&*(SD^*(F(&^!)*#$^&$^!_$^)$&*)RUHR\"");
+            // let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
+            // text.render(&matrix, msg.as_str(), &color);
+
             // font spritesheet
-            let sim = Similarity3::<f32>::new(
-                Vector3::new(400.0, 400.0, 0.0),
-                Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
-                800.0
-            );
-            render.render(
-                &(game.ortho.as_matrix() * sim.to_homogeneous()),
-                &Vector4::new(1.0, 1.0, 1.0, 1.0),
-                &font_texture,
-                graphics::VertexRange::Full
-            );
+            // let sim = Similarity3::<f32>::new(
+            //     Vector3::new(400.0, 400.0, 0.0),
+            //     Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+            //     800.0
+            // );
+            // render.render(
+            //     &(proj * sim.to_homogeneous()),
+            //     &Vector4::new(1.0, 1.0, 1.0, 1.0),
+            //     &font_texture,
+            //     graphics::VertexRange::Full
+            // );
 
             // characters
             for cid in &game.world.characters {
@@ -275,14 +293,19 @@ impl Game<'_> {
                         Direction::Left => -1.0,
                         Direction::Right => 1.0
                     };
-                    let offset = Vector2::new(0.0, -100.0);
-                    let matrix = graphics::make_matrix(base.position + offset, Vector2::new(flip_dir * 256.0, 256.0), 0.0);
+                    let player_scale = 1.0;
+                    let offset = Vector2::new(0.0, -100.0 / 256.0 * player_scale);
+                    let matrix = graphics::make_matrix(
+                        base.position + offset,
+                        Vector2::new(flip_dir * player_scale, player_scale),
+                        0.0
+                    );
                     let color = match Some(*cid) == selected_char {
                         true => Vector4::new(1.0, 1.0, 1.0, 1.0),
                         false => Vector4::new(1.0, 0.9, 0.9, 1.0)
                     };
                     texture_render.render(
-                        &(game.ortho.as_matrix() * matrix),
+                        &(proj_view * matrix),
                         &color,
                         &character_walk_textures[frame],
                         graphics::VertexRange::Full
@@ -290,27 +313,30 @@ impl Game<'_> {
 
                     // render player name below player
                     if let Some(name) = game.character_name.get(cid) {
-                        let text_width = text.text_width(name.as_str());
-                        let offset = Vector2::new(-text_width / 2.0, 32.0);
+                        let text_width = game_font.text_width(name.as_str());
+                        let player_view_pos = game.camera.world_to_view_pos(base.position);
+                        let offset = Vector2::new(-text_width / 2.0, game_font.line_height());
                         let sim = Similarity3::<f32>::new(
-                            Vector3::new(base.position.x + offset.x, base.position.y + offset.y, 0.0),
+                            Vector3::new(player_view_pos.x + offset.x, player_view_pos.y + offset.y, 0.0),
                             Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
                             1.0
                         );
-                        text.render(&(game.ortho.as_matrix() * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
+                        game_font.render(&(proj * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
                     }
                 }
             }
 
-            game.chatbox.render(game.ortho.as_matrix(), delta_time);
+            game.chatbox.render(&proj, delta_time);
 
             // show fps
+            let msg = format!("FPS: {}  ", fps);
+            let fps_width = game_font.text_width(msg.as_str());
             let sim = Similarity3::<f32>::new(
-                Vector3::new(width as f32 - 80.0, 60.0, 0.0),
+                Vector3::new(game.window_size.x as f32 - fps_width, game_font.line_height(), 0.0),
                 Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
                 1.0
             );
-            text.render(&(game.ortho.as_matrix() * sim.to_homogeneous()), format!("FPS: {}", fps).as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
+            game_font.render(&(proj * sim.to_homogeneous()), msg.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
 
             window.swap_buffers();
             glfw.poll_events();
@@ -375,7 +401,7 @@ impl Game<'_> {
                     //        }
                     //    }
                     //},
-                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
@@ -383,7 +409,7 @@ impl Game<'_> {
                                         game.move_timer = 0.0;
                                         game.connection.send(Protocol::UDP, &MoveCharacterRequest {
                                             id: cid,
-                                            dest: game.mouse_pos,
+                                            dest: game.mouse_pos_world,
                                         }).ok();
                                     }
                                 }
@@ -399,8 +425,8 @@ impl Game<'_> {
     pub fn window_size(&mut self, width: i32, height: i32) {
         self.window_size.x = width;
         self.window_size.y = height;
-        self.ortho.set_right(width as f32);
-        self.ortho.set_bottom(height as f32);
+        self.camera.width = width;
+        self.camera.height = height;
         unsafe {
             glViewport(0, 0, width, height);
         }

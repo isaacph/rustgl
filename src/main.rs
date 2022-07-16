@@ -35,7 +35,12 @@ pub fn grab_console_line(prompt: &str) -> String {
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let auto_addr = Some(("test.neotrias.link:1234".to_socket_addrs().unwrap().next().unwrap(), "test.neotrias.link:1235".to_socket_addrs().unwrap().next().unwrap()));
+    // let auto_addr_str = ("test.neotrias.link:1234", "test.neotrias.link:1235");
+    let auto_addr_str = ("127.0.0.1:1234", "127.0.0.1:1235");
+    let auto_addr = Some((
+        auto_addr_str.0.to_socket_addrs().unwrap().next().unwrap(),
+        auto_addr_str.1.to_socket_addrs().unwrap().next().unwrap()
+    ));
     if args.len() == 1 {
         #[cfg(feature = "client")]
         game::Game::run(auto_addr);
@@ -47,9 +52,10 @@ fn main() -> Result<()> {
             game::Game::run(auto_addr);
         },
         _ => {
-            let ports: (u16, u16) =
-                        (grab_console_line("UDP port: ").parse().expect("Invalid port"),
-                         grab_console_line("TCP port: ").parse().expect("Invalid port"));
+            let ports = (1234, 1235);
+            // let ports: (u16, u16) =
+            //             (grab_console_line("UDP port: ").parse().expect("Invalid port"),
+            //              grab_console_line("TCP port: ").parse().expect("Invalid port"));
             let addresses: (SocketAddr, SocketAddr) = (
                 format!("127.0.0.1:{}", ports.0).parse().unwrap(),
                 format!("127.0.0.1:{}", ports.1).parse().unwrap()

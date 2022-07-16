@@ -10,10 +10,10 @@ pub trait GlyphSize<ID> {
     fn height(&self) -> Coord;
 }
 
-struct GlyphInfo<ID: Eq + Hash> {
-    id: ID,
-    width: Coord,
-    height: Coord
+pub struct GlyphInfo<ID: Eq + Hash> {
+    pub id: ID,
+    pub width: Coord,
+    pub height: Coord
 }
 
 impl<ID: Eq + Hash + Clone> GlyphInfo<ID> {
