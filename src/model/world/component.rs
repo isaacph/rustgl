@@ -10,7 +10,8 @@ use strum_macros::EnumIter;
 pub enum ComponentID {
     Base,
     Health,
-    Movement
+    Movement,
+    IceWiz,
 }
 
 impl Display for ComponentID {

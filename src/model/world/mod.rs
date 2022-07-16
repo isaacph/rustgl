@@ -138,6 +138,7 @@ impl World {
             ComponentID::Base => ser(&self.base, id),
             ComponentID::Health => ser(&self.health, id),
             ComponentID::Movement => ser(&self.movement, id),
+            ComponentID::IceWiz => ser(&self.icewiz, id),
             // _ => panic!("Serialization not implemented for component id: {}", cid)
         }
     }
@@ -158,6 +159,7 @@ impl World {
             ComponentID::Base => insert(&mut self.base, id, cid, data),
             ComponentID::Health => insert(&mut self.health, id, cid, data),
             ComponentID::Movement => insert(&mut self.movement, id, cid, data),
+            ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }

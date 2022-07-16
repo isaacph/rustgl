@@ -39,6 +39,7 @@ impl CharacterCreator for IceWizCreator {
         world.movement.components.insert(id, Movement {
             destination: None
         });
+        world.icewiz.components.insert(id, IceWiz {});
     }
 }
 
