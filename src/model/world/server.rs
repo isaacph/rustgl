@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::{model::{player::{server::PlayerCommand, model::{PlayerID, PlayerDataView}, commands::ChatMessage}, Subscription, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
-use super::commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter};
+use super::{commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter}, character::CharacterType};
 
 impl<'a> PlayerCommand<'a> for UpdateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
@@ -17,7 +17,21 @@ impl<'a> PlayerCommand<'a> for GenerateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
 
     fn run(self, tcp_addr: &std::net::SocketAddr, player_id: &PlayerID, server: &mut Server) {
-        let id = Self::generate_character(&mut server.world, &mut server.character_id_gen);
+        let id = match server.world.create_character(&mut server.character_id_gen, self.0) {
+            Ok(id) => {
+                server.connection.send(
+                    Protocol::TCP,
+                    tcp_addr,
+                    &ChatMessage(format!("Character generated, ID: {:?}", id))
+                ).print();
+                id
+            },
+            Err(err) => return server.connection.send(
+                Protocol::TCP,
+                tcp_addr,
+                &ChatMessage(format!("Failed to generate character: {:?}", err))
+            ).print()
+        };
         if let Some(cmd) = server.world.make_cmd_update_character(id) {
             server.broadcast(Subscription::World, Protocol::UDP, &cmd);
             match server.player_manager.get_player_mut(player_id) {
@@ -53,7 +67,7 @@ impl<'a> PlayerCommand<'a> for EnsureCharacter {
             Some(player) => {
                 if player.selected_char.is_none() {
                     match server.player_manager.get_player_mut(pid) {
-                        Some(player) => GenerateCharacter.run(addr, pid, server),
+                        Some(_) => GenerateCharacter(CharacterType::IceWiz).run(addr, pid, server),
                         None => server.connection.send(Protocol::TCP, addr, &ChatMessage("Player not found".to_string())).print()
                     }
                 }

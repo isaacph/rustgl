@@ -7,14 +7,31 @@ use self::{
 //        TeamID,
 //        Team, PlayerData
 //    },
-    character::CharacterID,
+    character::{CharacterID, CharacterType, CharacterIDGenerator},
     component::{
         CharacterBase,
         ComponentStorage,
         ComponentID,
         CharacterHealth,
         ComponentStorageContainer
-    }, commands::{UpdateCharacter, WorldCommand}, system::movement::{Movement, movement_system_update}
+    },
+    commands::{
+        UpdateCharacter,
+        WorldCommand
+    },
+    system::{
+        movement::{
+            Movement,
+            movement_system_update,
+            movement_system_init
+        },
+        icewiz::{
+            IceWiz,
+            IceWizInfo,
+            icewiz_system_init,
+            icewiz_system_update,
+        },
+    }
 };
 
 use super::player::model::{TeamID, Team, PlayerData};
@@ -32,35 +49,84 @@ pub mod server;
 pub mod client;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WorldError {
     MissingCharacter(CharacterID),
-    MissingCharacterComponent(CharacterID, ComponentID)
+    MissingCharacterComponent(CharacterID, ComponentID),
+    MissingCharacterCreator(CharacterType)
+}
+
+pub trait CharacterCreator {
+    fn create(&mut self, world: &mut World, character_id: &CharacterID);
+}
+
+// This is necessary because of the borrow checker
+// We can't have a borrowed character creator operator on the world directly
+// So we have to have a borrowed character creator creator that produces an owned character creator
+pub trait CharacterCreatorCreator {
+    fn create(&self) -> Box<dyn CharacterCreator>;
 }
 
 pub struct World {
     pub errors: Vec<WorldError>,
 
+    pub character_creator: HashMap<CharacterType, Box<dyn CharacterCreatorCreator>>,
+    pub info: WorldInfo,
     pub teams: HashMap<TeamID, Team>,
     pub characters: HashSet<CharacterID>,
     pub players: PlayerData,
 
+    // components that should be serialized across the internet
     pub base: ComponentStorage<CharacterBase>,
     pub health: ComponentStorage<CharacterHealth>,
-    pub movement: ComponentStorage<Movement>
+    pub movement: ComponentStorage<Movement>,
+    pub icewiz: ComponentStorage<IceWiz>,
+}
+
+// immutable info about the world
+// ex: base stats for wizards
+pub struct WorldInfo {
+    pub base: HashMap<CharacterType, CharacterBase>,
+    pub health: HashMap<CharacterType, CharacterHealth>,
+
+    pub icewiz: IceWizInfo
+}
+
+impl WorldInfo {
+    pub fn new() -> WorldInfo {
+        WorldInfo {
+            base: HashMap::new(),
+            health: HashMap::new(),
+
+            icewiz: IceWizInfo::init(),
+        }
+    }
 }
 
 impl World {
     pub fn new() -> World {
-        World {
+        let mut world = World {
             errors: vec![],
+            info: WorldInfo::new(),
             teams: HashMap::new(),
             characters: HashSet::new(),
+            character_creator: HashMap::new(),
             players: PlayerData { players: HashMap::new() },
-            base: ComponentStorage::<CharacterBase>::new(),
-            health: ComponentStorage::<CharacterHealth>::new(),
-            movement: ComponentStorage::<Movement>::new()
-        }
+            base: ComponentStorage::new(),
+            health: ComponentStorage::new(),
+            movement: ComponentStorage::new(),
+            icewiz: ComponentStorage::new()
+        };
+        // init each system
+        movement_system_init(&mut world);
+        icewiz_system_init(&mut world);
+
+        world
+    }
+
+    pub fn update(&mut self, delta_time: f32) {
+        movement_system_update(self, delta_time);
+        icewiz_system_update(self, delta_time);
     }
 
     pub fn serialize_component(&self, id: &CharacterID, cid: &ComponentID) -> Option<Vec<u8>> {
@@ -112,15 +178,39 @@ impl World {
         }
     }
 
-    pub fn update(&mut self, delta_time: f32) {
-        movement_system_update(self, delta_time);
-    }
-
     pub fn run_command<'a, T: WorldCommand<'a>>(&mut self, command: T) {
         match T::run(command, self) {
             Ok(()) => (),
             Err(err) => self.errors.push(err)
         }
+    }
+
+    // Only returns Err if world info is corrupt and missing the character creator
+    pub fn create_character(&mut self, idgen: &mut CharacterIDGenerator, typ: CharacterType) -> Result<CharacterID, String> {
+        let mut creator = match self.character_creator.get(&typ) {
+            Some(creator) => creator.create(),
+            None => {
+                let err = WorldError::MissingCharacterCreator(typ);
+                self.errors.push(err.clone());
+                return Err(format!("{:?}", err));
+            }
+        };
+        let id = idgen.generate();
+        self.characters.insert(id);
+        creator.create(self, &id);
+        Ok(id)
+        // self.base.components.insert(id, CharacterBase {
+        //     ctype: character::CharacterType::IceWiz,
+        //     position: Vector2::new(0.0, 0.0),
+        //     speed: 1.0
+        // });
+        // self.health.components.insert(id, CharacterHealth {
+        //     health: 100.0
+        // });
+        // self.movement.components.insert(id, Movement {
+        //     destination: None
+        // });
+        // id
     }
 }
 
@@ -129,3 +219,10 @@ impl Default for World {
         Self::new()
     }
 }
+
+impl Default for WorldInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+

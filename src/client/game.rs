@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::CharacterID, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::movement::MoveCharacterRequest,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::movement::MoveCharacterRequest,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -512,7 +512,7 @@ impl Game<'_> {
                     Ok(None)
                 },
                 ["gen", "char"] => {
-                    self.connection.send(Protocol::TCP, &GenerateCharacter)?;
+                    self.connection.send(Protocol::TCP, &GenerateCharacter(CharacterType::IceWiz))?;
                     Ok(None)
                 }
                 ["sub"] | ["sub", "list", ..] => {

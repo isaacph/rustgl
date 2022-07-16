@@ -16,7 +16,14 @@ impl CharacterIDGenerator {
     }
 }
 
+impl Default for CharacterIDGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum CharacterType {
-    HERO,
+    IceWiz,
 }
+

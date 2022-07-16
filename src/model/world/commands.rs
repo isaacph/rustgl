@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::model::commands::GetCommandID;
 
-use super::{World, character::{CharacterID, CharacterIDGenerator, self}, component::{ComponentID, CharacterHealth, CharacterBase}, WorldError, system::movement::Movement};
+use super::{World, character::{CharacterID, CharacterIDGenerator, self, CharacterType}, component::{ComponentID, CharacterHealth, CharacterBase}, WorldError, system::movement::Movement};
 
 pub trait WorldCommand<'a>: Deserialize<'a> {
     fn run(self, world: &mut World) -> Result<(), WorldError>;
@@ -33,39 +33,37 @@ impl UpdateCharacter {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct GenerateCharacter;
+pub struct GenerateCharacter(pub CharacterType);
 
 impl GenerateCharacter {
-    pub fn new() -> Self {
-        GenerateCharacter
+    pub fn new(typ: CharacterType) -> Self {
+        GenerateCharacter(typ)
     }
-    pub fn generate_character(world: &mut World, idgen: &mut CharacterIDGenerator) -> CharacterID {
-        let id = idgen.generate();
-        world.characters.insert(id);
-        world.base.components.insert(id, CharacterBase {
-            ctype: character::CharacterType::HERO,
-            position: Vector2::new(0.0, 0.0),
-            speed: 1.0
-        });
-        world.health.components.insert(id, CharacterHealth {
-            health: 100.0
-        });
-        world.movement.components.insert(id, Movement {
-            destination: None
-        });
-        id
-    }
+    // pub fn generate_character(world: &mut World, idgen: &mut CharacterIDGenerator, typ: CharacterType) -> Result<CharacterID {
+    //     match world.create_character(idgen, typ) {
+    //         Ok(id) => id,
+    //         Err(err) => 
+    //     }
+    //     let id = idgen.generate();
+    //     world.characters.insert(id);
+    //     world.base.components.insert(id, CharacterBase {
+    //         ctype: character::CharacterType::IceWiz,
+    //         position: Vector2::new(0.0, 0.0),
+    //         speed: 1.0
+    //     });
+    //     world.health.components.insert(id, CharacterHealth {
+    //         health: 100.0
+    //     });
+    //     world.movement.components.insert(id, Movement {
+    //         destination: None
+    //     });
+    //     id
+    // }
 }
 
 impl GetCommandID for GenerateCharacter {
     fn command_id(&self) -> crate::model::commands::CommandID {
         crate::model::commands::CommandID::GenerateCharacter
-    }
-}
-
-impl Default for GenerateCharacter {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

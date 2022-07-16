@@ -46,10 +46,15 @@ impl<T> ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned {
         ComponentStorage { components: HashMap::new() }
     }
     pub fn ser(&self, id: &CharacterID) -> Option<Vec<u8>> {
-        match self.components.get(id) {
-            None => None,
-            Some(c) => Some(bincode::serialize(c).unwrap())
-        }
+        self.components.get(id).map(|c| bincode::serialize(c).unwrap())
+    }
+}
+
+impl<T> Default for ComponentStorage<T>
+where T: Sized + Serialize + DeserializeOwned
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

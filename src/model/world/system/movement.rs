@@ -33,6 +33,10 @@ impl GetCommandID for MoveCharacter {
     }
 }
 
+pub fn movement_system_init(_: &mut World) {
+    // noop
+}
+
 pub fn movement_system_update(world: &mut World, delta_time: f32) {
     for (cid, movement) in &mut world.movement.components {
         match movement.destination {
