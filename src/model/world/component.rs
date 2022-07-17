@@ -12,6 +12,8 @@ pub enum ComponentID {
     Health,
     Movement,
     IceWiz,
+    AutoAttack,
+    ActionQueue,
 }
 
 impl Display for ComponentID {
@@ -25,6 +27,7 @@ pub struct CharacterBase {
     pub ctype: CharacterType,
     pub position: Vector2<f32>,
     pub speed: f32,
+    pub attack_damage: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

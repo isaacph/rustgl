@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
 
 use crate::model::commands::GetCommandID;
 
-use super::{World, character::{CharacterID, CharacterIDGenerator, self, CharacterType}, component::{ComponentID, CharacterHealth, CharacterBase}, WorldError, system::movement::Movement};
+use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, WorldError};
 
 pub trait WorldCommand<'a>: Deserialize<'a> {
     fn run(self, world: &mut World) -> Result<(), WorldError>;

@@ -229,7 +229,7 @@ impl Game<'_> {
             };
 
             game.move_timer += delta_time;
-            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonLeft) == glfw::Action::Press {
+            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press {
                 if let Some(pid) = game.selected_player {
                     if let Some(player) = game.world.players.get_player(&pid) {
                         if let Some(cid) = player.selected_char {
@@ -406,7 +406,7 @@ impl Game<'_> {
                     //        }
                     //    }
                     //},
-                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
@@ -564,12 +564,15 @@ impl Game<'_> {
                     }, {
                         let x: Vec<String> = self.world.characters.iter().map(
                             |cid| format!(
-                                "{:?}: base: {:?} health: {:?} move: {:?} icewiz: {:?}",
+                                "{:?}: components: {:?}",
+                                // base: {:?} health: {:?} move: {:?} icewiz: {:?}",
                                 cid,
-                                self.world.base.components.get(cid),
-                                self.world.health.components.get(cid),
-                                self.world.movement.components.get(cid),
-                                self.world.icewiz.components.get(cid))
+                                self.world.get_components(cid),
+                                // self.world.base.components.get(cid),
+                                // self.world.health.components.get(cid),
+                                // self.world.movement.components.get(cid),
+                                // self.world.icewiz.components.get(cid))
+                            )
                         ).collect();
                         x.join(", ")
                     })))

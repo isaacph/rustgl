@@ -30,7 +30,7 @@ use self::{
             IceWizInfo,
             icewiz_system_init,
             icewiz_system_update,
-        },
+        }, auto_attack::{AutoAttack, auto_attack_system_init, auto_attack_system_update}, action_queue::{ActionQueue, action_queue_system_init, action_queue_system_update, ActionQueueInfo, ActionStatus, Action},
     }
 };
 
@@ -53,7 +53,9 @@ pub mod client;
 pub enum WorldError {
     MissingCharacter(CharacterID),
     MissingCharacterComponent(CharacterID, ComponentID),
-    MissingCharacterCreator(CharacterType)
+    MissingCharacterCreator(CharacterType),
+    MissingActionStatus(CharacterID, Action),
+    UnexpectedActionStatus(CharacterID, Action, ActionStatus),
 }
 
 pub trait CharacterCreator {
@@ -81,6 +83,8 @@ pub struct World {
     pub health: ComponentStorage<CharacterHealth>,
     pub movement: ComponentStorage<Movement>,
     pub icewiz: ComponentStorage<IceWiz>,
+    pub auto_attack: ComponentStorage<AutoAttack>,
+    pub action_queue: ComponentStorage<ActionQueue>,
 }
 
 // immutable info about the world
@@ -89,7 +93,8 @@ pub struct WorldInfo {
     pub base: HashMap<CharacterType, CharacterBase>,
     pub health: HashMap<CharacterType, CharacterHealth>,
 
-    pub icewiz: IceWizInfo
+    pub icewiz: IceWizInfo,
+    pub action_queue: ActionQueueInfo
 }
 
 impl WorldInfo {
@@ -99,6 +104,7 @@ impl WorldInfo {
             health: HashMap::new(),
 
             icewiz: IceWizInfo::init(),
+            action_queue: ActionQueueInfo::init()
         }
     }
 }
@@ -115,11 +121,15 @@ impl World {
             base: ComponentStorage::new(),
             health: ComponentStorage::new(),
             movement: ComponentStorage::new(),
-            icewiz: ComponentStorage::new()
+            auto_attack: ComponentStorage::new(),
+            icewiz: ComponentStorage::new(),
+            action_queue: ComponentStorage::new(),
         };
         // init each system
         movement_system_init(&mut world);
         icewiz_system_init(&mut world);
+        auto_attack_system_init(&mut world);
+        action_queue_system_init(&mut world);
 
         world
     }
@@ -127,6 +137,24 @@ impl World {
     pub fn update(&mut self, delta_time: f32) {
         movement_system_update(self, delta_time);
         icewiz_system_update(self, delta_time);
+        auto_attack_system_update(self, delta_time);
+        action_queue_system_update(self, delta_time);
+    }
+
+    pub fn has_component(&self, id: &CharacterID, cid: &ComponentID) -> bool {
+        fn test<T>(storage: &dyn ComponentStorageContainer<T>, id: &CharacterID) -> bool
+                where T: Sized + Serialize {
+            storage.get_storage().keys().any(|oid| *id == *oid)
+        }
+        match cid {
+            ComponentID::Base => test(&self.base, id),
+            ComponentID::Health => test(&self.health, id),
+            ComponentID::Movement => test(&self.movement, id),
+            ComponentID::IceWiz => test(&self.icewiz, id),
+            ComponentID::AutoAttack => test(&self.auto_attack, id),
+            ComponentID::ActionQueue => test(&self.action_queue, id),
+            // _ => panic!("Component id not linked: {}", cid)
+        }
     }
 
     pub fn serialize_component(&self, id: &CharacterID, cid: &ComponentID) -> Option<Vec<u8>> {
@@ -139,6 +167,8 @@ impl World {
             ComponentID::Health => ser(&self.health, id),
             ComponentID::Movement => ser(&self.movement, id),
             ComponentID::IceWiz => ser(&self.icewiz, id),
+            ComponentID::AutoAttack => ser(&self.auto_attack, id),
+            ComponentID::ActionQueue => ser(&self.action_queue, id),
             // _ => panic!("Serialization not implemented for component id: {}", cid)
         }
     }
@@ -160,6 +190,8 @@ impl World {
             ComponentID::Health => insert(&mut self.health, id, cid, data),
             ComponentID::Movement => insert(&mut self.movement, id, cid, data),
             ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
+            ComponentID::AutoAttack => insert(&mut self.auto_attack, id, cid, data),
+            ComponentID::ActionQueue => insert(&mut self.action_queue, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }
@@ -201,18 +233,10 @@ impl World {
         self.characters.insert(id);
         creator.create(self, &id);
         Ok(id)
-        // self.base.components.insert(id, CharacterBase {
-        //     ctype: character::CharacterType::IceWiz,
-        //     position: Vector2::new(0.0, 0.0),
-        //     speed: 1.0
-        // });
-        // self.health.components.insert(id, CharacterHealth {
-        //     health: 100.0
-        // });
-        // self.movement.components.insert(id, Movement {
-        //     destination: None
-        // });
-        // id
+    }
+
+    pub fn get_components(&self, id: &CharacterID) -> Vec<ComponentID> {
+        ComponentID::iter().filter(|cid| self.has_component(id, cid)).collect()
     }
 }
 

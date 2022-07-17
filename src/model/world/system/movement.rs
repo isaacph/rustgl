@@ -1,8 +1,8 @@
 
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-
 use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::ComponentID}, commands::GetCommandID};
+use super::action_queue::Action;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Movement {
@@ -19,8 +19,14 @@ impl<'a> WorldCommand<'a> for MoveCharacter {
     fn run(self, world: &mut World) -> Result<(), WorldError> {
         match world.movement.components.get_mut(&self.to_move) {
             Some(movement) => {
-                movement.destination = Some(self.destination);
-                Ok(())
+                match world.action_queue.components.get_mut(&&self.to_move) {
+                    Some(action_queue) => {
+                        action_queue.add_action(&world.info, Action::Move, f32::MAX);
+                        movement.destination = Some(self.destination);
+                        Ok(())
+                    },
+                    None => Err(WorldError::MissingCharacterComponent(self.to_move, ComponentID::ActionQueue))
+                }
             },
             None => Err(WorldError::MissingCharacterComponent(self.to_move, ComponentID::Movement))
         }
@@ -39,27 +45,43 @@ pub fn movement_system_init(_: &mut World) {
 
 pub fn movement_system_update(world: &mut World, delta_time: f32) {
     for (cid, movement) in &mut world.movement.components {
-        match movement.destination {
-            Some(dest) => {
-                match world.base.components.get_mut(cid) {
-                    Some(base) => {
-                        let speed = base.speed;
-                        let travel = speed * delta_time;
+        match world.action_queue.components.get_mut(cid) {
+            Some(action_queue) => {
+                // we have: movement + action_queue components
+                // ensure that the action_queue's action status matches the movement component's data
+                match action_queue.fix_action(cid, Action::Move, movement.destination.as_ref()) {
+                    Ok(Some(dest)) => // currently executing the action
+                    match world.base.components.get_mut(cid) {
+                        Some(base) => {
+                            let speed = base.speed;
+                            let travel = speed * delta_time;
 
-                        let v = dest - base.position;
-                        if v.magnitude() <= travel {
-                            base.position = dest;
-                            movement.destination = None;
-                        } else {
-                            base.position += v.normalize() * travel;
-                        }
+                            let v = dest - base.position;
+                            if v.magnitude() <= travel {
+                                base.position = *dest;
+                                movement.destination = None;
+                                action_queue.remove_action(Action::Move);
+                            } else {
+                                base.position += v.normalize() * travel;
+                            }
+                        },
+                        None => world.errors.push(
+                            WorldError::MissingCharacterComponent(*cid, ComponentID::Base)
+                        )
                     },
-                    None => world.errors.push(
-                        WorldError::MissingCharacterComponent(*cid, ComponentID::Base)
-                    )
+                    Ok(None) => (), // waiting to execute the action
+                    Err(WorldError::MissingActionStatus(_, _)) => {
+                        // this error occurs usually when the action runs out of time
+                        // so like the player buffered a second action but the buffer expired
+                        // we should fully cancel the movement action in this case
+                        movement.destination = None;
+                    },
+                    Err(err) => world.errors.push(err)
                 }
             },
-            None => ()
+            None => world.errors.push(
+                WorldError::MissingCharacterComponent(*cid, ComponentID::ActionQueue)
+            )
         }
     }
 }

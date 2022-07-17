@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use serde::{Serialize, Deserialize};
 use crate::model::commands::{CommandID, GetCommandID, MakeBytes};
-use crate::model::world::commands::WorldCommand;
+// use crate::model::world::commands::WorldCommand;
 use crate::{model::commands::core::{GetAddress, SendAddress, SetUDPAddress, EchoMessage}, networking::Protocol, server::main::Server};
 
 //pub mod core;
@@ -39,11 +39,11 @@ fn drun<'a, T: ServerCommand<'a>>(data: &'a [u8], context: ((Protocol, &SocketAd
     T::run(deserialized, context);
     Ok(())
 }
-fn drun_w<'a, T: WorldCommand<'a>>(data: &'a [u8], (_, server): ((Protocol, &SocketAddr), &mut Server)) -> Result<(), bincode::Error> {
-    let deserialized: T = bincode::deserialize::<'a>(data)?; // TODO: error handling
-    server.world.run_command(deserialized);
-    Ok(())
-}
+// fn drun_w<'a, T: WorldCommand<'a>>(data: &'a [u8], (_, server): ((Protocol, &SocketAddr), &mut Server)) -> Result<(), bincode::Error> {
+//     let deserialized: T = bincode::deserialize::<'a>(data)?; // TODO: error handling
+//     server.world.run_command(deserialized);
+//     Ok(())
+// }
 
 pub fn execute_server_command(command: &[u8], context: ((Protocol, &SocketAddr), &mut Server)) -> Result<(), String> {
     let id_num = u16::from_be_bytes([command[command.len() - 2], command[command.len() - 1]]);

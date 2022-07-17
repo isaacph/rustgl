@@ -86,6 +86,9 @@ impl Server {
             let delta_time = delta_duration.as_secs_f32();
 
             server.world.update(delta_time);
+            for error in server.world.errors.drain(0..server.world.errors.len()) {
+                println!("Server world error: {:?}", error);
+            }
 
             let ServerUpdate {
                 messages,
