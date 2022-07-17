@@ -1,12 +1,16 @@
 
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::ComponentID}, commands::GetCommandID};
+use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer}}, commands::GetCommandID};
 use super::action_queue::Action;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Movement {
     pub destination: Option<Vector2<f32>>
+}
+
+impl GetComponentID for Movement {
+    const ID: ComponentID = ComponentID::Movement;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -17,19 +21,14 @@ pub struct MoveCharacter {
 
 impl<'a> WorldCommand<'a> for MoveCharacter {
     fn run(self, world: &mut World) -> Result<(), WorldError> {
-        match world.movement.components.get_mut(&self.to_move) {
-            Some(movement) => {
-                match world.action_queue.components.get_mut(&&self.to_move) {
-                    Some(action_queue) => {
-                        action_queue.add_action(&world.info, Action::Move, f32::MAX);
-                        movement.destination = Some(self.destination);
-                        Ok(())
-                    },
-                    None => Err(WorldError::MissingCharacterComponent(self.to_move, ComponentID::ActionQueue))
-                }
-            },
-            None => Err(WorldError::MissingCharacterComponent(self.to_move, ComponentID::Movement))
+        if !world.characters.contains(&self.to_move) {
+            return Err(WorldError::MissingCharacter(self.to_move))
         }
+        let movement = world.movement.get_component_mut(&self.to_move)?;
+        let action_queue = world.action_queue.get_component_mut(&self.to_move)?;
+        action_queue.add_action(&world.info, Action::Move, f32::MAX);
+        movement.destination = Some(self.destination);
+        Ok(())
     }
 }
 

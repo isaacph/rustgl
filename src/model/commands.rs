@@ -37,7 +37,8 @@ pub enum CommandID {
     UpdateCharacter,
 
     // world commands (also on both, but focus run on world)
-    MoveCharacter
+    MoveCharacter,
+    AutoAttackCommand,
 }
 
 pub mod core {

@@ -1,10 +1,14 @@
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, CharacterCreatorCreator, CharacterCreator, character::{CharacterID, CharacterType}, component::{CharacterBase, CharacterHealth}};
+use crate::model::world::{World, CharacterCreatorCreator, CharacterCreator, character::{CharacterID, CharacterType}, component::{CharacterBase, CharacterHealth, GetComponentID, ComponentID}};
 use super::{movement::Movement, auto_attack::AutoAttack, action_queue::ActionQueue};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IceWiz {
+}
+
+impl GetComponentID for IceWiz {
+    const ID: ComponentID = ComponentID::IceWiz;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -50,7 +54,7 @@ impl CharacterCreator for IceWizCreator {
             destination: None
         });
         world.icewiz.components.insert(id, IceWiz {});
-        world.auto_attack.components.insert(id, AutoAttack {});
+        world.auto_attack.components.insert(id, AutoAttack::new());
         world.action_queue.components.insert(id, ActionQueue::new());
     }
 }

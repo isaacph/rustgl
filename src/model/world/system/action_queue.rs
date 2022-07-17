@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Debug};
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, WorldInfo, component::ComponentID, character::CharacterID, WorldError};
+use crate::model::world::{World, WorldInfo, component::{ComponentID, GetComponentID}, character::CharacterID, WorldError};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub enum Action {
@@ -40,6 +40,10 @@ pub struct ActionQueueEntry {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ActionQueue {
     queue: Vec<ActionQueueEntry>
+}
+
+impl GetComponentID for ActionQueue {
+    const ID: ComponentID = ComponentID::ActionQueue;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
