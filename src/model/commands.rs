@@ -9,7 +9,7 @@ use serde::Serialize;
 // the commands_execute macro list, and the method of execution must be specified by
 // implementing the ClientCommand or ServerCommand traits
 
-#[derive(IntoPrimitive, TryFromPrimitive, Debug)]
+#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy)]
 #[repr(u16)]
 pub enum CommandID {
     // place all internal command IDs here
@@ -39,6 +39,7 @@ pub enum CommandID {
     // world commands (also on both, but focus run on world)
     MoveCharacter,
     AutoAttackCommand,
+    AutoAttackRequest,
 }
 
 pub mod core {

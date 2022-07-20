@@ -1,9 +1,11 @@
+use std::net::SocketAddr;
 use std::time::Duration;
+use crate::model::world::commands::WorldCommand;
 use crate::model::{Subscription, PrintError};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
-use crate::model::world::World;
+use crate::model::world::{World, WorldError};
 use crate::model::world::character::CharacterIDGenerator;
 use crate::networking::Protocol;
 use crate::networking::server::{Server as Connection, ServerUpdate};
@@ -60,7 +62,7 @@ pub struct Server {
     pub world: World,
     pub character_id_gen: CharacterIDGenerator,
     pub player_manager: PlayerManager,
-    pub connection: Connection
+    pub connection: Connection,
 }
 
 
@@ -73,7 +75,7 @@ impl Server {
                 world,
                 character_id_gen: CharacterIDGenerator::new(),
                 player_manager: PlayerManager::new(),
-                connection: Connection::init(ports)?
+                connection: Connection::init(ports)?,
             }
         };
         let mut update_loop = UpdateLoop::init(&server.world);
@@ -180,6 +182,25 @@ impl Server {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    pub fn run_world_command<'a, T: WorldCommand<'a>>(&mut self, addr: Option<&SocketAddr>, mut command: T) {
+        match command.validate(&self.world) {
+            Ok(()) => (),
+            Err(WorldError::NoopCommand) => (), // the command did nothing
+            // Err(WorldError::IllegalInterrupt(_)) => (), // we are ignoring interrupts
+            Err(err) => match addr {
+                Some(addr) => return self.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Error running world command: {:?}", err))).print(),
+                None => println!("Error running anonymous world command: {:?}", err),
+            }
+        };
+        match command.run(&mut self.world) {
+            Ok(()) => self.broadcast(Subscription::World, Protocol::UDP, &command),
+            Err(err) => match addr {
+                Some(addr) => self.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Error running world command: {:?}", err))).print(),
+                None => println!("Error running anonymous world command: {:?}", err),
             }
         }
     }

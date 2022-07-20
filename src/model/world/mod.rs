@@ -15,10 +15,7 @@ use self::{
         CharacterHealth,
         ComponentStorageContainer
     },
-    commands::{
-        UpdateCharacter,
-        WorldCommand
-    },
+    commands::UpdateCharacter,
     system::{
         movement::{
             Movement,
@@ -30,11 +27,12 @@ use self::{
             IceWizInfo,
             icewiz_system_init,
             icewiz_system_update,
-        }, auto_attack::{AutoAttack, auto_attack_system_init, auto_attack_system_update}, action_queue::{ActionQueue, action_queue_system_init, action_queue_system_update, ActionQueueInfo, ActionStatus, Action},
+        },
+        auto_attack::{AutoAttack, auto_attack_system_init, auto_attack_system_update, AutoAttackInfo, AutoAttackPhase},
     }
 };
 
-use super::player::model::{TeamID, Team, PlayerData};
+use super::{player::model::{TeamID, Team, PlayerData}, commands::CommandID};
 
 //pub mod player;
 pub mod character;
@@ -54,12 +52,19 @@ pub enum WorldError {
     MissingCharacter(CharacterID),
     MissingCharacterComponent(CharacterID, ComponentID),
     MissingCharacterCreator(CharacterType),
-    MissingActionStatus(CharacterID, Action),
-    UnexpectedActionStatus(CharacterID, Action, ActionStatus),
+    InvalidCommandReplacement(CharacterID, CommandID),
+    InvalidCommand,
+    OutOfRange(CharacterID), // character whose range we are out of
+    UnexpectedComponentState(CharacterID, ComponentID),
+    MissingCharacterInfoComponent(CharacterType, ComponentID),
+    InvalidComponentInfo(CharacterType, ComponentID),
+    InvalidAttackPhase(CharacterID, AutoAttackPhase),
+    NoopCommand,
+    IllegalInterrupt(CharacterID)
 }
 
 pub trait CharacterCreator {
-    fn create(&mut self, world: &mut World, character_id: &CharacterID);
+    fn create(&mut self, world: &mut World, character_id: &CharacterID) -> Result<(), WorldError>;
 }
 
 // This is necessary because of the borrow checker
@@ -84,7 +89,6 @@ pub struct World {
     pub movement: ComponentStorage<Movement>,
     pub icewiz: ComponentStorage<IceWiz>,
     pub auto_attack: ComponentStorage<AutoAttack>,
-    pub action_queue: ComponentStorage<ActionQueue>,
 }
 
 // immutable info about the world
@@ -92,9 +96,9 @@ pub struct World {
 pub struct WorldInfo {
     pub base: HashMap<CharacterType, CharacterBase>,
     pub health: HashMap<CharacterType, CharacterHealth>,
+    pub auto_attack: HashMap<CharacterType, AutoAttackInfo>,
 
     pub icewiz: IceWizInfo,
-    pub action_queue: ActionQueueInfo
 }
 
 impl WorldInfo {
@@ -102,9 +106,9 @@ impl WorldInfo {
         WorldInfo {
             base: HashMap::new(),
             health: HashMap::new(),
+            auto_attack: HashMap::new(),
 
             icewiz: IceWizInfo::init(),
-            action_queue: ActionQueueInfo::init()
         }
     }
 }
@@ -123,22 +127,31 @@ impl World {
             movement: ComponentStorage::new(),
             auto_attack: ComponentStorage::new(),
             icewiz: ComponentStorage::new(),
-            action_queue: ComponentStorage::new(),
         };
         // init each system
-        movement_system_init(&mut world);
-        icewiz_system_init(&mut world);
-        auto_attack_system_init(&mut world);
-        action_queue_system_init(&mut world);
+        let errors = [
+            movement_system_init(&mut world),
+            icewiz_system_init(&mut world),
+            auto_attack_system_init(&mut world),
+        ].into_iter().filter_map(|res| match res {
+            Ok(()) => None,
+            Err(err) => Some(err),
+        });
+        world.errors.extend(errors);
 
         world
     }
 
     pub fn update(&mut self, delta_time: f32) {
-        movement_system_update(self, delta_time);
-        icewiz_system_update(self, delta_time);
-        auto_attack_system_update(self, delta_time);
-        action_queue_system_update(self, delta_time);
+        let errors = [
+            movement_system_update(self, delta_time),
+            icewiz_system_update(self, delta_time),
+            auto_attack_system_update(self, delta_time),
+        ].into_iter().filter_map(|res| match res {
+            Ok(()) => None,
+            Err(err) => Some(err),
+        });
+        self.errors.extend(errors);
     }
 
     pub fn has_component(&self, id: &CharacterID, cid: &ComponentID) -> bool {
@@ -152,7 +165,6 @@ impl World {
             ComponentID::Movement => test(&self.movement, id),
             ComponentID::IceWiz => test(&self.icewiz, id),
             ComponentID::AutoAttack => test(&self.auto_attack, id),
-            ComponentID::ActionQueue => test(&self.action_queue, id),
             // _ => panic!("Component id not linked: {}", cid)
         }
     }
@@ -168,7 +180,6 @@ impl World {
             ComponentID::Movement => ser(&self.movement, id),
             ComponentID::IceWiz => ser(&self.icewiz, id),
             ComponentID::AutoAttack => ser(&self.auto_attack, id),
-            ComponentID::ActionQueue => ser(&self.action_queue, id),
             // _ => panic!("Serialization not implemented for component id: {}", cid)
         }
     }
@@ -191,7 +202,6 @@ impl World {
             ComponentID::Movement => insert(&mut self.movement, id, cid, data),
             ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
             ComponentID::AutoAttack => insert(&mut self.auto_attack, id, cid, data),
-            ComponentID::ActionQueue => insert(&mut self.action_queue, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }
@@ -212,12 +222,12 @@ impl World {
         }
     }
 
-    pub fn run_command<'a, T: WorldCommand<'a>>(&mut self, command: T) {
-        match T::run(command, self) {
-            Ok(()) => (),
-            Err(err) => self.errors.push(err)
-        }
-    }
+    // pub fn run_command<'a, T: WorldCommand<'a>>(&mut self, command: T) {
+    //     match T::run(command, self) {
+    //         Ok(()) => (),
+    //         Err(err) => self.errors.push(err)
+    //     }
+    // }
 
     // Only returns Err if world info is corrupt and missing the character creator
     pub fn create_character(&mut self, idgen: &mut CharacterIDGenerator, typ: CharacterType) -> Result<CharacterID, String> {
@@ -231,7 +241,10 @@ impl World {
         };
         let id = idgen.generate();
         self.characters.insert(id);
-        creator.create(self, &id);
+        match creator.create(self, &id) {
+            Ok(()) => (),
+            Err(err) => self.errors.push(err),
+        }
         Ok(id)
     }
 

@@ -70,6 +70,7 @@ pub trait PlayerDataView {
     fn get_player(&self, id: &PlayerID) -> Option<&Player>;
     fn get_player_with_name(&self, name: &str) -> Option<&Player>;
     fn all_player_ids(&self) -> Box<[PlayerID]>;
+    fn can_use_character(&self, player_id: &PlayerID, char_id: &CharacterID) -> bool;
 }
 
 struct PlayerMetadata {
@@ -265,6 +266,15 @@ impl PlayerDataView for PlayerManager {
     fn all_player_ids(&self) -> Box<[PlayerID]> {
         self.players.keys().copied().collect()
     }
+    fn can_use_character(&self, player_id: &PlayerID, char_id: &CharacterID) -> bool {
+        match self.players.get(player_id) {
+            Some(player) => match player.selected_char {
+                Some(pchar_id) => pchar_id == *char_id,
+                None => false,
+            },
+            None => false
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -288,5 +298,15 @@ impl PlayerDataView for PlayerData {
 
     fn all_player_ids(&self) -> Box<[PlayerID]> {
         self.players.keys().copied().collect()
+    }
+
+    fn can_use_character(&self, player_id: &PlayerID, char_id: &CharacterID) -> bool {
+        match self.players.get(player_id) {
+            Some(player) => match player.selected_char {
+                Some(pchar_id) => pchar_id == *char_id,
+                None => false,
+            },
+            None => false
+        }
     }
 }

@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::movement::MoveCharacterRequest,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, component::ComponentStorageContainer,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -416,6 +416,30 @@ impl Game<'_> {
                                             id: cid,
                                             dest: game.mouse_pos_world,
                                         }).ok();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
+                        if game.connection.is_connected() {
+                            if let Some(pid) = game.selected_player {
+                                if let Some(player) = game.world.players.get_player(&pid) {
+                                    if let Some(cid) = player.selected_char {
+                                        let mouse_pos_world = game.mouse_pos_world;
+                                        if let (Some(target), _) = game.world.base.components.iter().fold((None, f32::MAX), |(mut cur_cid, mut dist), (ncid, base)| {
+                                            let mag = (mouse_pos_world - base.position).magnitude();
+                                            if mag < dist && cid != *ncid {
+                                                cur_cid = Some(*ncid);
+                                                dist = mag;
+                                            }
+                                            (cur_cid, dist)
+                                        }) {
+                                            game.connection.send(Protocol::UDP, &AutoAttackRequest {
+                                                attacker: cid,
+                                                target
+                                            }).ok();
+                                        }
                                     }
                                 }
                             }

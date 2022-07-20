@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::{HashMap, HashSet}, fmt::Display};
 
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
@@ -13,7 +13,6 @@ pub enum ComponentID {
     Movement,
     IceWiz,
     AutoAttack,
-    ActionQueue,
 }
 
 impl Display for ComponentID {
@@ -26,19 +25,21 @@ pub trait GetComponentID {
     const ID: ComponentID;
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct CharacterBase {
     pub ctype: CharacterType,
     pub position: Vector2<f32>,
     pub speed: f32,
     pub attack_damage: f32,
+    pub range: f32,
+    pub attack_speed: f32,
 }
 
 impl GetComponentID for CharacterBase {
     const ID: ComponentID = ComponentID::Base;
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct CharacterHealth {
     pub health: f32
 }
@@ -51,6 +52,7 @@ pub trait ComponentStorageContainer<T: Sized + Serialize> {
     fn get_storage(&self) -> &HashMap<CharacterID, T>;
     fn get_storage_mut(&mut self) -> &mut HashMap<CharacterID, T>;
     fn get_component_mut(&mut self, cid: &CharacterID) -> Result<&mut T, WorldError>;
+    fn get_component(&self, cid: &CharacterID) -> Result<&T, WorldError>;
 }
 
 #[derive(Debug)]
@@ -85,6 +87,12 @@ impl<T> ComponentStorageContainer<T> for ComponentStorage<T>
     }
     fn get_component_mut(&mut self, cid: &CharacterID) -> Result<&mut T, WorldError> {
         match self.components.get_mut(cid) {
+            Some(comp) => Ok(comp),
+            None => Err(WorldError::MissingCharacterComponent(*cid, T::ID))
+        }
+    }
+    fn get_component(&self, cid: &CharacterID) -> Result<&T, WorldError> {
+        match self.components.get(cid) {
             Some(comp) => Ok(comp),
             None => Err(WorldError::MissingCharacterComponent(*cid, T::ID))
         }

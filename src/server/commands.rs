@@ -66,6 +66,7 @@ pub fn execute_server_command(command: &[u8], context: ((Protocol, &SocketAddr),
             // UpdateCharacter => drun::<crate::model::world::commands::UpdateCharacter>(data, context),
             // MoveCharacter => drun_w::<crate::model::world::system::movement::MoveCharacter>(data, context),
             MoveCharacterRequest => drun::<crate::model::world::system::movement::MoveCharacterRequest>(data, context),
+            AutoAttackRequest => drun::<crate::model::world::system::auto_attack::AutoAttackRequest>(data, context),
             EnsureCharacter => drun::<crate::model::world::commands::EnsureCharacter>(data, context),
             _ => {
                 println!("Command ID not implemented on server: {:?}", id);

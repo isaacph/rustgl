@@ -5,8 +5,9 @@ use crate::model::commands::GetCommandID;
 
 use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, WorldError};
 
-pub trait WorldCommand<'a>: Deserialize<'a> {
-    fn run(self, world: &mut World) -> Result<(), WorldError>;
+pub trait WorldCommand<'a>: Deserialize<'a> + GetCommandID {
+    fn validate(&self, world: &World) -> Result<(), WorldError>;
+    fn run(&mut self, world: &mut World) -> Result<(), WorldError>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
