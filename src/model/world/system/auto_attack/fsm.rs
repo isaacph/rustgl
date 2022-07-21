@@ -43,7 +43,7 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
             }
             sum
         };
-        let (events, end_events): (Vec<_>, Vec<_>) = events.iter().partition(|event| event.0 >= sum);
+        let (events, end_events): (Vec<_>, Vec<_>) = events.iter().map(|event| (event.0 / sum, event.1)).partition(|event| event.0 < 1.0);
         let mut s = Self {
             states: states.iter_mut().fold((vec![], 0.0), |(mut states, prev_duration), (next, typ)| {
                 let placeholder = State {

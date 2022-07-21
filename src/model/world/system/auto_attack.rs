@@ -170,6 +170,9 @@ pub fn auto_attack_system_update(world: &mut World, delta_time: f32) -> Result<(
                 if remaining_time <= 0.0 {
                     break;
                 }
+                if count > 4 {
+                    return Err(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack));
+                }
                 if let Some(execution) = world.auto_attack.get_component_mut(&cid)?
                     .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
                     .execution.as_mut() {
@@ -183,23 +186,25 @@ pub fn auto_attack_system_update(world: &mut World, delta_time: f32) -> Result<(
                         match change {
                             fsm::Changes::Event(time_since, _) => auto_attack_fire(world, &cid, time_since)?,
                             fsm::Changes::StateChange(time_since, phase) => {
-                            println!("New AA phase: {:?}, timer: {}, time_since: {}, count: {}", phase, timer, time_since, count);
-                            match phase {
-                                AutoAttackPhase::WindUp |
-                                AutoAttackPhase::Casting |
-                                AutoAttackPhase::WindDown => {
-                                    let execution = world.auto_attack.get_component_mut(&cid)?
-                                        .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
-                                        .execution.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
-                                    execution.timer += time_since;
-                                    remaining_time_next = Some(remaining_time - time_since);
-                                },
-                                AutoAttackPhase::Complete => {
-                                    // finish the auto attack
-                                    world.auto_attack.get_component_mut(&cid)?.attack = None;
-                                    remaining_time_next = None;
-                                },
-                            }},
+                                println!("New AA phase: {:?}, timer: {}, time_since: {}, count: {}", phase, timer, time_since, count);
+                                match phase {
+                                    AutoAttackPhase::WindUp |
+                                    AutoAttackPhase::Casting |
+                                    AutoAttackPhase::WindDown => {
+                                        let execution = world.auto_attack.get_component_mut(&cid)?
+                                            .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
+                                            .execution.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
+                                        execution.timer += remaining_time - time_since;
+                                        execution.timer = ieee754::Ieee754::next(execution.timer); // ensure greater than 0
+                                        remaining_time_next = Some(time_since);
+                                    },
+                                    AutoAttackPhase::Complete => {
+                                        // finish the auto attack
+                                        world.auto_attack.get_component_mut(&cid)?.attack = None;
+                                        remaining_time_next = None;
+                                    },
+                                }
+                            },
                         }
                     }
                     if !changes_state {
