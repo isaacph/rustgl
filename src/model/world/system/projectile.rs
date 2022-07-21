@@ -44,15 +44,20 @@ pub fn create(
 ) -> Result<(), WorldError> {
     let typ = CharacterType::Projectile;
     world.characters.insert(info.proj_id);
+    let position = {
+        let base = world.base.get_component(&info.origin)?;
+        base.position + Vector2::new(info.starting_offset.x * base.flip.dir(), info.starting_offset.y)
+    };
     world.base.components.insert(info.proj_id,
         CharacterBase {
             ctype: typ,
-            position: world.base.get_component(&info.origin)?.position + info.starting_offset,
+            position,
             speed: info.speed,
             attack_damage: info.damage,
             range: 0.0,
             attack_speed: 0.0,
             flip: CharacterFlip::Right,
+            targetable: false,
         }
     );
     world.projectile.components.insert(info.proj_id,
@@ -64,7 +69,19 @@ pub fn create(
     projectile_update(world, init_travel_time, info.proj_id)
 }
 
-pub fn projectile_system_init(_: &mut World) -> Result<(), WorldError> {
+pub fn projectile_system_init(world: &mut World) -> Result<(), WorldError> {
+    world.info.base.insert(CharacterType::Projectile,
+        CharacterBase {
+            ctype: CharacterType::Projectile,
+            position: Vector2::new(0.0, 0.0),
+            attack_damage: 0.0,
+            range: 0.0,
+            attack_speed: 0.0,
+            flip: CharacterFlip::Right,
+            targetable: false,
+            speed: 0.0,
+        }
+    );
     Ok(())
 }
 
@@ -76,6 +93,10 @@ fn projectile_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Re
         }
     }
     let target = world.projectile.get_component(&cid)?.target;
+    if world.characters.get(&target).is_none() {
+        world.erase_character(&cid)?;
+        return Err(WorldError::MissingCharacter(target))
+    }
     let dest = world.base.get_component(&target)?.position;
     let range = 0.0;
     let damage = world.base.get_component(&cid)?.attack_damage;

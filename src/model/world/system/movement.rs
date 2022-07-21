@@ -30,7 +30,7 @@ impl<'a> WorldCommand<'a> for MoveCharacter {
             return Err(WorldError::MissingCharacter(self.to_move))
         }
         let base = world.base.get_component(&self.to_move)?;
-        if world.auto_attack.get_component(&self.to_move)?.is_casting(base.ctype, &world.info) {
+        if world.auto_attack.get_component(&self.to_move)?.is_casting(base.ctype, base, &world.info) {
             return Err(WorldError::IllegalInterrupt(self.to_move))
         }
         Ok(())
@@ -58,17 +58,19 @@ pub fn move_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range:
     let max_travel = speed * delta_time;
     let dir = dest - base.position;
     let dist = dir.magnitude();
+    if dist <= 0.0 {
+        return Ok(Some(0.0))
+    }
+    base.flip = CharacterFlip::from_dir(&(dest - base.position)).unwrap_or(base.flip);
     if f32::max(dist - max_travel, 0.0) <= range {
         let travel = f32::max(dist - range, 0.0);
         let remaining_time = delta_time - travel / speed;
         let offset = dir / dist * travel;
         base.position += offset;
-        base.flip = CharacterFlip::from_dir(&offset).unwrap_or(base.flip);
         Ok(Some(remaining_time))
     } else {
         let offset = dir / dist * max_travel;
         base.position += offset;
-        base.flip = CharacterFlip::from_dir(&offset).unwrap_or(base.flip);
         Ok(None)
     }
 }

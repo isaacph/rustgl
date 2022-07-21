@@ -58,7 +58,8 @@ pub struct CharacterBase {
     pub attack_damage: f32,
     pub range: f32,
     pub attack_speed: f32,
-    pub flip: CharacterFlip
+    pub flip: CharacterFlip,
+    pub targetable: bool,
 }
 
 impl GetComponentID for CharacterBase {

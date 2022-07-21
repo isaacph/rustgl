@@ -71,7 +71,8 @@ pub enum WorldError {
     InvalidComponentInfo(CharacterType, ComponentID),
     InvalidAttackPhase(CharacterID, AutoAttackPhase),
     NoopCommand,
-    IllegalInterrupt(CharacterID)
+    IllegalInterrupt(CharacterID),
+    OnCooldown(CharacterID, ComponentID)
 }
 
 pub trait CharacterCreator {

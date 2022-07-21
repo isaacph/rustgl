@@ -60,7 +60,8 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
         attack_damage: 1.0,
         range: 1.0,
         attack_speed: 1.0,
-        flip: CharacterFlip::Right
+        flip: CharacterFlip::Right,
+        targetable: true,
     });
     world.info.health.insert(CharacterType::IceWiz, CharacterHealth {
         health: 100.0
@@ -72,7 +73,7 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
         1.0, // wind down duration
         1.0, // fire time (after animation start)
         0.5, // projectile speed
-        Vector2::new(0.5, 0.2) // projectile offset
+        Vector2::new(0.3, -0.3) // projectile offset
     )?);
     world.character_creator.insert(CharacterType::IceWiz, Box::new(IceWizCreatorCreator));
     Ok(())

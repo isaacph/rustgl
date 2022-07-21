@@ -62,7 +62,7 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
         Some(s)
     }
 
-    pub fn get_state_changes(&self, total_duration: f32, start: f32, end: f32) -> Vec<Changes<E, V>> {
+    pub fn get_state_changes(&self, total_duration: f32, start: f32, end: f32) -> (Vec<Changes<E, V>>, bool) {
         let (start, end) = (start / total_duration, end / total_duration);
         // add events
         let mut changes: Vec<Changes<E, V>> = self.events.iter().filter_map(
@@ -91,11 +91,12 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
             )
         ));
         changes.sort_by(|a, b| a.get_time().partial_cmp(&b.get_time()).unwrap_or(std::cmp::Ordering::Equal));
-        changes
+        let is_empty = changes.is_empty();
+        (changes, !is_empty)
     }
 
-    pub fn get_current_state(&self, time: f32) -> E {
-        match self.states.iter().find(|state| state.start_time <= time) {
+    pub fn get_current_state(&self, total_duration: f32, time: f32) -> E {
+        match self.states.iter().find(|state| state.start_time * total_duration <= time) {
             Some(state) => state.typ,
             None => self.ending
         }
@@ -103,7 +104,7 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
 
     // gets the time that passed, and the new state, along with a list of events that occurred
     pub fn get_until_first_state_change(&self, total_duration: f32, start: f32, end: f32) -> (Vec<Changes<E, V>>, bool) {
-        let changes = self.get_state_changes(total_duration, start, end);
+        let (changes, _) = self.get_state_changes(total_duration, start, end);
         if let Some(pos) = changes.iter()
         .position(|change| matches!(change, Changes::StateChange(_, _))) {
             (changes.split_at(

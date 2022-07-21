@@ -602,14 +602,13 @@ impl Game<'_> {
                     }, {
                         let x: Vec<String> = self.world.characters.iter().map(
                             |cid| format!(
-                                "{:?}: components: {:?}",
-                                // base: {:?} health: {:?} move: {:?} icewiz: {:?}",
+                                "{:?}: components: {:?} base: {:?} health: {:?} move: {:?} icewiz: {:?}",
                                 cid,
                                 self.world.get_components(cid),
-                                // self.world.base.components.get(cid),
-                                // self.world.health.components.get(cid),
-                                // self.world.movement.components.get(cid),
-                                // self.world.icewiz.components.get(cid))
+                                self.world.base.components.get(cid),
+                                self.world.health.components.get(cid),
+                                self.world.movement.components.get(cid),
+                                self.world.icewiz.components.get(cid)
                             )
                         ).collect();
                         x.join(", ")
