@@ -1,6 +1,6 @@
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, CharacterCreatorCreator, CharacterCreator, character::{CharacterID, CharacterType}, component::{CharacterBase, CharacterHealth, GetComponentID, ComponentID}, WorldError};
+use crate::model::world::{World, CharacterCreatorCreator, CharacterCreator, character::{CharacterID, CharacterType}, component::{CharacterBase, CharacterHealth, GetComponentID, ComponentID, CharacterFlip}, WorldError};
 use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo}};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -60,6 +60,7 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
         attack_damage: 1.0,
         range: 1.0,
         attack_speed: 1.0,
+        flip: CharacterFlip::Right
     });
     world.info.health.insert(CharacterType::IceWiz, CharacterHealth {
         health: 100.0
@@ -69,14 +70,10 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
         1.0, // wind up duration
         1.0, // casting duration
         1.0, // wind down duration
-        1.0  // fire time (after animation start)
+        1.0, // fire time (after animation start)
+        0.5, // projectile speed
+        Vector2::new(0.5, 0.2) // projectile offset
     )?);
-//    world.info.auto_attack.insert(CharacterType::IceWiz, AutoAttackInfo {
-//        wind_up_time: 1.0 / 3.0,
-//        casting_time: 1.0 / 3.0,
-//        wind_down_time: 1.0 / 3.0,
-//        fire_time: AutoAttackTiming::AfterWindUp(0.0),
-//    });
     world.character_creator.insert(CharacterType::IceWiz, Box::new(IceWizCreatorCreator));
     Ok(())
 }

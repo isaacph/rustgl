@@ -1,9 +1,4 @@
 
-//pub struct State {
-//    pub id: i32,
-//    pub start_time: f32,
-//}
-
 #[derive(Clone)]
 pub struct State<E> {
     typ: E,

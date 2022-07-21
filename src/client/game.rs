@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest},
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, component::CharacterFlip,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -270,64 +270,78 @@ impl Game<'_> {
             // characters
             for cid in &game.world.characters {
                 if let Some(base) = game.world.base.components.get(cid) {
-                    let Animation { timer: animation_time, direction } = match animation_data.get_mut(cid) {
-                        None => {
-                            animation_data.insert(*cid, Animation {
-                                timer: 0.0,
-                                direction: Direction::Right,
-                            });
-                            animation_data.get_mut(cid).unwrap()
-                        },
-                        Some(time) => time,
-                    };
-                    let mut frame = 0usize;
-                    if let Some(movement) = game.world.movement.components.get(cid) {
-                        if let Some(dest) = movement.destination {
-                            *animation_time += delta_time;
-                            *animation_time -= f32::floor(*animation_time * animation_fps / (character_walk_textures.len() as f32))
-                                * character_walk_textures.len() as f32 / animation_fps;
-                            *direction = if dest.x - base.position.x >= 0.0 {
-                                Direction::Right
-                            } else {
-                                Direction::Left
+                    match base.ctype {
+                        CharacterType::IceWiz => {
+                            let Animation { timer: animation_time, direction } = match animation_data.get_mut(cid) {
+                                None => {
+                                    animation_data.insert(*cid, Animation {
+                                        timer: 0.0,
+                                        direction: Direction::Right,
+                                    });
+                                    animation_data.get_mut(cid).unwrap()
+                                },
+                                Some(time) => time,
                             };
-                            frame = (*animation_time * character_walk_textures.len() as f32) as usize;
-                        }
-                    }
-                    let flip_dir: f32 = match direction {
-                        Direction::Left => -1.0,
-                        Direction::Right => 1.0
-                    };
-                    let player_scale = 1.0;
-                    let offset = Vector2::new(0.0, -100.0 / 256.0 * player_scale);
-                    let matrix = graphics::make_matrix(
-                        base.position + offset,
-                        Vector2::new(flip_dir * player_scale, player_scale),
-                        0.0
-                    );
-                    let color = match Some(*cid) == selected_char {
-                        true => Vector4::new(1.0, 1.0, 1.0, 1.0),
-                        false => Vector4::new(1.0, 0.9, 0.9, 1.0)
-                    };
-                    texture_render.render(
-                        &(proj_view * matrix),
-                        &color,
-                        &character_walk_textures[frame],
-                        graphics::VertexRange::Full
-                    );
+                            let mut frame = 0usize;
+                            if let Some(movement) = game.world.movement.components.get(cid) {
+                                if let Some(dest) = movement.destination {
+                                    *animation_time += delta_time;
+                                    *animation_time -= f32::floor(*animation_time * animation_fps / (character_walk_textures.len() as f32))
+                                        * character_walk_textures.len() as f32 / animation_fps;
+                                    *direction = if dest.x - base.position.x >= 0.0 {
+                                        Direction::Right
+                                    } else {
+                                        Direction::Left
+                                    };
+                                    frame = (*animation_time * character_walk_textures.len() as f32) as usize;
+                                }
+                            }
+                            let flip_dir: f32 = match base.flip {
+                                CharacterFlip::Left => -1.0,
+                                CharacterFlip::Right => 1.0
+                            };
+                            let player_scale = 1.0;
+                            let offset = Vector2::new(0.0, -100.0 / 256.0 * player_scale);
+                            let matrix = graphics::make_matrix(
+                                base.position + offset,
+                                Vector2::new(flip_dir * player_scale, player_scale),
+                                0.0
+                            );
+                            let color = match Some(*cid) == selected_char {
+                                true => Vector4::new(1.0, 1.0, 1.0, 1.0),
+                                false => Vector4::new(1.0, 0.9, 0.9, 1.0)
+                            };
+                            texture_render.render(
+                                &(proj_view * matrix),
+                                &color,
+                                &character_walk_textures[frame],
+                                graphics::VertexRange::Full
+                            );
 
-                    // render player name below player
-                    if let Some(name) = game.character_name.get(cid) {
-                        let text_width = game_font.text_width(name.as_str());
-                        let player_view_pos = game.camera.world_to_view_pos(base.position);
-                        let offset = Vector2::new(-text_width / 2.0, game_font.line_height());
-                        let sim = Similarity3::<f32>::new(
-                            Vector3::new(player_view_pos.x + offset.x, player_view_pos.y + offset.y, 0.0),
-                            Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
-                            1.0
-                        );
-                        game_font.render(&(proj * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
-                    }
+                            // render player name below player
+                            if let Some(name) = game.character_name.get(cid) {
+                                let text_width = game_font.text_width(name.as_str());
+                                let player_view_pos = game.camera.world_to_view_pos(base.position);
+                                let offset = Vector2::new(-text_width / 2.0, game_font.line_height());
+                                let sim = Similarity3::<f32>::new(
+                                    Vector3::new(player_view_pos.x + offset.x, player_view_pos.y + offset.y, 0.0),
+                                    Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+                                    1.0
+                                );
+                                game_font.render(&(proj * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
+                            }
+                        },
+                        CharacterType::Projectile => {
+                            let scale = 0.2;
+                            let matrix = graphics::make_matrix(
+                                base.position,
+                                Vector2::new(base.flip.dir() * scale, scale),
+                                0.0
+                            );
+                            let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
+                            simple_render.render(&(proj_view * matrix), &color, graphics::VertexRange::Full);
+                        },
+                    };
                 }
             }
 

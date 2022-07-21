@@ -13,6 +13,7 @@ pub enum ComponentID {
     Movement,
     IceWiz,
     AutoAttack,
+    Projectile,
 }
 
 impl Display for ComponentID {
@@ -26,6 +27,30 @@ pub trait GetComponentID {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub enum CharacterFlip {
+    Left, Right
+}
+
+impl CharacterFlip {
+    pub fn from_dir(dir: &Vector2<f32>) -> Option<CharacterFlip> {
+        if dir.x > 0.0 {
+            Some(CharacterFlip::Right)
+        } else if dir.x < 0.0 {
+            Some(CharacterFlip::Left)
+        } else {
+            None
+        }
+    }
+
+    pub fn dir(&self) -> f32 {
+        match *self {
+            Self::Left => -1.0,
+            Self::Right => 1.0
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct CharacterBase {
     pub ctype: CharacterType,
     pub position: Vector2<f32>,
@@ -33,6 +58,7 @@ pub struct CharacterBase {
     pub attack_damage: f32,
     pub range: f32,
     pub attack_speed: f32,
+    pub flip: CharacterFlip
 }
 
 impl GetComponentID for CharacterBase {

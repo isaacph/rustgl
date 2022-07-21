@@ -28,7 +28,18 @@ use self::{
             icewiz_system_init,
             icewiz_system_update,
         },
-        auto_attack::{AutoAttack, auto_attack_system_init, auto_attack_system_update, AutoAttackInfo, AutoAttackPhase},
+        auto_attack::{
+            AutoAttack,
+            auto_attack_system_init,
+            auto_attack_system_update,
+            AutoAttackInfo,
+            AutoAttackPhase
+        },
+        projectile::{
+            Projectile,
+            projectile_system_init,
+            projectile_system_update, ProjectileInfo
+        }
     }
 };
 
@@ -89,6 +100,9 @@ pub struct World {
     pub movement: ComponentStorage<Movement>,
     pub icewiz: ComponentStorage<IceWiz>,
     pub auto_attack: ComponentStorage<AutoAttack>,
+    pub projectile: ComponentStorage<Projectile>,
+
+    pub frame_id: u64,
 }
 
 // immutable info about the world
@@ -99,6 +113,7 @@ pub struct WorldInfo {
     pub auto_attack: HashMap<CharacterType, AutoAttackInfo>,
 
     pub icewiz: IceWizInfo,
+    pub projectile: ProjectileInfo,
 }
 
 impl WorldInfo {
@@ -109,6 +124,7 @@ impl WorldInfo {
             auto_attack: HashMap::new(),
 
             icewiz: IceWizInfo::init(),
+            projectile: ProjectileInfo::init()
         }
     }
 }
@@ -117,6 +133,7 @@ impl World {
     pub fn new() -> World {
         let mut world = World {
             errors: vec![],
+            frame_id: 0,
             info: WorldInfo::new(),
             teams: HashMap::new(),
             characters: HashSet::new(),
@@ -127,12 +144,14 @@ impl World {
             movement: ComponentStorage::new(),
             auto_attack: ComponentStorage::new(),
             icewiz: ComponentStorage::new(),
+            projectile: ComponentStorage::new(),
         };
         // init each system
         let errors = [
             movement_system_init(&mut world),
             icewiz_system_init(&mut world),
             auto_attack_system_init(&mut world),
+            projectile_system_init(&mut world),
         ].into_iter().filter_map(|res| match res {
             Ok(()) => None,
             Err(err) => Some(err),
@@ -143,10 +162,12 @@ impl World {
     }
 
     pub fn update(&mut self, delta_time: f32) {
+        self.frame_id += 1;
         let errors = [
             movement_system_update(self, delta_time),
             icewiz_system_update(self, delta_time),
             auto_attack_system_update(self, delta_time),
+            projectile_system_update(self, delta_time),
         ].into_iter().filter_map(|res| match res {
             Ok(()) => None,
             Err(err) => Some(err),
@@ -165,6 +186,7 @@ impl World {
             ComponentID::Movement => test(&self.movement, id),
             ComponentID::IceWiz => test(&self.icewiz, id),
             ComponentID::AutoAttack => test(&self.auto_attack, id),
+            ComponentID::Projectile => test(&self.projectile, id),
             // _ => panic!("Component id not linked: {}", cid)
         }
     }
@@ -180,6 +202,7 @@ impl World {
             ComponentID::Movement => ser(&self.movement, id),
             ComponentID::IceWiz => ser(&self.icewiz, id),
             ComponentID::AutoAttack => ser(&self.auto_attack, id),
+            ComponentID::Projectile => ser(&self.projectile, id),
             // _ => panic!("Serialization not implemented for component id: {}", cid)
         }
     }
@@ -202,6 +225,23 @@ impl World {
             ComponentID::Movement => insert(&mut self.movement, id, cid, data),
             ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
             ComponentID::AutoAttack => insert(&mut self.auto_attack, id, cid, data),
+            ComponentID::Projectile => insert(&mut self.projectile, id, cid, data),
+            // _ => panic!("Deserialization not implemented for component id: {}", cid)
+        }
+    }
+
+    pub fn erase_component(&mut self, cid: &CharacterID, id: &ComponentID) {
+        fn erase<T>(storage: &mut dyn ComponentStorageContainer<T>, id: &CharacterID)
+                where T: Sized + Serialize + DeserializeOwned {
+            storage.get_storage_mut().remove(id);
+        }
+        match id {
+            ComponentID::Base => erase(&mut self.base, cid),
+            ComponentID::Health => erase(&mut self.health, cid),
+            ComponentID::Movement => erase(&mut self.movement, cid),
+            ComponentID::IceWiz => erase(&mut self.icewiz, cid),
+            ComponentID::AutoAttack => erase(&mut self.auto_attack, cid),
+            ComponentID::Projectile => erase(&mut self.projectile, cid),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }
@@ -248,6 +288,14 @@ impl World {
         Ok(id)
     }
 
+    pub fn erase_character(&mut self, cid: &CharacterID) -> Result<(), WorldError> {
+        self.characters.remove(&cid);
+        for id in self.get_components(&cid) {
+            self.erase_component(cid, &id);
+        }
+        Ok(())
+    }
+
     pub fn get_components(&self, id: &CharacterID) -> Vec<ComponentID> {
         ComponentID::iter().filter(|cid| self.has_component(id, cid)).collect()
     }
@@ -265,3 +313,14 @@ impl Default for WorldInfo {
     }
 }
 
+pub trait ErrLog {
+    fn err_log(self, log: &mut World);
+}
+
+impl ErrLog for Result<(), WorldError> {
+    fn err_log(self, log: &mut World) {
+        if let Err(e) = self {
+            log.errors.push(e);
+        }
+    }
+}

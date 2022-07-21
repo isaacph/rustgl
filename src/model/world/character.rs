@@ -25,5 +25,6 @@ impl Default for CharacterIDGenerator {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum CharacterType {
     IceWiz,
+    Projectile,
 }
 

@@ -1,7 +1,7 @@
 
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer}}, commands::GetCommandID};
+use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, ErrLog}, commands::GetCommandID};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Movement {
@@ -52,7 +52,7 @@ impl GetCommandID for MoveCharacter {
 // if out of range, move towards the target, and if the target ends up in range during the frame,
 // return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
 // time for walking
-pub fn walk_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range: f32, delta_time: f32) -> Result<Option<f32>, WorldError> {
+pub fn move_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range: f32, delta_time: f32) -> Result<Option<f32>, WorldError> {
     let base = world.base.get_component_mut(cid)?;
     let speed = base.speed;
     let max_travel = speed * delta_time;
@@ -61,10 +61,14 @@ pub fn walk_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range:
     if f32::max(dist - max_travel, 0.0) <= range {
         let travel = f32::max(dist - range, 0.0);
         let remaining_time = delta_time - travel / speed;
-        base.position += dir / dist * travel;
+        let offset = dir / dist * travel;
+        base.position += offset;
+        base.flip = CharacterFlip::from_dir(&offset).unwrap_or(base.flip);
         Ok(Some(remaining_time))
     } else {
-        base.position += dir / dist * max_travel;
+        let offset = dir / dist * max_travel;
+        base.position += offset;
+        base.flip = CharacterFlip::from_dir(&offset).unwrap_or(base.flip);
         Ok(None)
     }
 }
@@ -73,21 +77,26 @@ pub fn movement_system_init(_: &mut World) -> Result<(), WorldError> {
     Ok(())
 }
 
+fn movement_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
+    match world.movement.get_component(&cid)?.destination.as_ref() {
+        Some(dest) => {// currently executing the action
+            let dest = *dest;
+            match move_to(world, &cid, &dest, 0.0, delta_time)? {
+                Some(_) => {
+                    world.movement.get_component_mut(&cid)?.destination = None;
+                },
+                None => ()
+            }
+        }
+        None => (), // waiting to execute the action
+    }
+    Ok(())
+}
+
 pub fn movement_system_update(world: &mut World, delta_time: f32) -> Result<(), WorldError> {
     let cids: Vec<CharacterID> = world.movement.components.keys().copied().collect();
     for cid in cids {
-        match world.movement.get_component(&cid)?.destination.as_ref() {
-            Some(dest) => {// currently executing the action
-                let dest = *dest;
-                match walk_to(world, &cid, &dest, 0.0, delta_time)? {
-                    Some(_) => {
-                        world.movement.get_component_mut(&cid)?.destination = None;
-                    },
-                    None => ()
-                }
-            }
-            None => (), // waiting to execute the action
-        }
+        movement_update(world, delta_time, cid).err_log(world);
     }
     Ok(())
 }
