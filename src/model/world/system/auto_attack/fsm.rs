@@ -7,8 +7,8 @@
 #[derive(Clone)]
 pub struct State<E> {
     typ: E,
-    id: usize,
     start_time: f32,
+    end_time: f32,
 }
 
 #[derive(Clone)]
@@ -45,17 +45,13 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
         };
         let (events, end_events): (Vec<_>, Vec<_>) = events.iter().map(|event| (event.0 / sum, event.1)).partition(|event| event.0 < 1.0);
         let mut s = Self {
-            states: states.iter_mut().fold((vec![], 0.0), |(mut states, prev_duration), (next, typ)| {
-                let placeholder = State {
-                    typ: ending,
-                    id: usize::MAX,
-                    start_time: 0.0
-                };
-                let prev_start = states.last().unwrap_or(&placeholder).start_time;
+            states: states.iter_mut().fold((vec![], 0.0),
+            |(mut states, prev_duration): (Vec<State<E>>, f32), (next, typ)| {
+                let prev_start: f32 = states.last().map(|state| state.start_time).unwrap_or(0.0);
                 states.push(State {
                     typ: *typ,
-                    id: states.len(),
-                    start_time: prev_start + prev_duration / sum
+                    start_time: prev_start + prev_duration / sum,
+                    end_time: prev_start + prev_duration / sum + *next / sum,
                 });
                 (states, *next)
             }).0,
@@ -65,14 +61,15 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
         };
         s.states.push(State {
             typ: ending,
-            id: s.states.len(),
-            start_time: 1.0
+            start_time: 1.0,
+            end_time: f32::INFINITY,
         });
         Some(s)
     }
 
     pub fn get_state_changes(&self, total_duration: f32, start: f32, end: f32) -> Vec<Changes<E, V>> {
         let (start, end) = (start / total_duration, end / total_duration);
+        // add events
         let mut changes: Vec<Changes<E, V>> = self.events.iter().filter_map(
             |event| if start <= event.0 && event.0 < end {
                 Some(Changes::Event((end - event.0) * total_duration, event.1))
@@ -80,14 +77,24 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
                 None
             }
         ).collect();
+        // add ending events
         if start <= 1.0 && 1.0 <= end {
-            changes.extend(self.end_events.clone().into_iter().map(|event| Changes::Event((end - 1.0) * total_duration, event)));
+            changes.extend(
+                self.end_events.clone().into_iter()
+                .map(|event| Changes::Event((end - 1.0) * total_duration, event)));
         }
+        // add state changes
         changes.extend(self.states.clone().into_iter().filter(|state| if state.typ != self.ending {
             start <= state.start_time && state.start_time < end
         } else {
             start <= state.start_time && state.start_time <= end
-        }).map(|event| Changes::StateChange((end - event.start_time) * total_duration, event.typ)));
+        }).map(|event|
+            Changes::StateChange(
+                // ensure state changes don't last longer than until the next state
+                f32::min(event.end_time, end - event.start_time) * total_duration,
+                event.typ
+            )
+        ));
         changes.sort_by(|a, b| a.get_time().partial_cmp(&b.get_time()).unwrap_or(std::cmp::Ordering::Equal));
         changes
     }

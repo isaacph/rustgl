@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, component::ComponentStorageContainer,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest},
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 

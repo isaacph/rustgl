@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, fmt::Display};
+use std::{collections::HashMap, fmt::Display};
 
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};

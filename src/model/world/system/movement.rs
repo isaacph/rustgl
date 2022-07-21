@@ -80,7 +80,7 @@ pub fn movement_system_update(world: &mut World, delta_time: f32) -> Result<(), 
             Some(dest) => {// currently executing the action
                 let dest = *dest;
                 match walk_to(world, &cid, &dest, 0.0, delta_time)? {
-                    Some(new_carry) => {
+                    Some(_) => {
                         world.movement.get_component_mut(&cid)?.destination = None;
                     },
                     None => ()

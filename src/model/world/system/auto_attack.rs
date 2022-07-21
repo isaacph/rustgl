@@ -29,19 +29,6 @@ impl GetComponentID for AutoAttack {
 
 #[derive(Clone)]
 pub struct AutoAttackInfo {
-//    // put these times as a proportion of the total attack time
-//    pub wind_up_time: f32,
-//    pub casting_time: f32,
-//    pub wind_down_time: f32,
-//
-//    // time at which to wind_up_time ends at which to fire the projectile
-//    // also a proportion of total attack time
-//    //   if fire_time <= wind_up_time, then casts during (or at the very end of) wind up phase
-//    // elif fire_time <= wind_up_time + casting_time, then casts during (or at the very end of)
-//    //       casting phase
-//    // elif fire_time <= sum of all 3, then casts during (or at the very end of) the entire
-//    //       animation
-//    pub fire_time: AutoAttackTiming,
     pub fsm: Fsm<AutoAttackPhase, AutoAttackFireEvent>
 }
 
@@ -114,10 +101,6 @@ impl<'a> WorldCommand<'a> for AutoAttackCommand {
         Ok(())
     }
     fn run(&mut self, world: &mut World) -> Result<(), WorldError> {
-        //let (attacker_pos, attacker_range) = {
-        //    let base = world.base.get_component_mut(&self.attacker)?;
-        //    (base.position, base.range)
-        //};
         world.movement.get_component_mut(&self.attacker)?.destination = None;
         let auto_attack = world.auto_attack.get_component_mut(&self.attacker)?;
         auto_attack.attack = Some(AutoAttackInstance {
@@ -159,258 +142,69 @@ pub fn auto_attack_system_update(world: &mut World, delta_time: f32) -> Result<(
             let base = world.base.get_component(&cid)?;
             (base.ctype, base.attack_speed)
         };
+        let attack_info = world.info.auto_attack.get(&ctype)
+        .ok_or(WorldError::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack))?.clone();
         if let Some(attack) = &mut world.auto_attack.get_component_mut(&cid)?.attack {
             let target = attack.target;
-            let attack_info = world.info.auto_attack.get(&ctype)
-                .ok_or(WorldError::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack))?.clone();
-            let mut remaining_time_next = Some(delta_time);
-            let mut count = 0;
-            while let Some(remaining_time) = remaining_time_next {
-                count += 1;
-                if remaining_time <= 0.0 {
-                    break;
+            let attacker_range = world.base.get_component_mut(&cid)?.range;
+            let target_pos = world.base.get_component_mut(&target)?.position;
+
+            // preliminary movement for attack
+            let mut remaining_time = Some(delta_time);
+            if attack.execution.is_none() {// attack hasn't started yet, move to attack
+                if let Some(new_remaining_time) = walk_to(world, &cid, &target_pos, attacker_range, remaining_time.unwrap_or(0.0))? {
+                    // we are in range, start the auto
+                    let attack = (&mut world.auto_attack.get_component_mut(&cid)?.attack).as_mut()
+                        .ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
+                    attack.execution = Some(AutoAttackExecution {
+                        timer: 0.0,
+                        starting_attack_speed: attack_speed,
+                    });
+                    remaining_time = Some(new_remaining_time);
+                } else {
+                    remaining_time = None;
                 }
-                if count > 4 {
-                    return Err(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack));
-                }
+            }
+
+            // attack fsm
+            if let Some(remaining_time) = remaining_time {
                 if let Some(execution) = world.auto_attack.get_component_mut(&cid)?
                     .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
                     .execution.as_mut() {
-                    // we reach phase 1
                     let timer = execution.timer;
-                    let (changes, changes_state) = attack_info.fsm.get_until_first_state_change(attack_speed, timer, timer + remaining_time);
-                    if changes.len() > 0 {
-                        println!("{} changes", changes.len());
-                    }
-                    for change in changes {
+                    for change in attack_info.fsm.get_state_changes(
+                            attack_speed,
+                            execution.timer,
+                            execution.timer + remaining_time) {
                         match change {
                             fsm::Changes::Event(time_since, _) => auto_attack_fire(world, &cid, time_since)?,
                             fsm::Changes::StateChange(time_since, phase) => {
-                                println!("New AA phase: {:?}, timer: {}, time_since: {}, count: {}", phase, timer, time_since, count);
+                                println!("New AA phase: {:?}, timer: {}, increment: {}, time_since: {}",
+                                    phase,
+                                    timer,
+                                    remaining_time,
+                                    time_since);
                                 match phase {
                                     AutoAttackPhase::WindUp |
                                     AutoAttackPhase::Casting |
-                                    AutoAttackPhase::WindDown => {
-                                        let execution = world.auto_attack.get_component_mut(&cid)?
-                                            .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
-                                            .execution.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
-                                        execution.timer += remaining_time - time_since;
-                                        execution.timer = ieee754::Ieee754::next(execution.timer); // ensure greater than 0
-                                        remaining_time_next = Some(time_since);
-                                    },
+                                    AutoAttackPhase::WindDown => (),
                                     AutoAttackPhase::Complete => {
                                         // finish the auto attack
                                         world.auto_attack.get_component_mut(&cid)?.attack = None;
-                                        remaining_time_next = None;
                                     },
                                 }
                             },
                         }
                     }
-                    if !changes_state {
-                        let execution = world.auto_attack.get_component_mut(&cid)?
-                            .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
-                            .execution.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
-                        execution.timer += remaining_time;
-                        remaining_time_next = None;
-                    }
-                    continue;
-                } else {
-                    // attack hasn't started yet, move to attack
-                    let attacker_range = world.base.get_component_mut(&cid)?.range;
-                    let target_pos = world.base.get_component_mut(&target)?.position;
-                    if let Some(new_remaining_time) = walk_to(world, &cid, &target_pos, attacker_range, remaining_time)? {
-                        // we are in range, start the auto
-                        let attack = (&mut world.auto_attack.get_component_mut(&cid)?.attack).as_mut()
-                            .ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
-                        attack.execution = Some(AutoAttackExecution {
-                            timer: 0.0,
-                            starting_attack_speed: attack_speed,
-                        });
-                        remaining_time_next = Some(new_remaining_time);
-                    } else {
-                        break
-                    }
-                    continue;
+                    world.auto_attack.get_component_mut(&cid)?
+                        .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
+                        .execution.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
+                        .timer += remaining_time;
                 }
             }
         }
-        // while let Some(remaining_time) = remaining_time_next {
-
-        // }
     }
     Ok(())
-    // make current attacks continue
-    // let cids: Vec<CharacterID> = world.auto_attack.components.keys().copied().collect();
-    // for cid in cids {
-    //     let (ctype, attack_speed) = {
-    //         let base = world.base.get_component(&cid)?;
-    //         (base.ctype, base.attack_speed)
-    //     };
-    //     let attack_info = world.info.auto_attack.get(&ctype)
-    //         .ok_or(WorldError::MissingCharacterInfoComponent(ctype, Action::AutoAttack))?.clone();
-    //     let mut remaining_time = Some(delta_time);
-    //     while let Some(remaining_time_val) = remaining_time {
-    //         let auto_attack = world.auto_attack.get_component_mut(&cid)?;
-    //         let action_queue = world.action_queue.get_component_mut(&cid)?;
-    //         let action = Action::AutoAttack;
-    //         match action_queue.fix_action(&cid, action, auto_attack.attack.as_mut()) {
-    //             Ok(Some((attack, status))) => {
-    //                 action_queue.reset_ttl(&cid, action)?;
-    //                 if attack.execution.is_none() {
-    //                     // attack hasn't started yet, move to attack
-    //                     let attacker_range = world.base.get_component_mut(&cid)?.range;
-    //                     let target_pos = world.base.get_component_mut(&attack.target)?.position;
-    //                     if let Some(new_remaining_time) = walk_to(world, &cid, &target_pos, attacker_range, remaining_time_val)? {
-    //                         // we are in range, start the auto
-    //                         let attack = (&mut world.auto_attack.get_component_mut(&cid)?.attack).as_mut()
-    //                             .ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
-    //                         attack.execution = Some(AutoAttackExecution {
-    //                             timer: 0.0,
-    //                             starting_attack_speed: attack_speed,
-    //                         });
-    //                         remaining_time = Some(new_remaining_time);
-    //                     }
-    //                     continue;
-    //                 }
-    //                 let AutoAttackExecution { timer, starting_attack_speed } = 
-    //                         (&mut world.auto_attack.get_component_mut(&cid)?.attack).as_mut()
-    //                         .ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?.execution
-    //                         .ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
-    //                 let fire_time = attack_info.calc(starting_attack_speed).ok_or(WorldError::InvalidComponentInfo(ctype, action))?.fire;
-    //                 let fire_phase = fire_time.get_phase().ok_or(WorldError::InvalidComponentInfo(ctype, action))?;
-    //                 let prev_phase = attack_info.get_phase(starting_attack_speed, timer).ok_or(WorldError::InvalidComponentInfo(ctype, action))?;
-    //                 let next_phase = attack_info.get_next_phase(prev_phase);
-    //                 let next_phase_time = attack_info.get_phase_start(starting_attack_speed, attack_info.get_next_phase(prev_phase));
-    //                 let max_next_phase = attack_info.get_phase(starting_attack_speed, timer + remaining_time_val).ok_or(WorldError::InvalidComponentInfo(ctype, action))?;
-    //                 // what do we want to happen
-    //                 // we need to check whether the action was fired since last frame
-    //                 let mut should_fire = false;
-    //                 if timer <= fire_time && fire_time < timer + remaining_time_val {
-    //                     // fire the attack
-    //                     should_fire = true;
-    //                     println!("Attack fired");
-    //                 }
-    //                 // we need to check if the current phase ended
-    //                 //   if it ended, we need to subtract the time the phase consumed from
-    //                 //   remaining_time
-    //                 //   and if it ended, we need to swap out the action priorities
-    //                 if next_phase_time < timer + remaining_time_val {
-    //                     // current phase ended
-    //                     remaining_time = Some(timer - next_phase_time);
-    //                     match next_phase {
-    //                         AutoAttackPhase::Casting => {
-    //                             // swap to the next phase
-    //                             // this changes priority and makes the action uninterruptable
-    //                             action_queue.swap_action(&world.info, Action::AutoAttack, Action::AutoAttackCasting, 0.0, &cid)?;
-    //                         },
-    //                         AutoAttackPhase::Complete => {
-    //                             // // ensure the ending attack fires - probably not necessary
-    //                             // if fire_phase == next_phase {
-    //                             //     should_fire = true;
-    //                             // }
-    //                             // end the attack
-    //                             remaining_time = None;
-    //                             world.auto_attack.get_component_mut(&cid)?.attack = None;
-    //                             break;
-    //                         },
-    //                         AutoAttackPhase::WindUp |
-    //                         AutoAttackPhase::WindDown => {
-    //                             world.auto_attack.get_component_mut(&cid)?.attack = None;
-    //                             remaining_time = None;
-    //                             return Err(WorldError::InvalidAttackPhase(cid, next_phase));
-    //                         },
-    //                     }
-    //                 }
-
-    //                 if should_fire {
-    //                     world.base.get_component_mut(&cid)?.position.y -= 1.0;
-    //                     println!("Fire action, for now we just jump lol");
-    //                 }
-    //                 continue;
-    //             },
-    //             Ok(None) => (), // the action is not current, could be AutoAttackCasting, or could
-    //                             // be in queue, if execution is None (else ttl = 0)
-    //             Err(WorldError::MissingActionStatus(_, _)) => {
-    //                 // action was stopped, stop it here too
-    //                 world.auto_attack.get_component_mut(&cid)?.attack = None;
-    //                 remaining_time = None;
-    //             },
-    //             Err(err) => world.errors.push(err)
-    //         };
-    //         let auto_attack = world.auto_attack.get_component_mut(&cid)?;
-    //         match world.action_queue.get_component_mut(&cid)?.fix_action(&cid, Action::AutoAttackCasting, auto_attack.attack.as_mut()) {
-    //             Ok(Some((attack, status))) => {
-    //                 // action_queue.reset_ttl(&cid, action)?; // shouldn't be necessary since first
-    //                 // phase already set ttl to zero
-    //                 let timer = attack.timer
-    //                     .ok_or(WorldError::UnexpectedActionStatus(cid, Action::AutoAttackCasting, status))?;
-    //                 // check if we reach the fire time. if so we fire
-    //                     let fire_time = attack_info.calc(starting_attack_speed).ok_or(WorldError::InvalidComponentInfo(ctype, action))?.fire;
-    //                     let fire_phase = fire_time.get_phase().ok_or(WorldError::InvalidComponentInfo(ctype, action))?;
-    //                     let prev_phase = attack_info.get_phase(starting_attack_speed, timer).ok_or(WorldError::InvalidComponentInfo(ctype, action))?;
-    //                     let next_phase = attack_info.get_next_phase(prev_phase);
-    //                     let next_phase_time = attack_info.get_phase_start(starting_attack_speed, attack_info.get_next_phase(prev_phase));
-    //                     let max_next_phase = attack_info.get_phase(starting_attack_speed, timer + remaining_time_val).ok_or(WorldError::InvalidComponentInfo(ctype, action))?;
-    //                     // what do we want to happen
-    //                     // we need to check whether the action was fired since last frame
-    //                     let mut should_fire = false;
-    //                     if timer <= fire_time && fire_time < timer + remaining_time_val {
-    //                         // fire the attack
-    //                         should_fire = true;
-    //                         println!("Attack fired");
-    //                     }
-    //                     // we need to check if the current phase ended
-    //                     //   if it ended, we need to subtract the time the phase consumed from
-    //                     //   remaining_time
-    //                     //   and if it ended, we need to swap out the action priorities
-    //                     if next_phase_time < timer + remaining_time_val {
-    //                         // current phase ended
-    //                         remaining_time = Some(timer - next_phase_time);
-    //                         match next_phase {
-    //                             AutoAttackPhase::Casting => {
-    //                                 // swap to the next phase
-    //                                 // this changes priority and makes the action uninterruptable
-    //                                 action_queue.swap_action(&world.info, Action::AutoAttack, Action::AutoAttackCasting, 0.0, &cid)?;
-    //                             },
-    //                             AutoAttackPhase::Complete => {
-    //                                 // // ensure the ending attack fires - probably not necessary
-    //                                 // if fire_phase == next_phase {
-    //                                 //     should_fire = true;
-    //                                 // }
-    //                                 // end the attack
-    //                                 remaining_time = None;
-    //                                 world.auto_attack.get_component_mut(&cid)?.attack = None;
-    //                                 break;
-    //                             },
-    //                             AutoAttackPhase::WindUp |
-    //                             AutoAttackPhase::WindDown => {
-    //                                 world.auto_attack.get_component_mut(&cid)?.attack = None;
-    //                                 remaining_time = None;
-    //                                 return Err(WorldError::InvalidAttackPhase(cid, next_phase));
-    //                             },
-    //                         }
-    //                     }
-
-    //                     if should_fire {
-    //                         world.base.get_component_mut(&cid)?.position.y -= 1.0;
-    //                         println!("Fire action, for now we just jump lol");
-    //                     }
-    //                     continue;
-    //                 // also check if we reach the end of the phase. if so we swap action
-    //                 continue;
-    //             },
-    //             Ok(None) => (), // the action is not current, could be the other action
-    //                             // could not be in queue: ttl is set to 0
-    //             Err(WorldError::MissingActionStatus(_, _)) => {
-    //                 // action was stopped, stop it here too
-    //                 world.auto_attack.get_component_mut(&cid)?.attack = None;
-    //             },
-    //             Err(err) => world.errors.push(err)
-    //         };
-    //     }
-    // }
-    // Ok(())
 }
 
 pub fn auto_attack_fire(world: &mut World, cid: &CharacterID, time_since_fire: f32) -> Result<(), WorldError> {
