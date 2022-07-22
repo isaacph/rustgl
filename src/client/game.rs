@@ -341,6 +341,16 @@ impl Game<'_> {
                             let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
                             simple_render.render(&(proj_view * matrix), &color, graphics::VertexRange::Full);
                         },
+                        CharacterType::CasterMinion => {
+                            let scale = 0.2;
+                            let matrix = graphics::make_matrix(
+                                base.position,
+                                Vector2::new(base.flip.dir() * scale, scale),
+                                0.0
+                            );
+                            let color = Vector4::new(1.0, 1.0, 0.0, 1.0);
+                            simple_render.render(&(proj_view * matrix), &color, graphics::VertexRange::Full);
+                        },
                     };
                 }
             }
@@ -549,10 +559,14 @@ impl Game<'_> {
                     self.connection.send(Protocol::TCP, &GetPlayerData)?;
                     Ok(None)
                 },
-                ["gen", "char"] => {
+                ["gen", "icewiz"] => {
                     self.connection.send(Protocol::TCP, &GenerateCharacter(CharacterType::IceWiz))?;
                     Ok(None)
-                }
+                },
+                ["gen", "caster"] => {
+                    self.connection.send(Protocol::TCP, &GenerateCharacter(CharacterType::CasterMinion))?;
+                    Ok(None)
+                },
                 ["sub"] | ["sub", "list", ..] => {
                     self.connection.send(Protocol::TCP, &PlayerSubs(PlayerSubCommand::ListSubs))?;
                     Ok(None)

@@ -39,7 +39,7 @@ use self::{
             Projectile,
             projectile_system_init,
             projectile_system_update, ProjectileInfo
-        }
+        }, caster_minion::{CasterMinion, caster_minion_system_init, caster_minion_system_update}
     }
 };
 
@@ -99,9 +99,11 @@ pub struct World {
     pub base: ComponentStorage<CharacterBase>,
     pub health: ComponentStorage<CharacterHealth>,
     pub movement: ComponentStorage<Movement>,
-    pub icewiz: ComponentStorage<IceWiz>,
     pub auto_attack: ComponentStorage<AutoAttack>,
     pub projectile: ComponentStorage<Projectile>,
+    
+    pub icewiz: ComponentStorage<IceWiz>,
+    pub caster_minion: ComponentStorage<CasterMinion>,
 
     pub frame_id: u64,
 }
@@ -145,14 +147,16 @@ impl World {
             movement: ComponentStorage::new(),
             auto_attack: ComponentStorage::new(),
             icewiz: ComponentStorage::new(),
+            caster_minion: ComponentStorage::new(),
             projectile: ComponentStorage::new(),
         };
         // init each system
         let errors = [
             movement_system_init(&mut world),
-            icewiz_system_init(&mut world),
             auto_attack_system_init(&mut world),
             projectile_system_init(&mut world),
+            caster_minion_system_init(&mut world),
+            icewiz_system_init(&mut world),
         ].into_iter().filter_map(|res| match res {
             Ok(()) => None,
             Err(err) => Some(err),
@@ -166,9 +170,10 @@ impl World {
         self.frame_id += 1;
         let errors = [
             movement_system_update(self, delta_time),
-            icewiz_system_update(self, delta_time),
             auto_attack_system_update(self, delta_time),
             projectile_system_update(self, delta_time),
+            icewiz_system_update(self, delta_time),
+            caster_minion_system_update(self, delta_time),
         ].into_iter().filter_map(|res| match res {
             Ok(()) => None,
             Err(err) => Some(err),
@@ -188,6 +193,7 @@ impl World {
             ComponentID::IceWiz => test(&self.icewiz, id),
             ComponentID::AutoAttack => test(&self.auto_attack, id),
             ComponentID::Projectile => test(&self.projectile, id),
+            ComponentID::CasterMinion => test(&self.caster_minion, id),
             // _ => panic!("Component id not linked: {}", cid)
         }
     }
@@ -204,6 +210,7 @@ impl World {
             ComponentID::IceWiz => ser(&self.icewiz, id),
             ComponentID::AutoAttack => ser(&self.auto_attack, id),
             ComponentID::Projectile => ser(&self.projectile, id),
+            ComponentID::CasterMinion => ser(&self.caster_minion, id),
             // _ => panic!("Serialization not implemented for component id: {}", cid)
         }
     }
@@ -227,6 +234,7 @@ impl World {
             ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
             ComponentID::AutoAttack => insert(&mut self.auto_attack, id, cid, data),
             ComponentID::Projectile => insert(&mut self.projectile, id, cid, data),
+            ComponentID::CasterMinion => insert(&mut self.caster_minion, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }
@@ -243,6 +251,7 @@ impl World {
             ComponentID::IceWiz => erase(&mut self.icewiz, cid),
             ComponentID::AutoAttack => erase(&mut self.auto_attack, cid),
             ComponentID::Projectile => erase(&mut self.projectile, cid),
+            ComponentID::CasterMinion => erase(&mut self.caster_minion, cid),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }

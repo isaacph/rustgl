@@ -12,6 +12,7 @@ pub enum ComponentID {
     Health,
     Movement,
     IceWiz,
+    CasterMinion,
     AutoAttack,
     Projectile,
 }
