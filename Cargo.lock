@@ -296,12 +296,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ieee754"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9007da9cacbd3e6343da136e98b0d2df013f553d35bdec8b518f07bea768e19c"
-
-[[package]]
 name = "image"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -559,6 +553,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordered-float"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96bcbab4bfea7a59c2c0fe47211a1ac4e3e96bea6eb446d704f310bc5c732ae2"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -678,12 +681,12 @@ dependencies = [
  "encode_unicode",
  "freetype-sys",
  "glfw",
- "ieee754",
  "image",
  "nalgebra",
  "num-traits",
  "num_enum",
  "ogl33",
+ "ordered-float",
  "serde",
  "strum",
  "strum_macros",
