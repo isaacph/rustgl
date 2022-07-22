@@ -49,8 +49,8 @@ impl CameraContext {// optimization for later: cache the projection matrix
                     0.0)) *
             Matrix4::new_translation(
                 &Vector3::new(
-                    self.position.x,
-                    self.position.y,
+                    -self.position.x,
+                    -self.position.y,
                     0.0))
         }
     }

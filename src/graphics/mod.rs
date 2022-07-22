@@ -8,6 +8,7 @@ use image::io::Reader as ImageReader;
 pub mod simple;
 pub mod textured;
 pub mod text;
+pub mod map;
 
 #[derive(Copy, Clone)]
 pub enum Attribute {
@@ -108,35 +109,65 @@ impl Drop for Texture {
 
 pub struct TextureLibrary {
     textures: HashMap<String, GLuint>,
+    count: i32,
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum TextureOptions {
+    Red,
+    Rgba,
+    Repeating,
+    Bilinear
 }
 
 pub fn make_texture(width: i32, height: i32, pixels: &Vec<u8>) -> Texture {
     assert!(pixels.len() == (width * height * 4) as usize);
-    make_texture_impl(width, height, pixels.as_ptr() as *const c_void, true)
+    make_texture_impl(width, height, pixels.as_ptr() as *const c_void, true, &[])
 }
 
 // makes an rgba texture
-fn make_texture_impl(width: i32, height: i32, pixels: *const c_void, owning: bool) -> Texture {
+fn make_texture_impl(width: i32, height: i32, pixels: *const c_void, owning: bool, options: &[TextureOptions]) -> Texture {
     Texture::new(unsafe {
         let mut handle: GLuint = 0;
+        let format = {
+            if options.iter().any(|op| *op == TextureOptions::Red) {
+                GL_RED
+            } else {
+                GL_RGBA
+            }
+        };
+        let wrap_mode = {
+            if options.iter().any(|op| *op == TextureOptions::Repeating) {
+                GL_REPEAT
+            } else {
+                GL_CLAMP_TO_EDGE
+            }
+        };
+        let filter = {
+            if options.iter().any(|op| *op == TextureOptions::Bilinear) {
+                GL_LINEAR
+            } else {
+                GL_NEAREST
+            }
+        };
         glGenTextures(1, &mut handle);
         glBindTexture(GL_TEXTURE_2D, handle);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as GLint);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as GLint);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as GLint);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as GLint);
-        //glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_mode as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter as GLint);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter as GLint);
         glTexImage2D(
             GL_TEXTURE_2D,
             0,
-            GL_RGBA as GLint,
+            format as GLint,
             width,
             height,
             0,
-            GL_RGBA,
+            format,
             GL_UNSIGNED_BYTE,
             pixels
         );
+        glGenerateMipmap(GL_TEXTURE_2D);
         handle
     }, owning)
 }
@@ -145,10 +176,11 @@ impl TextureLibrary {
     pub fn new() -> TextureLibrary {
         TextureLibrary{
             textures: HashMap::new(),
+            count: 0
         }
     }
 
-    pub fn make_texture(&mut self, source: &str) -> Texture {
+    pub fn make_texture(&mut self, source: &str, options: &[TextureOptions]) -> Texture {
         match self.textures.get(source) {
             Some(&handle) => Texture::new(handle, false),
             None => {
@@ -159,21 +191,37 @@ impl TextureLibrary {
                     img.width() as i32,
                     img.height() as i32,
                     img_data.as_ptr() as *const c_void,
-                    false);
+                    false,
+                    options);
                 self.textures.insert(source.to_string(), texture.handle);
+                self.count += 1;
                 texture
             }
         }
+    }
+
+    pub fn make_texture_from(&mut self, width: u32, height: u32, data: &Vec<u8>, options: &[TextureOptions]) -> Texture {
+        let name = format!("width: {}, height: {}, data.len(): {}, options: {:?}, num: {}", width, height, data.len(), options, self.count);
+        let texture = make_texture_impl(width as i32, height as i32, data.as_ptr() as *const c_void, false, options);
+        self.textures.insert(name, texture.handle);
+        self.count += 1;
+        texture
+    }
+}
+
+impl Default for TextureLibrary {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl Drop for TextureLibrary {
     fn drop(&mut self) {
-        for (_, handle) in &self.textures {
+        self.textures.iter().for_each(|(_, handle)| {
             unsafe {
                 glDeleteTextures(1, handle);
             }
-        }
+        });
     }
 }
 
@@ -279,7 +327,7 @@ pub fn shader_program(shaders: &Vec<GLuint>, attributes: &Vec<Attribute>) -> GLu
     unsafe {
         let shader_program = glCreateProgram();
         for shader in shaders {
-            glAttachShader(shader_program, shader.clone());
+            glAttachShader(shader_program, *shader);
         }
         for attribute in attributes {
             glBindAttribLocation(shader_program, *attribute as u32, attribute_name(*attribute).as_ptr() as *const i8);

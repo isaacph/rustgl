@@ -6,11 +6,11 @@ use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use crate::{
-    graphics,
+    graphics::{self, make_texture, TextureOptions},
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, component::CharacterFlip,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, component::{CharacterFlip, ComponentStorageContainer},
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -18,7 +18,7 @@ use crate::networking::client::Client as Connection;
 
 use super::commands::SendCommands;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum State {
     DEFAULT,
     TYPING
@@ -38,7 +38,8 @@ pub struct Game<'a> {
     pub selected_player: Option<PlayerID>,
     pub character_name: HashMap<CharacterID, String>,
     pub camera: CameraContext,
-    pub ui_scale: f32
+    pub ui_scale: f32,
+    pub locked: bool,
 }
 
 impl Game<'_> {
@@ -80,6 +81,7 @@ impl Game<'_> {
             .collect();
         let simple_render = graphics::simple::Renderer::new_square();
         let texture_render = graphics::textured::Renderer::new_square();
+        let map_render = graphics::map::Renderer::new_square();
         let mut game = {
             let ui_scale = 32.0;
             Game {
@@ -107,7 +109,8 @@ impl Game<'_> {
                     position: Vector2::new(0.0, 0.0),
                     zoom: 4.0
                 },
-                ui_scale
+                ui_scale,
+                locked: true
             }
         };
 
@@ -127,15 +130,42 @@ impl Game<'_> {
         // let font_texture = graphics::make_texture(fontinfo.image_size.x as i32, fontinfo.image_size.y as i32, &graphics::text::convert_r_to_rgba(&fontinfo.image_buffer));
 
         let character_walk_textures: Vec<graphics::Texture> = (1..=12).map(
-            |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str())
+            |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str(), &[])
         ).collect();
         let caster_minion_walk_textures: Vec<graphics::Texture> = (1..=12).map(
-            |i| texture_library.make_texture(format!("caster_minion_128/Frame {}.png", i).as_str())
+            |i| texture_library.make_texture(format!("caster_minion_128/Frame {}.png", i).as_str(), &[])
         ).collect();
 
-        enum Direction {
-            Left, Right
+        struct MapLayer {
+            width: u32,
+            height: u32,
+            data: Vec<f32>,
+            data_texture: graphics::Texture,
+            texture: graphics::Texture,
         }
+        let map: Vec<MapLayer> = [("map/grass.png", "grass.png"), ("map/water.png", "water.png")].iter()
+        //let map: Vec<MapLayer> = [("map/grass.png", "grass.png"), ("map/water.png", "water.png")].iter()
+        //let map: Vec<MapLayer> = [].into_iter().collect();
+        //let map: Vec<MapLayer> = [("map/grass.png", "grass.png")].iter()
+            .map(|(map_file, texture)| {
+            let img_obj = image::io::Reader::open(map_file).unwrap().decode().unwrap();
+            let img = img_obj.as_rgba8().unwrap();
+            let img_data = img.as_raw();
+            //let texture = make_texture_impl(
+            //    img.width() as i32,
+            //    img.height() as i32,
+            //    img_data.as_ptr() as *const c_void,
+            //    false);
+            let data: Vec<u8> = img_data.iter().skip(3).step_by(4).copied().collect();
+            MapLayer {
+                width: img.width(),
+                height: img.height(),
+                data: data.iter().map(|pixel| *pixel as f32 / 255.0).collect(),
+                data_texture: texture_library.make_texture_from(img.width(), img.height(), &data, &[TextureOptions::Red, TextureOptions::Bilinear]),
+                texture: texture_library.make_texture(texture, &[TextureOptions::Repeating, TextureOptions::Bilinear])
+            }
+        }).collect();
+
         struct Animation {
             timer: f32,
         }
@@ -143,7 +173,7 @@ impl Game<'_> {
         let animation_fps = 12.0;
 
         unsafe {
-            glClearColor(0.1, 0.2, 0.1, 1.0);
+            glClearColor(0.0, 0.0, 0.0, 1.0);
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         }
@@ -203,20 +233,6 @@ impl Game<'_> {
                 println!("Client world error: {:?}", error);
             }
 
-            // draw
-            let approx_font_size = game.ui_scale;
-            let x = (Included(approx_font_size as i32), Unbounded);
-            let game_font = match text.range(x).next() {
-                Some((_, font)) => font,
-                None => {
-                    text.iter().next_back().expect("No fonts loaded").1
-                }
-            };
-
-            let CameraMatrix {
-                proj, view
-            } = game.camera.matrix();
-            let proj_view = proj * view;
 
             let selected_char = {
                 let mut c = None;
@@ -229,6 +245,13 @@ impl Game<'_> {
                 }
                 c
             };
+            if game.locked || game.state == State::DEFAULT && window.get_key(glfw::Key::Space) == Action::Press {
+                if let Some(c) = selected_char {
+                    if let Some(base) = game.world.base.components.get(&c) {
+                        game.camera.position = base.position + Vector2::new(0.0, -0.5);
+                    }
+                }
+            }
 
             game.move_timer += delta_time;
             if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press {
@@ -268,6 +291,30 @@ impl Game<'_> {
             //     &font_texture,
             //     graphics::VertexRange::Full
             // );
+
+            // draw
+            let approx_font_size = game.ui_scale;
+            let x = (Included(approx_font_size as i32), Unbounded);
+            let game_font = match text.range(x).next() {
+                Some((_, font)) => font,
+                None => {
+                    text.iter().next_back().expect("No fonts loaded").1
+                }
+            };
+
+            let CameraMatrix {
+                proj, view
+            } = game.camera.matrix();
+            let proj_view = proj * view;
+            
+            // display map
+            for MapLayer { width: _, height: _, data: _, data_texture, texture } in map.iter() {
+                let full_scale = 16.0;
+                let tile_count = 8.0;
+                let matrix = graphics::make_matrix(Vector2::new(0.0, 0.0), Vector2::new(full_scale, full_scale), 0.0);
+                map_render.render(&(proj_view * matrix), &Vector4::new(1.0, 1.0, 1.0, 1.0), texture, data_texture, tile_count, graphics::VertexRange::Full);
+                //texture_render.render(&matrix, &Vector4::new(1.0, 1.0, 1.0, 1.0), texture, graphics::VertexRange::Full);
+            }
 
             // characters
             for cid in &game.world.characters {
@@ -463,6 +510,9 @@ impl Game<'_> {
                                 }
                             }
                         }
+                    },
+                    (State::DEFAULT, glfw::WindowEvent::Key(glfw::Key::Y, _, Action::Press, _)) => {
+                        game.locked = !game.locked;
                     }
                     _ => {}
                 }
