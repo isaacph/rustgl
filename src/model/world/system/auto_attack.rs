@@ -103,6 +103,9 @@ impl<'a> WorldCommand<'a> for AutoAttackCommand {
         if !world.characters.contains(&self.target) {
             return Err(WorldError::MissingCharacter(self.target, "Cannot attack nonexistent character".to_string()))
         }
+        if !world.base.get_component(&self.target)?.targetable {
+            return Err(WorldError::InvalidCommand);
+        }
         Ok(())
     }
     fn run(&mut self, world: &mut World) -> Result<(), WorldError> {

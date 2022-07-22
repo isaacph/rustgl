@@ -443,7 +443,7 @@ impl Game<'_> {
                                         let mouse_pos_world = game.mouse_pos_world;
                                         if let (Some(target), _) = game.world.base.components.iter().fold((None, f32::MAX), |(mut cur_cid, mut dist), (ncid, base)| {
                                             let mag = (mouse_pos_world - base.position).magnitude();
-                                            if mag < dist && cid != *ncid {
+                                            if mag < dist && cid != *ncid && base.targetable {
                                                 cur_cid = Some(*ncid);
                                                 dist = mag;
                                             }
