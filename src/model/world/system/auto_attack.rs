@@ -346,11 +346,6 @@ impl AutoAttack {
         if let Some(attack_info) = info.auto_attack.get(&ctype) {
             if let Some(execution) = &self.execution {
                 let state = attack_info.fsm.get_current_state(execution.starting_attack_speed, execution.timer);
-                println!("State is {:?}, as: {}, timer: {}",
-                    state,
-                    execution.starting_attack_speed,
-                    execution.timer
-                );
                 return state == AutoAttackPhase::Casting
             }
         }

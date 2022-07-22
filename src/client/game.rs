@@ -6,11 +6,11 @@ use glfw::{Action, Context, Key};
 use nalgebra::{Vector4, Vector3, Similarity3};
 use ogl33::*;
 use crate::{
-    graphics::{self, make_texture, TextureOptions},
+    graphics::{self, TextureOptions},
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, component::{CharacterFlip, ComponentStorageContainer},
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::{AutoAttackRequest, self}}, component::CharacterFlip,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -137,9 +137,9 @@ impl Game<'_> {
         ).collect();
 
         struct MapLayer {
-            width: u32,
-            height: u32,
-            data: Vec<f32>,
+            _width: u32,
+            _height: u32,
+            _data: Vec<f32>,
             data_texture: graphics::Texture,
             texture: graphics::Texture,
         }
@@ -158,9 +158,9 @@ impl Game<'_> {
             //    false);
             let data: Vec<u8> = img_data.iter().skip(3).step_by(4).copied().collect();
             MapLayer {
-                width: img.width(),
-                height: img.height(),
-                data: data.iter().map(|pixel| *pixel as f32 / 255.0).collect(),
+                _width: img.width(),
+                _height: img.height(),
+                _data: data.iter().map(|pixel| *pixel as f32 / 255.0).collect(),
                 data_texture: texture_library.make_texture_from(img.width(), img.height(), &data, &[TextureOptions::Red, TextureOptions::Bilinear]),
                 texture: texture_library.make_texture(texture, &[TextureOptions::Repeating, TextureOptions::Bilinear])
             }
@@ -308,7 +308,7 @@ impl Game<'_> {
             let proj_view = proj * view;
             
             // display map
-            for MapLayer { width: _, height: _, data: _, data_texture, texture } in map.iter() {
+            for MapLayer { _width: _, _height: _, _data: _, data_texture, texture } in map.iter() {
                 let full_scale = 16.0;
                 let tile_count = 8.0;
                 let matrix = graphics::make_matrix(Vector2::new(0.0, 0.0), Vector2::new(full_scale, full_scale), 0.0);
@@ -321,67 +321,73 @@ impl Game<'_> {
                 if let Some(base) = game.world.base.components.get(cid) {
                     match base.ctype {
                         CharacterType::IceWiz | CharacterType::CasterMinion => {
-                            let Animation { timer: animation_time } = match animation_data.get_mut(cid) {
-                                None => {
-                                    animation_data.insert(*cid, Animation {
-                                        timer: 0.0,
-                                    });
-                                    animation_data.get_mut(cid).unwrap()
-                                },
-                                Some(time) => time,
-                            };
-                            let textures = match base.ctype {
-                                CharacterType::IceWiz => &character_walk_textures,
-                                CharacterType::CasterMinion => &caster_minion_walk_textures,
-                                _ => continue
-                            };
-                            let mut frame = 0usize;
-                            if let Some(movement) = game.world.movement.components.get(cid) {
-                                if movement.destination.is_some() {
+                            (|| -> Option<()> {
+                                let Animation { timer: animation_time } = match animation_data.get_mut(cid) {
+                                    None => {
+                                        animation_data.insert(*cid, Animation {
+                                            timer: 0.0,
+                                        });
+                                        animation_data.get_mut(cid).unwrap()
+                                    },
+                                    Some(time) => time,
+                                };
+                                let auto_attack = game.world.auto_attack.components.get(cid)?;
+                                let movement = game.world.movement.components.get(cid)?;
+                                let textures = match base.ctype {
+                                    CharacterType::IceWiz => &character_walk_textures,
+                                    CharacterType::CasterMinion => &caster_minion_walk_textures,
+                                    _ => return Some(())
+                                };
+                                let frame;
+                                if auto_attack.execution.is_none() && (auto_attack.targeting.is_some() || movement.destination.is_some()) {
                                     *animation_time += delta_time;
                                     *animation_time -= f32::floor(*animation_time * animation_fps / (textures.len() as f32))
                                         * textures.len() as f32 / animation_fps;
                                     frame = (*animation_time * textures.len() as f32) as usize;
+                                } else {
+                                    *animation_time = 0.0;
+                                    frame = 0;
                                 }
-                            }
-                            let flip_dir: f32 = match base.flip {
-                                CharacterFlip::Left => -1.0,
-                                CharacterFlip::Right => 1.0
-                            };
-                            let scale = match base.ctype {
-                                CharacterType::IceWiz => 1.0,
-                                CharacterType::CasterMinion => 0.5,
-                                _ => continue
-                            };
-                            let offset = Vector2::new(0.0, -100.0 / 256.0 * scale);
-                            let matrix = graphics::make_matrix(
-                                base.position + offset,
-                                Vector2::new(flip_dir * scale, scale),
-                                0.0
-                            );
-                            let color = match Some(*cid) == selected_char {
-                                true => Vector4::new(1.0, 1.0, 1.0, 1.0),
-                                false => Vector4::new(1.0, 0.9, 0.9, 1.0)
-                            };
-                            texture_render.render(
-                                &(proj_view * matrix),
-                                &color,
-                                &textures[frame],
-                                graphics::VertexRange::Full
-                            );
-
-                            // render player name below player
-                            if let Some(name) = game.character_name.get(cid) {
-                                let text_width = game_font.text_width(name.as_str());
-                                let player_view_pos = game.camera.world_to_view_pos(base.position);
-                                let offset = Vector2::new(-text_width / 2.0, game_font.line_height());
-                                let sim = Similarity3::<f32>::new(
-                                    Vector3::new(player_view_pos.x + offset.x, player_view_pos.y + offset.y, 0.0),
-                                    Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
-                                    1.0
+                                let flip_dir: f32 = match base.flip {
+                                    CharacterFlip::Left => -1.0,
+                                    CharacterFlip::Right => 1.0
+                                };
+                                let scale = match base.ctype {
+                                    CharacterType::IceWiz => 1.0,
+                                    CharacterType::CasterMinion => 0.5,
+                                    _ => return Some(())
+                                };
+                                let offset = Vector2::new(0.0, -100.0 / 256.0 * scale);
+                                let matrix = graphics::make_matrix(
+                                    base.position + offset,
+                                    Vector2::new(flip_dir * scale, scale),
+                                    0.0
                                 );
-                                game_font.render(&(proj * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
-                            }
+                                let color = match Some(*cid) == selected_char {
+                                    true => Vector4::new(1.0, 1.0, 1.0, 1.0),
+                                    false => Vector4::new(1.0, 0.9, 0.9, 1.0)
+                                };
+                                texture_render.render(
+                                    &(proj_view * matrix),
+                                    &color,
+                                    &textures[frame],
+                                    graphics::VertexRange::Full
+                                );
+
+                                // render player name below player
+                                if let Some(name) = game.character_name.get(cid) {
+                                    let text_width = game_font.text_width(name.as_str());
+                                    let player_view_pos = game.camera.world_to_view_pos(base.position);
+                                    let offset = Vector2::new(-text_width / 2.0, game_font.line_height());
+                                    let sim = Similarity3::<f32>::new(
+                                        Vector3::new(player_view_pos.x + offset.x, player_view_pos.y + offset.y, 0.0),
+                                        Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
+                                        1.0
+                                    );
+                                    game_font.render(&(proj * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
+                                }
+                                Some(())
+                            })();
                         },
                         CharacterType::Projectile => {
                             let scale = 0.2;
