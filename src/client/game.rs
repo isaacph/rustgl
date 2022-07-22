@@ -129,13 +129,15 @@ impl Game<'_> {
         let character_walk_textures: Vec<graphics::Texture> = (1..=12).map(
             |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str())
         ).collect();
+        let caster_minion_walk_textures: Vec<graphics::Texture> = (1..=12).map(
+            |i| texture_library.make_texture(format!("caster_minion_128/Frame {}.png", i).as_str())
+        ).collect();
 
         enum Direction {
             Left, Right
         }
         struct Animation {
             timer: f32,
-            direction: Direction
         }
         let mut animation_data: HashMap<CharacterID, Animation> = HashMap::new();
         let animation_fps = 12.0;
@@ -271,40 +273,43 @@ impl Game<'_> {
             for cid in &game.world.characters {
                 if let Some(base) = game.world.base.components.get(cid) {
                     match base.ctype {
-                        CharacterType::IceWiz => {
-                            let Animation { timer: animation_time, direction } = match animation_data.get_mut(cid) {
+                        CharacterType::IceWiz | CharacterType::CasterMinion => {
+                            let Animation { timer: animation_time } = match animation_data.get_mut(cid) {
                                 None => {
                                     animation_data.insert(*cid, Animation {
                                         timer: 0.0,
-                                        direction: Direction::Right,
                                     });
                                     animation_data.get_mut(cid).unwrap()
                                 },
                                 Some(time) => time,
                             };
+                            let textures = match base.ctype {
+                                CharacterType::IceWiz => &character_walk_textures,
+                                CharacterType::CasterMinion => &caster_minion_walk_textures,
+                                _ => continue
+                            };
                             let mut frame = 0usize;
                             if let Some(movement) = game.world.movement.components.get(cid) {
-                                if let Some(dest) = movement.destination {
+                                if movement.destination.is_some() {
                                     *animation_time += delta_time;
-                                    *animation_time -= f32::floor(*animation_time * animation_fps / (character_walk_textures.len() as f32))
-                                        * character_walk_textures.len() as f32 / animation_fps;
-                                    *direction = if dest.x - base.position.x >= 0.0 {
-                                        Direction::Right
-                                    } else {
-                                        Direction::Left
-                                    };
-                                    frame = (*animation_time * character_walk_textures.len() as f32) as usize;
+                                    *animation_time -= f32::floor(*animation_time * animation_fps / (textures.len() as f32))
+                                        * textures.len() as f32 / animation_fps;
+                                    frame = (*animation_time * textures.len() as f32) as usize;
                                 }
                             }
                             let flip_dir: f32 = match base.flip {
                                 CharacterFlip::Left => -1.0,
                                 CharacterFlip::Right => 1.0
                             };
-                            let player_scale = 1.0;
-                            let offset = Vector2::new(0.0, -100.0 / 256.0 * player_scale);
+                            let scale = match base.ctype {
+                                CharacterType::IceWiz => 1.0,
+                                CharacterType::CasterMinion => 0.5,
+                                _ => continue
+                            };
+                            let offset = Vector2::new(0.0, -100.0 / 256.0 * scale);
                             let matrix = graphics::make_matrix(
                                 base.position + offset,
-                                Vector2::new(flip_dir * player_scale, player_scale),
+                                Vector2::new(flip_dir * scale, scale),
                                 0.0
                             );
                             let color = match Some(*cid) == selected_char {
@@ -314,7 +319,7 @@ impl Game<'_> {
                             texture_render.render(
                                 &(proj_view * matrix),
                                 &color,
-                                &character_walk_textures[frame],
+                                &textures[frame],
                                 graphics::VertexRange::Full
                             );
 
@@ -339,16 +344,6 @@ impl Game<'_> {
                                 0.0
                             );
                             let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
-                            simple_render.render(&(proj_view * matrix), &color, graphics::VertexRange::Full);
-                        },
-                        CharacterType::CasterMinion => {
-                            let scale = 0.2;
-                            let matrix = graphics::make_matrix(
-                                base.position,
-                                Vector2::new(base.flip.dir() * scale, scale),
-                                0.0
-                            );
-                            let color = Vector4::new(1.0, 1.0, 0.0, 1.0);
                             simple_render.render(&(proj_view * matrix), &color, graphics::VertexRange::Full);
                         },
                     };
