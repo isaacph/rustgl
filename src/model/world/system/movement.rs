@@ -20,23 +20,21 @@ pub struct MoveCharacter {
 
 impl<'a> WorldCommand<'a> for MoveCharacter {
     fn validate(&self, world: &World) -> Result<(), WorldError> {
-        let _ = world.characters
-            .get(&self.to_move)
-            .ok_or(WorldError::MissingCharacter(self.to_move))?;
         if self.destination.x.is_nan() || self.destination.y.is_nan() {
             return Err(WorldError::InvalidCommand);
         }
         if !world.characters.contains(&self.to_move) {
-            return Err(WorldError::MissingCharacter(self.to_move))
-        }
-        let base = world.base.get_component(&self.to_move)?;
-        if world.auto_attack.get_component(&self.to_move)?.is_casting(base.ctype, base, &world.info) {
-            return Err(WorldError::IllegalInterrupt(self.to_move))
+            return Err(WorldError::MissingCharacter(
+                self.to_move,
+                "Cannot move nonexistent character".to_string()))
         }
         Ok(())
     }
     fn run(&mut self, world: &mut World) -> Result<(), WorldError> {
         let movement = world.movement.get_component_mut(&self.to_move)?;
+        if let Some(auto_attack) = world.auto_attack.components.get_mut(&self.to_move) {
+            auto_attack.targeting = None;
+        }
         movement.destination = Some(self.destination);
         Ok(())
     }
@@ -82,6 +80,18 @@ pub fn movement_system_init(_: &mut World) -> Result<(), WorldError> {
 fn movement_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
     match world.movement.get_component(&cid)?.destination.as_ref() {
         Some(dest) => {// currently executing the action
+            // cancel auto attack
+            let base = world.base.get_component(&cid)?;
+            if let Some(auto_attack) = world.auto_attack.components.get_mut(&cid) {
+                auto_attack.targeting = None;
+                if !auto_attack.is_casting(base.ctype, &world.info) {
+                    auto_attack.execution = None;
+                } else {
+                    return Ok(());
+                }
+            }
+
+            // move
             let dest = *dest;
             match move_to(world, &cid, &dest, 0.0, delta_time)? {
                 Some(_) => {

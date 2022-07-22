@@ -1,6 +1,6 @@
 use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{World, character::{CharacterID, CharacterType}, commands::WorldCommand, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterBase, CharacterFlip}, WorldInfo, ErrLog}, commands::GetCommandID};
+use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::WorldCommand, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, WorldInfo, ErrLog}, commands::GetCommandID};
 use self::fsm::Fsm;
 
 use super::{movement::move_to, projectile::{self, ProjectileCreationInfo}};
@@ -9,22 +9,23 @@ pub mod fsm;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AutoAttackExecution {
-    timer: f32,
-    starting_attack_speed: f32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AutoAttackInstance {
-    pub execution: Option<AutoAttackExecution>,
+    pub timer: f32,
+    pub starting_attack_speed: f32,
     pub target: CharacterID,
     pub projectile_gen_id: CharacterID,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct AutoAttackTargeting {
+    pub target: CharacterID,
+    pub ids: CharacterIDRange,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AutoAttack {
-    pub attack: Option<AutoAttackInstance>,
-    pub timer: f32,
-    pub target: Option<CharacterID>,
+    pub timer: f32, // cooldown
+    pub execution: Option<AutoAttackExecution>, // currently executing attack
+    pub targeting: Option<AutoAttackTargeting>, // currently scheduled string of attacks
 }
 
 impl GetComponentID for AutoAttack {
@@ -88,7 +89,7 @@ pub struct AutoAttackRequest {
 pub struct AutoAttackCommand {
     pub attacker: CharacterID,
     pub target: CharacterID,
-    pub projectile_gen_id: CharacterID,
+    pub projectile_gen_ids: CharacterIDRange,
 }
 
 impl<'a> WorldCommand<'a> for AutoAttackCommand {
@@ -97,10 +98,10 @@ impl<'a> WorldCommand<'a> for AutoAttackCommand {
             return Err(WorldError::InvalidCommand)
         }
         if !world.characters.contains(&self.attacker) {
-            return Err(WorldError::MissingCharacter(self.attacker))
+            return Err(WorldError::MissingCharacter(self.attacker, "Nonexistent character cannot attack".to_string()))
         }
         if !world.characters.contains(&self.target) {
-            return Err(WorldError::MissingCharacter(self.target))
+            return Err(WorldError::MissingCharacter(self.target, "Cannot attack nonexistent character".to_string()))
         }
         Ok(())
     }
@@ -110,11 +111,14 @@ impl<'a> WorldCommand<'a> for AutoAttackCommand {
 
         // set target (who to attack next even if already doing something else)
         let auto_attack = world.auto_attack.get_component_mut(&self.attacker)?;
-        auto_attack.target = Some(self.target);
+        auto_attack.targeting = Some(AutoAttackTargeting {
+            target: self.target,
+            ids: self.projectile_gen_ids.clone(),
+        });
 
         // check if busy
         let base = world.base.get_component(&self.attacker)?;
-        if auto_attack.is_casting(base.ctype, base, &world.info) {
+        if auto_attack.is_casting(base.ctype, &world.info) {
             return Ok(())
         }
         if auto_attack.timer > 0.0 {
@@ -122,7 +126,7 @@ impl<'a> WorldCommand<'a> for AutoAttackCommand {
         }
 
         // if not busy, start the attack
-        auto_attack_start(world, &self.attacker, &self.target, &self.projectile_gen_id)?;
+        // auto_attack_start(world, &self.attacker, &self.target, &self.projectile_gen_id)?;
         Ok(())
     }
 }
@@ -136,7 +140,7 @@ impl GetCommandID for AutoAttackCommand {
 
 impl AutoAttack {
     pub fn new() -> Self {
-        Self { attack: None, timer: 0.0, target: None }
+        Self { execution: None, timer: 0.0, targeting: None }
     }
 }
 
@@ -151,17 +155,17 @@ pub fn auto_attack_system_init(_: &mut World) -> Result<(), WorldError> {
     Ok(())
 }
 
-fn auto_attack_start(world: &mut World, attacker: &CharacterID, target: &CharacterID, projectile_gen_id: &CharacterID) -> Result<(), WorldError> {
-    let auto_attack = world.auto_attack.get_component_mut(attacker)?;
-    auto_attack.attack = Some(AutoAttackInstance {
-        execution: None,
-        target: *target,
-        projectile_gen_id: *projectile_gen_id,
-    });
-    Ok(())
-}
+// fn auto_attack_start(world: &mut World, attacker: &CharacterID, target: &CharacterID, projectile_gen_id: &CharacterID) -> Result<(), WorldError> {
+//     let auto_attack = world.auto_attack.get_component_mut(attacker)?;
+//     auto_attack.attack = Some(AutoAttackInstance {
+//         execution: None,
+//         target: *target,
+//         projectile_gen_id: *projectile_gen_id,
+//     });
+//     Ok(())
+// }
 
-fn auto_attack_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
+fn auto_attack_update(world: &mut World, mut delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
     let (ctype, attack_speed) = {
         let base = world.base.get_component(&cid)?;
         (base.ctype, base.attack_speed)
@@ -170,79 +174,86 @@ fn auto_attack_update(world: &mut World, delta_time: f32, cid: CharacterID) -> R
     .ok_or(WorldError::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack))?.clone();
     let auto_attack = world.auto_attack.get_component_mut(&cid)?;
     auto_attack.timer -= delta_time;
-    if let Some(attack) = &auto_attack.attack {
-        let target = attack.target;
-        let attacker_range = world.base.get_component_mut(&cid)?.range;
+    
+    if let Some(targeting) = &mut auto_attack.targeting {
+        let target = targeting.target;
+        if !world.characters.contains(&target) || targeting.ids.is_empty() {
+            auto_attack.targeting = None;
+        } else if auto_attack.execution.is_none() {
+            let attacker_range = world.base.get_component_mut(&cid)?.range;
 
-        // preliminary movement for attack
-        let mut remaining_time = Some(delta_time);
-        if attack.execution.is_none() {// attack hasn't started yet, move to attack
+            // preliminary movement for attack
             let target_pos = world.base.get_component_mut(&target)?.position;
-            if let Some(new_remaining_time) = move_to(world, &cid, &target_pos, attacker_range, remaining_time.unwrap_or(0.0))? {
+            if let Some(new_remaining_time) = move_to(world, &cid, &target_pos, attacker_range, delta_time)? {
                 // we are in range, start the auto
                 // set the cooldown
                 let auto_attack = &mut world.auto_attack.get_component_mut(&cid)?;
+                let targeting = auto_attack.targeting.as_mut()
+                    .ok_or(WorldError::UnexpectedComponentState(
+                        cid,
+                        ComponentID::AutoAttack,
+                        "Targeting was removed?".to_string()))?;
                 auto_attack.timer = attack_speed - new_remaining_time;
 
                 // start the execution fsm
-                let attack = (auto_attack.attack).as_mut()
-                    .ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?;
-                attack.execution = Some(AutoAttackExecution {
+                auto_attack.execution = Some(AutoAttackExecution {
                     timer: 0.0,
                     starting_attack_speed: attack_speed,
+                    target,
+                    projectile_gen_id: targeting.ids.next_id()
+                        .ok_or(WorldError::UnexpectedComponentState(
+                            cid,
+                            ComponentID::AutoAttack,
+                            "Ran out of auto attack IDs".to_string()))?
                 });
-                remaining_time = Some(new_remaining_time);
+                delta_time = new_remaining_time;
             } else {
-                remaining_time = None;
+                delta_time = 0.0;
             }
         }
+    }
 
+    if let Some(execution) = &mut world.auto_attack.get_component_mut(&cid)?.execution {
         // attack fsm
-        if let Some(remaining_time) = remaining_time {
-            if let Some(execution) = world.auto_attack.get_component_mut(&cid)?
-                .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
-                .execution.as_mut() {
-                let timer = execution.timer;
-                let (changes, _changed) = attack_info.fsm.get_state_changes(
-                        attack_speed,
-                        execution.timer,
-                        execution.timer + remaining_time);
-                for change in changes {
-                    match change {
-                        fsm::Changes::Event(time_since, _) => auto_attack_fire(world, &cid, time_since)?,
-                        fsm::Changes::StateChange(time_since, phase) => {
-                            println!("New AA phase: {:?}, timer: {}, increment: {}, time_since: {}",
-                                phase,
-                                timer,
-                                remaining_time,
-                                time_since);
-                            match phase {
-                                AutoAttackPhase::WindUp |
-                                AutoAttackPhase::Casting |
-                                AutoAttackPhase::WindDown => (),
-                                AutoAttackPhase::Complete => {
-                                    // finish the auto attack
-                                    world.auto_attack.get_component_mut(&cid)?.attack = None;
-                                },
-                            }
+        let target = execution.target;
+        let timer = execution.timer;
+        let (changes, _changed) = attack_info.fsm.get_state_changes(
+                attack_speed,
+                execution.timer,
+                execution.timer + delta_time);
+        for change in changes {
+            match change {
+                fsm::Changes::Event(time_since, _) => auto_attack_fire(world, &cid, time_since)?,
+                fsm::Changes::StateChange(time_since, phase) => {
+                    println!("New AA phase: {:?}, timer: {}, increment: {}, time_since: {}",
+                        phase,
+                        timer,
+                        delta_time,
+                        time_since);
+                    match phase {
+                        AutoAttackPhase::WindUp |
+                        AutoAttackPhase::Casting |
+                        AutoAttackPhase::WindDown => (),
+                        AutoAttackPhase::Complete => {
+                            // finish the auto attack
+                            world.auto_attack.get_component_mut(&cid)?.execution = None;
                         },
                     }
-                }
-                match attack_info.fsm.get_current_state(attack_speed, timer) {
-                    AutoAttackPhase::WindUp |
-                    AutoAttackPhase::Casting => {
-                        // cancel if target dies
-                        if !world.characters.contains(&target) {
-                            world.auto_attack.get_component_mut(&cid)?.attack = None;
-                        }
-                    },
-                    _ => (),
-                }
-                world.auto_attack.get_component_mut(&cid)?
-                    .attack.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
-                    .execution.as_mut().ok_or(WorldError::UnexpectedComponentState(cid, ComponentID::AutoAttack))?
-                    .timer += remaining_time;
+                },
             }
+        }
+        match attack_info.fsm.get_current_state(attack_speed, timer) {
+            AutoAttackPhase::WindUp |
+            AutoAttackPhase::Casting => {
+                // cancel if target dies
+                if !world.characters.contains(&target) {
+                    world.auto_attack.get_component_mut(&cid)?.execution = None;
+                }
+            },
+            _ => (),
+        }
+        if let Some(execution) = &mut world.auto_attack.get_component_mut(&cid)?.execution {
+            execution.timer += delta_time;
         }
     }
     Ok(())
@@ -256,18 +267,21 @@ pub fn auto_attack_system_update(world: &mut World, delta_time: f32) -> Result<(
     Ok(())
 }
 
-pub fn auto_attack_fire(world: &mut World, cid: &CharacterID, time_since_fire: f32) -> Result<(), WorldError> {
+fn auto_attack_fire(world: &mut World, cid: &CharacterID, time_since_fire: f32) -> Result<(), WorldError> {
     // world.base.get_component_mut(cid)?.position.y -= 1.0;
     // println!("Fire action this long ago: {}, for now we just jump lol", time_since_fire);
     let (ctype, damage) = {
         let base = world.base.get_component(cid)?;
         (base.ctype, base.attack_damage)
     };
-    let attack = world.auto_attack.get_component(cid)?.attack.as_ref()
-        .ok_or(WorldError::UnexpectedComponentState(*cid, ComponentID::AutoAttack))?;
-    let gen_id = attack.projectile_gen_id;
+    let execution = world.auto_attack.get_component(cid)?.execution.as_ref()
+        .ok_or(WorldError::UnexpectedComponentState(
+            *cid,
+            ComponentID::AutoAttack,
+            "Tried to fire without currently executing auto attack".to_string()))?;
+    let gen_id = execution.projectile_gen_id;
     let origin = *cid;
-    let target = attack.target;
+    let target = execution.target;
 
     // flip towards target
     let target_pos = world.base.get_component(cid)?.position;
@@ -301,11 +315,11 @@ pub mod server {
         fn run(self, addr: &SocketAddr, player_id: &PlayerID, server: &mut Server) {
             // check if the player can use the requested character
             if server.player_manager.can_use_character(player_id, &self.attacker) {
-                let gen_id = server.character_id_gen.generate();
+                let gen_ids = server.character_id_gen.generate_range(1000);
                 server.run_world_command(Some(addr), AutoAttackCommand {
                     attacker: self.attacker,
                     target: self.target,
-                    projectile_gen_id: gen_id,
+                    projectile_gen_ids: gen_ids,
                 });
             } else {
                 server.connection.send(
@@ -325,12 +339,16 @@ impl Default for AutoAttack {
 }
 
 impl AutoAttack {
-    pub fn is_casting(&self, ctype: CharacterType, base: &CharacterBase, info: &WorldInfo) -> bool {
+    pub fn is_casting(&self, ctype: CharacterType, info: &WorldInfo) -> bool {
         if let Some(attack_info) = info.auto_attack.get(&ctype) {
-            if let Some(attack) = &self.attack {
-                if let Some(execution) = &attack.execution {
-                    return attack_info.fsm.get_current_state(base.attack_speed, execution.timer) == AutoAttackPhase::Casting
-                }
+            if let Some(execution) = &self.execution {
+                let state = attack_info.fsm.get_current_state(execution.starting_attack_speed, execution.timer);
+                println!("State is {:?}, as: {}, timer: {}",
+                    state,
+                    execution.starting_attack_speed,
+                    execution.timer
+                );
+                return state == AutoAttackPhase::Casting
             }
         }
         false

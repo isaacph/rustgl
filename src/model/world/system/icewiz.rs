@@ -69,9 +69,9 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
     world.info.auto_attack.insert(CharacterType::IceWiz, AutoAttackInfo::init(
         CharacterType::IceWiz,
         1.0, // wind up duration
-        1.0, // casting duration
+        3.0, // casting duration
         1.0, // wind down duration
-        1.0, // fire time (after animation start)
+        2.5, // fire time (after animation start)
         0.5, // projectile speed
         Vector2::new(0.3, -0.3) // projectile offset
     )?);

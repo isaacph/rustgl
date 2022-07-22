@@ -95,7 +95,7 @@ fn projectile_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Re
     let target = world.projectile.get_component(&cid)?.target;
     if world.characters.get(&target).is_none() {
         world.erase_character(&cid)?;
-        return Err(WorldError::MissingCharacter(target))
+        return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
     }
     let dest = world.base.get_component(&target)?.position;
     let range = 0.0;

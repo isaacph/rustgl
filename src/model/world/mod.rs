@@ -60,13 +60,13 @@ pub mod client;
 
 #[derive(Debug, Clone)]
 pub enum WorldError {
-    MissingCharacter(CharacterID),
+    MissingCharacter(CharacterID, String),
     MissingCharacterComponent(CharacterID, ComponentID),
     MissingCharacterCreator(CharacterType),
     InvalidCommandReplacement(CharacterID, CommandID),
     InvalidCommand,
     OutOfRange(CharacterID), // character whose range we are out of
-    UnexpectedComponentState(CharacterID, ComponentID),
+    UnexpectedComponentState(CharacterID, ComponentID, String),
     MissingCharacterInfoComponent(CharacterType, ComponentID),
     InvalidComponentInfo(CharacterType, ComponentID),
     InvalidAttackPhase(CharacterID, AutoAttackPhase),
