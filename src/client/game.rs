@@ -132,6 +132,34 @@ impl Game<'_> {
 
         let mut render = Render::init();
 
+        #[derive(Clone, Copy)]
+        struct Clickbox {
+            offset: Vector2<f32>,
+            size: Vector2<f32>,
+        }
+        impl Clickbox {
+            fn in_clickbox(&self, my_center: &Vector2<f32>, point: &Vector2<f32>) -> bool {
+                let center = my_center + self.offset;
+                if center.x - self.size.x / 2.0 <= point.x && point.x <= center.x + self.size.x / 2.0 &&
+                    center.y - self.size.y / 2.0 <= point.y && point.y <= center.y + self.size.y / 2.0 {
+                    return true;
+                }
+                false
+            }
+        }
+        let clickbox_types: HashMap<CharacterType, Clickbox> = {
+            let mut clickbox_types = HashMap::new();
+            clickbox_types.insert(CharacterType::IceWiz, Clickbox {
+                offset: Vector2::new(0.0, -0.41),
+                size: Vector2::new(0.4, 0.83),
+            });
+            clickbox_types.insert(CharacterType::CasterMinion, Clickbox {
+                offset: Vector2::new(0.0, -0.19),
+                size: Vector2::new(0.35, 0.41),
+            });
+            clickbox_types
+        };
+
         unsafe {
             glClearColor(0.0, 0.0, 0.0, 1.0);
             glEnable(GL_BLEND);
@@ -231,6 +259,16 @@ impl Game<'_> {
                 }
             }
 
+            let clickboxes = {
+                let mut clickboxes: Vec<(Vector2<f32>, Clickbox, CharacterID)> = game.world.base.components.iter().filter_map(
+                    |(cid, base)| {
+                        Some((Vector2::new(base.position.x, base.position.y), *clickbox_types.get(&base.ctype)?, *cid))
+                    }
+                ).collect();
+                clickboxes.sort_by(|(a, _, _), (b, _, _)| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Less));
+                clickboxes
+            };
+
             // random text
             // let sim = Similarity3::<f32>::new(
             //     Vector3::new(100.0, 500.0, 0.0),
@@ -266,10 +304,15 @@ impl Game<'_> {
             };
 
             let CameraMatrix {
-                proj, view: _view
+                proj, view
             } = game.camera.matrix();
-
+            let proj_view = proj * view;
             render.render(&mut game, delta_time);
+
+            //clickboxes.iter().for_each(|(pos, cb, _cid)| {
+            //    let matrix = graphics::make_matrix(*pos + cb.offset, cb.size, 0.0);
+            //    simple_render.render(&(proj_view * matrix), &Vector4::new(0.3, 0.3, 0.3, 0.3), graphics::VertexRange::Full);
+            //});
 
             game.chatbox.render(&proj, delta_time);
 
@@ -346,7 +389,6 @@ impl Game<'_> {
                     //        }
                     //    }
                     //},
-                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) |
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Release, _)) => {
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
@@ -363,25 +405,38 @@ impl Game<'_> {
                             }
                         }
                     }
-                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
-                        game.destination = None;
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) |
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
                                     if let Some(cid) = player.selected_char {
                                         let mouse_pos_world = game.mouse_pos_world;
-                                        if let (Some(target), _) = game.world.base.components.iter().fold((None, f32::MAX),
-                                        |(mut cur_cid, mut dist), (ncid, base)| {
-                                            let mag = (mouse_pos_world - Vector2::new(base.position.x, base.position.y)).magnitude();
-                                            if mag < dist && cid != *ncid && base.targetable {
-                                                cur_cid = Some(*ncid);
-                                                dist = mag;
+                                        // determine if selecting unit
+                                        // if we hold backtick we cannot select a unit
+                                        let mut selected_cid = None;
+                                        if window.get_key(glfw::Key::GraveAccent) != Action::Press {
+                                            for (pos, cb, scid) in &clickboxes {
+                                                if *scid != cid && cb.in_clickbox(pos, &mouse_pos_world) {
+                                                    // selecting unit
+                                                    selected_cid = Some(scid);
+                                                    break;
+                                                }
                                             }
-                                            (cur_cid, dist)
-                                        }) {
+                                        }
+                                        if let Some(scid) = selected_cid {
+                                            // we clicked a unit
                                             game.connection.send(Protocol::UDP, &AutoAttackRequest {
                                                 attacker: cid,
-                                                target
+                                                target: *scid,
+                                            }).ok();
+                                        } else {
+                                            // we clicked the ground
+                                            game.destination = Some(game.mouse_pos_world);
+                                            game.move_timer = 0.0;
+                                            game.connection.send(Protocol::UDP, &MoveCharacterRequest {
+                                                id: cid,
+                                                dest: game.mouse_pos_world,
                                             }).ok();
                                         }
                                     }
@@ -389,6 +444,32 @@ impl Game<'_> {
                             }
                         }
                     },
+                    // (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
+                    //     game.destination = None;
+                    //     if game.connection.is_connected() {
+                    //         if let Some(pid) = game.selected_player {
+                    //             if let Some(player) = game.world.players.get_player(&pid) {
+                    //                 if let Some(cid) = player.selected_char {
+                    //                     let mouse_pos_world = game.mouse_pos_world;
+                    //                     if let (Some(target), _) = game.world.base.components.iter().fold((None, f32::MAX),
+                    //                     |(mut cur_cid, mut dist), (ncid, base)| {
+                    //                         let mag = (mouse_pos_world - Vector2::new(base.position.x, base.position.y)).magnitude();
+                    //                         if mag < dist && cid != *ncid && base.targetable {
+                    //                             cur_cid = Some(*ncid);
+                    //                             dist = mag;
+                    //                         }
+                    //                         (cur_cid, dist)
+                    //                     }) {
+                    //                         game.connection.send(Protocol::UDP, &AutoAttackRequest {
+                    //                             attacker: cid,
+                    //                             target
+                    //                         }).ok();
+                    //                     }
+                    //                 }
+                    //             }
+                    //         }
+                    //     }
+                    // },
                     (State::DEFAULT, glfw::WindowEvent::Key(glfw::Key::Y, _, Action::Press, _)) => {
                         game.locked = !game.locked;
                     }
