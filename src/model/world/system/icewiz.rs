@@ -73,7 +73,7 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
         3.0, // casting duration
         1.0, // wind down duration
         2.5, // fire time (after animation start)
-        0.5, // projectile speed
+        1.2, // projectile speed
         Vector3::new(0.2, 0.0, -0.4) // projectile offset
     )?);
     world.character_creator.insert(CharacterType::IceWiz, Box::new(IceWizCreatorCreator));

@@ -68,8 +68,8 @@ pub fn caster_minion_system_init(world: &mut World) -> Result<(), WorldError> {
         3.0, // casting duration
         1.0, // wind down duration
         2.5, // fire time (after animation start)
-        0.5, // projectile speed
-        Vector3::new(0.1, 0.0, -0.2) // projectile offset
+        1.2, // projectile speed
+        Vector3::new(0.12, 0.0, -0.12) // projectile offset
     )?);
     world.character_creator.insert(CharacterType::CasterMinion, Box::new(CasterMinionCreatorCreator));
     Ok(())

@@ -197,7 +197,7 @@ impl Render {
         enum Renderable {
             Click(Vector3<f32>, usize),
             Character(CharacterID),
-            CharacterCast(Vector3<f32>, usize),
+            CharacterCast(Vector3<f32>, usize, CharacterFlip),
             StandaloneAnimation(Vector3<f32>, usize, CharacterFlip)
         }
         let mut renderables = vec![];
@@ -262,7 +262,7 @@ impl Render {
 
                 if start_time <= timer && timer < fire_time {
                     let frame = ((timer - start_time) / animation_length * frames as f32) as usize;
-                    renderables.push(Renderable::CharacterCast(position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame));
+                    renderables.push(Renderable::CharacterCast(position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame, base.flip));
                 }
                 if self.standalone_animations.get(&cid).is_some() {
                     return None;
@@ -304,7 +304,7 @@ impl Render {
             // sort by float is cringe
             Renderable::Click(pos, _) |
             Renderable::StandaloneAnimation(pos, _, _) |
-            Renderable::CharacterCast(pos, _) =>
+            Renderable::CharacterCast(pos, _, _) =>
                 Result::unwrap_or(ordered_float::NotNan::new(pos.y), ordered_float::NotNan::new(f32::MAX).unwrap()),
             Renderable::Character(cid) => {
                 if let Some(base) = game.world.base.components.get(cid) {
@@ -459,11 +459,11 @@ impl Render {
                         graphics::VertexRange::Full
                     );
                 },
-                Renderable::CharacterCast(position, frame) => {
+                Renderable::CharacterCast(position, frame, flip) => {
                     let scale = 0.5;
                     let matrix = graphics::make_matrix(
                         Vector2::new(position.x, position.y + position.z) + Vector2::new(0.0, 0.0),
-                        Vector2::new(scale, scale),
+                        Vector2::new(scale * flip.dir(), scale),
                         0.0
                     );
                     self.texture_render.render(
