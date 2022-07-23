@@ -40,6 +40,7 @@ pub enum CommandID {
     MoveCharacter,
     AutoAttackCommand,
     AutoAttackRequest,
+    ClearWorld,
 }
 
 pub mod core {

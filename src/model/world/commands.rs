@@ -85,3 +85,11 @@ impl GetCommandID for EnsureCharacter {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ClearWorld;
+
+impl GetCommandID for ClearWorld {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        crate::model::commands::CommandID::ClearWorld
+    }
+}

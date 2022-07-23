@@ -61,6 +61,7 @@ pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) ->
             AutoAttackCommand => drun_w::<crate::model::world::system::auto_attack::AutoAttackCommand>(data, context),
             IndicateClientPlayer => drun::<crate::model::player::commands::IndicateClientPlayer>(data, context),
             PlayerDataPayload => drun::<crate::model::player::commands::PlayerDataPayload>(data, context),
+            ClearWorld => drun::<crate::model::world::commands::ClearWorld>(data, context),
             _ => {
                 println!("Command ID not implemented on client: {:?}", id);
                 Ok(())

@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest},
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest},
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -648,6 +648,10 @@ impl Game<'_> {
                     let zoom = zoom.parse().map_err(|err| format!("Parse error: {:?}", err))?;
                     self.camera.zoom = zoom;
                     Ok(Some(format!("Zoom set to {}", zoom)))
+                },
+                ["clear", "world"] => {
+                    self.connection.send(Protocol::TCP, &ClearWorld)?;
+                    Ok(None)
                 },
                 _ => Err("Unknown command or incorrect parameters.".to_string())
             }
