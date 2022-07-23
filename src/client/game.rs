@@ -41,7 +41,8 @@ pub struct Game<'a> {
     pub ui_scale: f32,
     pub locked: bool,
     pub destination: Option<Vector2<f32>>,
-    pub hovered_character: Option<CharacterID>
+    pub hovered_character: Option<CharacterID>,
+    pub clicked_hovered: bool,
 }
 
 impl Game<'_> {
@@ -104,6 +105,7 @@ impl Game<'_> {
                 move_timer: 0.0,
                 selected_player: None,
                 hovered_character: None,
+                clicked_hovered: false,
                 character_name: HashMap::new(),
                 camera: CameraContext {
                     width: start_width,
@@ -244,7 +246,9 @@ impl Game<'_> {
             }
 
             game.move_timer += delta_time;
-            if window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press {
+            if (window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press ||
+                    window.get_mouse_button(glfw::MouseButtonLeft) == glfw::Action::Press) &&
+                    !game.clicked_hovered {
                 game.destination = Some(game.mouse_pos_world);
                 if game.move_timer >= 0.2 {
                     if let Some(pid) = game.selected_player {
@@ -406,8 +410,9 @@ impl Game<'_> {
                     //        }
                     //    }
                     //},
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Release, _)) |
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Release, _)) => {
-                        if game.connection.is_connected() {
+                        if game.connection.is_connected() && !game.clicked_hovered {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
                                     if let Some(cid) = player.selected_char {
@@ -421,6 +426,7 @@ impl Game<'_> {
                                 }
                             }
                         }
+                        game.clicked_hovered = false;
                     }
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) |
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
@@ -430,6 +436,8 @@ impl Game<'_> {
                                     if let Some(cid) = player.selected_char {
                                         if let Some(scid) = &game.hovered_character {
                                             // we clicked a unit
+                                            game.clicked_hovered = true;
+                                            game.destination = None;
                                             game.connection.send(Protocol::UDP, &AutoAttackRequest {
                                                 attacker: cid,
                                                 target: *scid,

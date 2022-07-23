@@ -155,7 +155,7 @@ impl Server {
                 println!("Update loop error: {}", error);
             }
 
-            std::thread::sleep(Duration::new(0, 1000000 * 16)); // wait 16 ms
+            // std::thread::sleep(Duration::new(0, 1000000 * 16)); // wait 16 ms
         }
         Ok(())
     }

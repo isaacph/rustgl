@@ -15,7 +15,8 @@ impl GetComponentID for Movement {
 #[derive(Serialize, Deserialize)]
 pub struct MoveCharacter {
     pub to_move: CharacterID,
-    pub destination: Vector2<f32>
+    pub destination: Vector2<f32>,
+    pub reset: bool,
 }
 
 impl<'a> WorldCommand<'a> for MoveCharacter {
@@ -28,14 +29,25 @@ impl<'a> WorldCommand<'a> for MoveCharacter {
                 self.to_move,
                 "Cannot move nonexistent character".to_string()))
         }
+        let base = world.base.get_component(&self.to_move)?;
+        if self.reset {
+            if let Some(auto_attack) = world.auto_attack.components.get(&self.to_move) {
+                if auto_attack.is_casting(base.ctype, &world.info) {
+                    return Err(WorldError::IllegalInterrupt(self.to_move));
+                }
+            }
+        }
         Ok(())
     }
     fn run(&mut self, world: &mut World) -> Result<(), WorldError> {
         let movement = world.movement.get_component_mut(&self.to_move)?;
+        movement.destination = Some(self.destination);
         if let Some(auto_attack) = world.auto_attack.components.get_mut(&self.to_move) {
             auto_attack.targeting = None;
         }
-        movement.destination = Some(self.destination);
+        if self.reset {
+            world.auto_attack.get_component_mut(&self.to_move)?.execution = None;
+        }
         Ok(())
     }
 }
@@ -170,9 +182,16 @@ pub mod server {
         fn run(self, addr: &SocketAddr, pid: &PlayerID, server: &mut Server) {
             // check if character can move the character at self.id
             if server.player_manager.can_use_character(pid, &self.id) {
+                // determine if attack should reset character state
+                let reset = if let Some(auto_attack) = server.world.auto_attack.components.get(&self.id) {
+                    if let Some(base) = server.world.base.components.get(&self.id) {
+                        !auto_attack.is_casting(base.ctype, &server.world.info)
+                    } else { false }
+                } else { false };
                 let command = MoveCharacter {
                     to_move: self.id,
                     destination: self.dest,
+                    reset
                 };
                 server.run_world_command(Some(addr), command);
             } else {
