@@ -46,6 +46,7 @@ pub struct Game<'a> {
     pub camera: CameraContext,
     pub ui_scale: f32,
     pub locked: bool,
+    pub destination: Option<Vector2<f32>>
 }
 
 impl Game<'_> {
@@ -116,7 +117,8 @@ impl Game<'_> {
                     zoom: 4.0
                 },
                 ui_scale,
-                locked: true
+                locked: true,
+                destination: None
             }
         };
 
@@ -256,15 +258,18 @@ impl Game<'_> {
             }
 
             game.move_timer += delta_time;
-            if game.move_timer >= 0.2 && window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press {
-                if let Some(pid) = game.selected_player {
-                    if let Some(player) = game.world.players.get_player(&pid) {
-                        if let Some(cid) = player.selected_char {
-                            game.move_timer = 0.0;
-                            game.connection.send(Protocol::UDP, &MoveCharacterRequest {
-                                id: cid,
-                                dest: game.mouse_pos_world,
-                            }).ok();
+            if window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press {
+                game.destination = Some(game.mouse_pos_world);
+                if game.move_timer >= 0.2 {
+                    if let Some(pid) = game.selected_player {
+                        if let Some(player) = game.world.players.get_player(&pid) {
+                            if let Some(cid) = player.selected_char {
+                                game.move_timer = 0.0;
+                                game.connection.send(Protocol::UDP, &MoveCharacterRequest {
+                                    id: cid,
+                                    dest: game.mouse_pos_world,
+                                }).ok();
+                            }
                         }
                     }
                 }
@@ -323,23 +328,48 @@ impl Game<'_> {
             }
             let mut renderables = vec![];
             renderables.extend(game.world.characters.iter().map(|cid| Renderable::Character(*cid)));
-            {
-                let render_click = || -> Option<Vector2<f32>> {
+            let render_click = || -> Option<Vector2<f32>> {
+                if let Some(dest) = game.destination {
                     if let Some(cid) = selected_char {
                         if let Some(movement) = game.world.movement.components.get(&cid) {
-                            return movement.destination
+                            if let Some(dest2) = movement.destination {
+                                if (dest - dest2).magnitude() < 0.001 {
+                                    game.destination = None;
+                                }
+                            }
                         }
                     }
-                    None
-                }();
-                if let Some(destination) = render_click {
-                    click_animation_timer += delta_time;
-                    let frame = regulate_extract_frame(&mut click_animation_timer, animation_fps, click_animation_textures.len());
-                    renderables.push(Renderable::Click(destination, frame));
-                } else {
-                    click_animation_timer = 0.0;
+                    return Some(dest)
                 }
-            }
+                if let Some(cid) = selected_char {
+                    if let Some(movement) = game.world.movement.components.get(&cid) {
+                        return movement.destination
+                    }
+                }
+                None
+            }();
+            let render_click_frame = if let Some(destination) = render_click {
+                click_animation_timer += delta_time;
+                let frame = regulate_extract_frame(&mut click_animation_timer, animation_fps, click_animation_textures.len());
+                renderables.push(Renderable::Click(destination, frame));
+                let scale = 0.5;
+                let matrix = graphics::make_matrix(
+                    destination + Vector2::new(0.0, -0.18),
+                    Vector2::new(scale, scale),
+                    0.0
+                );
+                texture_render.render(
+                    &(proj_view * matrix),
+                    &Vector4::new(0.5, 0.5, 0.5, 0.5),
+                    &click_animation_textures[frame],
+                    graphics::VertexRange::Full
+                );
+                frame
+            } else {
+                click_animation_timer = 0.0;
+                0
+            };
+
             renderables.sort_by_key(|elt| match elt {
                 // sort by float is cringe
                 Renderable::Click(pos, _) =>
@@ -449,12 +479,26 @@ impl Game<'_> {
                         );
                         texture_render.render(
                             &(proj_view * matrix),
-                            &Vector4::new(1.0, 1.0, 1.0, 1.0),
+                            &Vector4::new(0.5, 0.5, 0.5, 0.5),
                             &click_animation_textures[frame],
                             graphics::VertexRange::Full
                         );
                     }
                 }
+            }
+            if let Some(destination) = render_click {
+                let scale = 0.5;
+                let matrix = graphics::make_matrix(
+                    destination + Vector2::new(0.0, -0.18),
+                    Vector2::new(scale, scale),
+                    0.0
+                );
+                texture_render.render(
+                    &(proj_view * matrix),
+                    &Vector4::new(0.5, 0.5, 0.5, 0.5),
+                    &click_animation_textures[render_click_frame],
+                    graphics::VertexRange::Full
+                );
             }
 
             game.chatbox.render(&proj, delta_time);
@@ -532,11 +576,13 @@ impl Game<'_> {
                     //        }
                     //    }
                     //},
-                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) |
+                    (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Release, _)) => {
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
                                     if let Some(cid) = player.selected_char {
+                                        game.destination = Some(game.mouse_pos_world);
                                         game.move_timer = 0.0;
                                         game.connection.send(Protocol::UDP, &MoveCharacterRequest {
                                             id: cid,
@@ -548,6 +594,7 @@ impl Game<'_> {
                         }
                     }
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)) => {
+                        game.destination = None;
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
