@@ -94,10 +94,10 @@ impl Render {
         let map_render = graphics::map::Renderer::new_square();
 
         let character_walk_textures: Vec<graphics::Texture> = (1..=12).map(
-            |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str(), &[])
+            |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
         ).collect();
         let caster_minion_walk_textures: Vec<graphics::Texture> = (1..=12).map(
-            |i| texture_library.make_texture(format!("caster_minion_128/Frame {}.png", i).as_str(), &[])
+            |i| texture_library.make_texture(format!("caster_minion_128/Frame {}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
         ).collect();
         let click_animation_textures: Vec<graphics::Texture> = (1..=27).map(
             |i| texture_library.make_texture(format!("click_128/Frame {}.png", i).as_str(), &[])

@@ -551,6 +551,11 @@ impl Game<'_> {
                         x.join(", ")
                     })))
                 },
+                ["zoom", zoom] => {
+                    let zoom = zoom.parse().map_err(|err| format!("Parse error: {:?}", err))?;
+                    self.camera.zoom = zoom;
+                    Ok(Some(format!("Zoom set to {}", zoom)))
+                },
                 _ => Err("Unknown command or incorrect parameters.".to_string())
             }
         }
