@@ -40,7 +40,8 @@ pub struct Game<'a> {
     pub camera: CameraContext,
     pub ui_scale: f32,
     pub locked: bool,
-    pub destination: Option<Vector2<f32>>
+    pub destination: Option<Vector2<f32>>,
+    pub hovered_character: Option<CharacterID>
 }
 
 impl Game<'_> {
@@ -102,6 +103,7 @@ impl Game<'_> {
                 mouse_pos_world: Vector2::<f32>::new(0.0, 0.0),
                 move_timer: 0.0,
                 selected_player: None,
+                hovered_character: None,
                 character_name: HashMap::new(),
                 camera: CameraContext {
                     width: start_width,
@@ -111,7 +113,7 @@ impl Game<'_> {
                 },
                 ui_scale,
                 locked: true,
-                destination: None
+                destination: None,
             }
         };
 
@@ -265,9 +267,24 @@ impl Game<'_> {
                         Some((Vector2::new(base.position.x, base.position.y), *clickbox_types.get(&base.ctype)?, *cid))
                     }
                 ).collect();
-                clickboxes.sort_by(|(a, _, _), (b, _, _)| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Less));
+                clickboxes.sort_by(|(a, _, _), (b, _, _)| b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Less));
                 clickboxes
             };
+
+            if window.get_key(glfw::Key::GraveAccent) != Action::Press {
+                game.hovered_character = clickboxes.iter()
+                    .find(|(pos, cb, hcid)| {
+                        if let Some(scid) = &selected_char {
+                            if *scid == *hcid {
+                                return false;
+                            }
+                        }
+                        cb.in_clickbox(pos, &game.mouse_pos_world)
+                    })
+                    .map(|(_, _, cid)| *cid);
+            } else {
+                game.hovered_character = None;
+            }
 
             // random text
             // let sim = Similarity3::<f32>::new(
@@ -306,7 +323,7 @@ impl Game<'_> {
             let CameraMatrix {
                 proj, view
             } = game.camera.matrix();
-            let proj_view = proj * view;
+            let _proj_view = proj * view;
             render.render(&mut game, delta_time);
 
             //clickboxes.iter().for_each(|(pos, cb, _cid)| {
@@ -411,20 +428,7 @@ impl Game<'_> {
                             if let Some(pid) = game.selected_player {
                                 if let Some(player) = game.world.players.get_player(&pid) {
                                     if let Some(cid) = player.selected_char {
-                                        let mouse_pos_world = game.mouse_pos_world;
-                                        // determine if selecting unit
-                                        // if we hold backtick we cannot select a unit
-                                        let mut selected_cid = None;
-                                        if window.get_key(glfw::Key::GraveAccent) != Action::Press {
-                                            for (pos, cb, scid) in &clickboxes {
-                                                if *scid != cid && cb.in_clickbox(pos, &mouse_pos_world) {
-                                                    // selecting unit
-                                                    selected_cid = Some(scid);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        if let Some(scid) = selected_cid {
+                                        if let Some(scid) = &game.hovered_character {
                                             // we clicked a unit
                                             game.connection.send(Protocol::UDP, &AutoAttackRequest {
                                                 attacker: cid,

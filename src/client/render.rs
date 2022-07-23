@@ -345,8 +345,7 @@ impl Render {
                                     let flip_dir: f32 = match base.flip {
                                         CharacterFlip::Left => -1.0,
                                         CharacterFlip::Right => 1.0
-                                    };
-                                    let scale = match base.ctype {
+                                    }; let scale = match base.ctype {
                                         CharacterType::IceWiz => 1.0,
                                         CharacterType::CasterMinion => 0.5,
                                         _ => return Some(())
@@ -361,7 +360,14 @@ impl Render {
                                         Vector2::new(flip_dir * scale, scale),
                                         0.0
                                     );
-                                    let color = Vector4::new(1.0, 1.0, 1.0, 1.0);
+                                    let hovered = if let Some(hcid) = &game.hovered_character {
+                                        *cid == *hcid
+                                    } else { false };
+                                    let color = if hovered {
+                                        Vector4::new(1.0, 0.8, 0.8, 1.0)
+                                    } else {
+                                        Vector4::new(1.0, 1.0, 1.0, 1.0)
+                                    };
                                     self.texture_render.render(
                                         &(proj_view * matrix),
                                         &color,
