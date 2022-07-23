@@ -1,9 +1,9 @@
-use nalgebra::Vector2;
+use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
 use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::WorldCommand, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, WorldInfo, ErrLog}, commands::GetCommandID};
 use self::fsm::Fsm;
 
-use super::{movement::move_to, projectile::{self, ProjectileCreationInfo}};
+use super::{movement::walk_to, projectile::{self, ProjectileCreationInfo}};
 
 pub mod fsm;
 
@@ -35,7 +35,7 @@ impl GetComponentID for AutoAttack {
 #[derive(Clone)]
 pub struct AutoAttackInfo {
     pub fsm: Fsm<AutoAttackPhase, AutoAttackFireEvent>,
-    pub projectile_offset: Vector2<f32>,
+    pub projectile_offset: Vector3<f32>,
     pub projectile_speed: f32,
 }
 
@@ -51,7 +51,7 @@ impl AutoAttackInfo {
         wind_down_time: f32,
         fire_time: f32,
         projectile_speed: f32,
-        projectile_offset: Vector2<f32>
+        projectile_offset: Vector3<f32>
     ) -> Result<Self, WorldError> {
         Ok(AutoAttackInfo {
             fsm: Fsm::new(vec![
@@ -187,7 +187,8 @@ fn auto_attack_update(world: &mut World, mut delta_time: f32, cid: CharacterID) 
 
             // preliminary movement for attack
             let target_pos = world.base.get_component_mut(&target)?.position;
-            if let Some(new_remaining_time) = move_to(world, &cid, &target_pos, attacker_range, delta_time)? {
+            let target_pos = Vector2::new(target_pos.x, target_pos.y);
+            if let Some(new_remaining_time) = walk_to(world, &cid, &target_pos, attacker_range, delta_time)? {
                 // we are in range, start the auto
                 // set the cooldown
                 let auto_attack = &mut world.auto_attack.get_component_mut(&cid)?;
@@ -289,7 +290,7 @@ fn auto_attack_fire(world: &mut World, cid: &CharacterID, time_since_fire: f32) 
     // flip towards target
     let target_pos = world.base.get_component(cid)?.position;
     let base = world.base.get_component_mut(cid)?;
-    base.flip = CharacterFlip::from_dir(&(target_pos - base.position)).unwrap_or(base.flip);
+    base.flip = CharacterFlip::from_dir(&(Vector2::new(target_pos.x, target_pos.y) - Vector2::new(base.position.x, base.position.y))).unwrap_or(base.flip);
 
     // make auto attack info
     let aa_info = world.info.auto_attack.get(&ctype)

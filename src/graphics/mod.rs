@@ -379,6 +379,6 @@ pub fn make_shader(source: &str, shader_type: GLenum) -> GLuint {
 pub fn make_matrix(position: Vector2<f32>, scale: Vector2<f32>, rotation: f32) -> Matrix4<f32> {
     Matrix4::<f32>::identity()
         * Matrix4::new_translation(&Vector3::new(position.x, position.y, 0.0))
-        * Matrix4::from_euler_angles(rotation, 0.0, 0.0)
+        * Matrix4::from_euler_angles(0.0, 0.0, rotation)
         * Matrix4::new_nonuniform_scaling(&Vector3::new(scale.x, scale.y, 0.0))
 }

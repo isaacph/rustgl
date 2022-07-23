@@ -1,4 +1,4 @@
-use nalgebra::Vector2;
+use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 use crate::model::world::{World, CharacterCreatorCreator, CharacterCreator, character::{CharacterID, CharacterType}, component::{CharacterBase, CharacterHealth, GetComponentID, ComponentID, CharacterFlip}, WorldError};
 use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo}};
@@ -55,7 +55,8 @@ impl CharacterCreator for IceWizCreator {
 pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
     world.info.base.insert(CharacterType::IceWiz, CharacterBase {
         ctype: CharacterType::IceWiz,
-        position: Vector2::new(0.0, 0.0),
+        position: Vector3::new(0.0, 0.0, 0.0),
+        center_offset: Vector3::new(0.0, 0.0, -0.4),
         speed: 1.0,
         attack_damage: 1.0,
         range: 1.0,
@@ -73,7 +74,7 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
         1.0, // wind down duration
         2.5, // fire time (after animation start)
         0.5, // projectile speed
-        Vector2::new(0.3, -0.3) // projectile offset
+        Vector3::new(0.2, 0.0, -0.4) // projectile offset
     )?);
     world.character_creator.insert(CharacterType::IceWiz, Box::new(IceWizCreatorCreator));
     Ok(())

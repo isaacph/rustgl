@@ -58,6 +58,10 @@ impl CameraContext {// optimization for later: cache the projection matrix
     pub fn view_to_world_pos(&self, position: Vector2<f32>) -> Vector2<f32> {
         (position - self.camera_center_offset()) / self.zoom_factor() + self.position
     }
+
+    pub fn view_to_world_pos_3d(&self, position: Vector3<f32>) -> Vector2<f32> {
+        (Vector2::new(position.x, position.y + position.z) - self.camera_center_offset()) / self.zoom_factor() + self.position
+    }
     
     pub fn view_to_world_scale(&self, scale: Vector2<f32>) -> Vector2<f32> {
         scale / self.zoom_factor()

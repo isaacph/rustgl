@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use nalgebra::Vector2;
+use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
 use super::{character::{CharacterID, CharacterType}, WorldError};
@@ -54,7 +54,8 @@ impl CharacterFlip {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct CharacterBase {
     pub ctype: CharacterType,
-    pub position: Vector2<f32>,
+    pub position: Vector3<f32>,
+    pub center_offset: Vector3<f32>,
     pub speed: f32,
     pub attack_damage: f32,
     pub range: f32,

@@ -1,5 +1,5 @@
 
-use nalgebra::Vector2;
+use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
 use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, ErrLog}, commands::GetCommandID};
 
@@ -50,7 +50,7 @@ impl GetCommandID for MoveCharacter {
 // if out of range, move towards the target, and if the target ends up in range during the frame,
 // return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
 // time for walking
-pub fn move_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range: f32, delta_time: f32) -> Result<Option<f32>, WorldError> {
+pub fn fly_to(world: &mut World, cid: &CharacterID, dest: &Vector3<f32>, range: f32, delta_time: f32) -> Result<Option<f32>, WorldError> {
     let base = world.base.get_component_mut(cid)?;
     let speed = base.speed;
     let max_travel = speed * delta_time;
@@ -59,7 +59,10 @@ pub fn move_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range:
     if dist <= 0.0 {
         return Ok(Some(0.0))
     }
-    base.flip = CharacterFlip::from_dir(&(dest - base.position)).unwrap_or(base.flip);
+    if speed <= 0.0 {
+        return Ok(None)
+    }
+    base.flip = CharacterFlip::from_dir(&Vector2::new(dir.x, dir.y)).unwrap_or(base.flip);
     if f32::max(dist - max_travel, 0.0) <= range {
         let travel = f32::max(dist - range, 0.0);
         let remaining_time = delta_time - travel / speed;
@@ -69,6 +72,37 @@ pub fn move_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range:
     } else {
         let offset = dir / dist * max_travel;
         base.position += offset;
+        Ok(None)
+    }
+}
+
+// try to start an action on a target at a range. if in range, return Some(0.0), indicating to start the action.
+// if out of range, move towards the target, and if the target ends up in range during the frame,
+// return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
+// time for walking
+pub fn walk_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range: f32, delta_time: f32) -> Result<Option<f32>, WorldError> {
+    let base = world.base.get_component_mut(cid)?;
+    let speed = base.speed;
+    let max_travel = speed * delta_time;
+    let pos = Vector2::new(base.position.x, base.position.y);
+    let dir = dest - pos;
+    let dist = dir.magnitude();
+    if dist <= 0.0 {
+        return Ok(Some(0.0))
+    }
+    if speed <= 0.0 {
+        return Ok(None)
+    }
+    base.flip = CharacterFlip::from_dir(&(dest - pos)).unwrap_or(base.flip);
+    if f32::max(dist - max_travel, 0.0) <= range {
+        let travel = f32::max(dist - range, 0.0);
+        let remaining_time = delta_time - travel / speed;
+        let offset = dir / dist * travel;
+        base.position += Vector3::new(offset.x, offset.y, 0.0);
+        Ok(Some(remaining_time))
+    } else {
+        let offset = dir / dist * max_travel;
+        base.position += Vector3::new(offset.x, offset.y, 0.0);
         Ok(None)
     }
 }
@@ -93,7 +127,7 @@ fn movement_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Resu
 
             // move
             let dest = *dest;
-            match move_to(world, &cid, &dest, 0.0, delta_time)? {
+            match walk_to(world, &cid, &dest, 0.0, delta_time)? {
                 Some(_) => {
                     world.movement.get_component_mut(&cid)?.destination = None;
                 },

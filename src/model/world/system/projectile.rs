@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use nalgebra::Vector2;
+use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 
 use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, CharacterBase, ComponentStorageContainer, CharacterFlip}, World, WorldError, ErrLog};
 
-use super::movement::move_to;
+use super::movement::fly_to;
 
 #[derive(Serialize, Deserialize)]
 pub struct Projectile {
@@ -32,7 +32,7 @@ pub struct ProjectileCreationInfo {
     pub proj_id: CharacterID,
     pub origin: CharacterID,
     pub target: CharacterID,
-    pub starting_offset: Vector2<f32>,
+    pub starting_offset: Vector3<f32>,
     pub speed: f32,
     pub damage: f32,
 }
@@ -46,12 +46,13 @@ pub fn create(
     world.characters.insert(info.proj_id);
     let position = {
         let base = world.base.get_component(&info.origin)?;
-        base.position + Vector2::new(info.starting_offset.x * base.flip.dir(), info.starting_offset.y)
+        base.position + Vector3::new(info.starting_offset.x * base.flip.dir(), info.starting_offset.y, info.starting_offset.z)
     };
     world.base.components.insert(info.proj_id,
         CharacterBase {
             ctype: typ,
             position,
+            center_offset: Vector3::new(0.0, 0.0, 0.0),
             speed: info.speed,
             attack_damage: info.damage,
             range: 0.0,
@@ -73,7 +74,8 @@ pub fn projectile_system_init(world: &mut World) -> Result<(), WorldError> {
     world.info.base.insert(CharacterType::Projectile,
         CharacterBase {
             ctype: CharacterType::Projectile,
-            position: Vector2::new(0.0, 0.0),
+            position: Vector3::new(0.0, 0.0, 0.0),
+            center_offset: Vector3::new(0.0, 0.0, 0.0),
             attack_damage: 0.0,
             range: 0.0,
             attack_speed: 0.0,
@@ -97,10 +99,11 @@ fn projectile_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Re
         world.erase_character(&cid)?;
         return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
     }
-    let dest = world.base.get_component(&target)?.position;
+    let base = world.base.get_component(&target)?;
+    let dest = base.position + base.center_offset;
     let range = 0.0;
     let damage = world.base.get_component(&cid)?.attack_damage;
-    match move_to(world, &cid, &dest, range, delta_time)? {
+    match fly_to(world, &cid, &dest, range, delta_time)? {
         Some(_) => {
             world.erase_character(&cid)?;
             // do damage

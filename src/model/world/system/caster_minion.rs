@@ -1,4 +1,4 @@
-use nalgebra::Vector2;
+use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 
 use crate::model::world::{component::{GetComponentID, ComponentID, CharacterBase, CharacterFlip, CharacterHealth}, CharacterCreatorCreator, CharacterCreator, World, character::{CharacterID, CharacterType}, WorldError};
@@ -50,7 +50,8 @@ impl CharacterCreator for CasterMinionCreator {
 pub fn caster_minion_system_init(world: &mut World) -> Result<(), WorldError> {
     world.info.base.insert(CharacterType::CasterMinion, CharacterBase {
         ctype: CharacterType::CasterMinion,
-        position: Vector2::new(0.0, 0.0),
+        position: Vector3::new(0.0, 0.0, 0.0),
+        center_offset: Vector3::new(0.0, 0.0, -0.2),
         speed: 1.0,
         attack_damage: 1.0,
         range: 1.0,
@@ -68,7 +69,7 @@ pub fn caster_minion_system_init(world: &mut World) -> Result<(), WorldError> {
         1.0, // wind down duration
         2.5, // fire time (after animation start)
         0.5, // projectile speed
-        Vector2::new(0.3, 0.0) // projectile offset
+        Vector3::new(0.2, 0.0, -0.1) // projectile offset
     )?);
     world.character_creator.insert(CharacterType::CasterMinion, Box::new(CasterMinionCreatorCreator));
     Ok(())
