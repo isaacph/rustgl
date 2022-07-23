@@ -4,9 +4,12 @@ use nalgebra::{Vector2, Vector4, Similarity3, Vector3, Rotation2};
 use crate::model::player::model::PlayerDataView;
 use crate::model::world::character::CharacterType;
 use crate::model::world::component::CharacterFlip;
+use crate::model::world::system::auto_attack::AutoAttackFireEvent;
 use crate::{model::world::character::CharacterID, graphics::{self, TextureOptions}};
 use super::camera::CameraMatrix;
 use super::game::Game;
+
+const SLIGHT_DEPTH_SEPARATION: f32 = 0.0001;
 
 struct MapLayer {
     _width: u32,
@@ -20,10 +23,37 @@ struct Animation {
     timer: f32,
 }
 
+enum StandaloneAnimationType {
+    FireballCast,
+}
+
+struct StandaloneAnimation {
+    timer: f32,
+    typ: StandaloneAnimationType,
+    position: Vector3<f32>,
+    flip: CharacterFlip,
+}
+
 pub fn regulate_extract_frame(timer: &mut f32, animation_fps: f32, frame_count: usize) -> usize {
     *timer -= f32::floor(*timer * animation_fps / (frame_count as f32))
         * frame_count as f32 / animation_fps;
     (*timer * animation_fps) as usize
+}
+
+pub fn extract_frame_or_die(timer: &mut f32, animation_fps: f32, frame_count: usize) -> Option<usize> {
+    if *timer * animation_fps >= frame_count as f32 {
+        return None;
+    }
+    Some((*timer * animation_fps) as usize)
+}
+
+pub fn extract_frame(timer: f32, animation_fps: f32, frame_count: usize) -> Option<usize> {
+    let frame = (timer * animation_fps) as usize;
+    if frame >= frame_count {
+        None
+    } else {
+        Some(frame)
+    }
 }
 
 pub struct Render {
@@ -38,11 +68,14 @@ pub struct Render {
     caster_minion_walk_textures: Vec<graphics::Texture>,
     click_animation_textures: Vec<graphics::Texture>,
     fireball_animation_textures: Vec<graphics::Texture>,
+    fireball_ball_grow_animation_textures: Vec<graphics::Texture>,
+    fireball_flames_grow_animation_textures: Vec<graphics::Texture>,
 
     map: Vec<MapLayer>,
     animation_data: HashMap<CharacterID, Animation>,
     animation_fps: f32,
     click_animation_timer: f32,
+    standalone_animations: Vec<StandaloneAnimation>
 }
 
 impl Render {
@@ -69,8 +102,14 @@ impl Render {
         let click_animation_textures: Vec<graphics::Texture> = (1..=27).map(
             |i| texture_library.make_texture(format!("click_128/Frame {}.png", i).as_str(), &[])
         ).collect();
-        let fireball_animation_textures: Vec<graphics::Texture> = (1..7).map(
-            |i| texture_library.make_texture(format!("fireball_128/Frame {}.png", i).as_str(), &[])
+        let fireball_animation_textures: Vec<graphics::Texture> = (1..=7).map(
+            |i| texture_library.make_texture(format!("fireball_128/Frame {}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
+        ).collect();
+        let fireball_ball_grow_animation_textures: Vec<graphics::Texture> = (1..=9).map(
+            |i| texture_library.make_texture(format!("fire_ball_cast_128/B{}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
+        ).collect();
+        let fireball_flames_grow_animation_textures: Vec<graphics::Texture> = (1..=9).map(
+            |i| texture_library.make_texture(format!("fire_ball_cast_128/F{}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
         ).collect();
 
         let map: Vec<MapLayer> = [("map/grass.png", "grass.png"), ("map/water.png", "water.png")].iter()
@@ -103,10 +142,13 @@ impl Render {
             caster_minion_walk_textures,
             click_animation_textures,
             fireball_animation_textures,
+            fireball_ball_grow_animation_textures,
+            fireball_flames_grow_animation_textures,
             map,
             animation_data,
             animation_fps,
             click_animation_timer,
+            standalone_animations: vec![]
         }
     }
 
@@ -145,9 +187,15 @@ impl Render {
             self.map_render.render(&(proj_view * matrix), &Vector4::new(1.0, 1.0, 1.0, 1.0), texture, data_texture, tile_count, graphics::VertexRange::Full);
         }
 
+        for anim in self.standalone_animations.iter_mut() {
+            anim.timer += delta_time;
+        }
+
         enum Renderable {
-            Click(Vector2<f32>, usize),
-            Character(CharacterID)
+            Click(Vector3<f32>, usize),
+            Character(CharacterID),
+            CharacterCast(Vector3<f32>, usize),
+            StandaloneAnimation(Vector3<f32>, usize, CharacterFlip)
         }
         let mut renderables = vec![];
         renderables.extend(game.world.characters.iter().map(|cid| Renderable::Character(*cid)));
@@ -174,7 +222,7 @@ impl Render {
         let render_click_frame = if let Some(destination) = render_click {
             self.click_animation_timer += delta_time;
             let frame = regulate_extract_frame(&mut self.click_animation_timer, self.animation_fps, self.click_animation_textures.len());
-            renderables.push(Renderable::Click(destination, frame));
+            renderables.push(Renderable::Click(Vector3::new(destination.x, destination.y, 0.0), frame));
             let scale = 0.5;
             let matrix = graphics::make_matrix(
                 destination + Vector2::new(0.0, -0.18),
@@ -192,10 +240,62 @@ impl Render {
             self.click_animation_timer = 0.0;
             0
         };
+        for (cid, auto_attack) in &game.world.auto_attack.components {
+            || -> Option<()> {
+                let frames = self.fireball_ball_grow_animation_textures.len();
+                let animation_length = frames as f32 / self.animation_fps;
+                let base = game.world.base.components.get(cid)?;
+                let execution = auto_attack.execution.as_ref()?;
+                let info = game.world.info.auto_attack.get(&base.ctype)?;
+                let position = base.position +
+                    Vector3::new(
+                        info.projectile_offset.x * base.flip.dir(),
+                        info.projectile_offset.y,
+                        info.projectile_offset.z) +
+                    Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0);
+                let timer = execution.timer;
+                let fire_time = info.fsm.get_event_time(execution.starting_attack_speed, AutoAttackFireEvent)?;
+                let start_time = fire_time - animation_length;
+
+                if start_time <= timer && timer < fire_time {
+                    let frame = ((timer - start_time) / animation_length * frames as f32) as usize;
+                    renderables.push(Renderable::CharacterCast(position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame));
+                }
+                if timer - delta_time <= start_time && start_time < timer {
+                    // start the particles
+                    self.standalone_animations.push(StandaloneAnimation {
+                        timer: timer - start_time,
+                        typ: StandaloneAnimationType::FireballCast,
+                        position,
+                        flip: base.flip
+                    });
+                }
+                None
+            }();
+        }
+
+        let mut dead_anim = vec![];
+        for (i, anim) in self.standalone_animations.iter_mut().enumerate() {
+            match anim.typ {
+                StandaloneAnimationType::FireballCast => {
+                    let textures = &self.fireball_flames_grow_animation_textures;
+                    if let Some(frame) = extract_frame_or_die(&mut anim.timer, self.animation_fps, textures.len()) {
+                        renderables.push(Renderable::StandaloneAnimation(anim.position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame, anim.flip));
+                    } else {
+                        dead_anim.push(i);
+                    }
+                }
+            }
+        }
+        for i in dead_anim.iter().rev() {
+            self.standalone_animations.remove(*i);
+        }
 
         renderables.sort_by_key(|elt| match elt {
             // sort by float is cringe
-            Renderable::Click(pos, _) =>
+            Renderable::Click(pos, _) |
+            Renderable::StandaloneAnimation(pos, _, _) |
+            Renderable::CharacterCast(pos, _) =>
                 Result::unwrap_or(ordered_float::NotNan::new(pos.y), ordered_float::NotNan::new(f32::MAX).unwrap()),
             Renderable::Character(cid) => {
                 if let Some(base) = game.world.base.components.get(cid) {
@@ -203,7 +303,7 @@ impl Render {
                 } else {
                     ordered_float::NotNan::new(f32::MAX).unwrap()
                 }
-            }
+            },
         });
 
         // characters
@@ -333,7 +433,7 @@ impl Render {
                 Renderable::Click(position, frame) => {
                     let scale = 0.5;
                     let matrix = graphics::make_matrix(
-                        position + Vector2::new(0.0, -0.18),
+                        Vector2::new(position.x, position.y + position.z) + Vector2::new(0.0, -0.18),
                         Vector2::new(scale, scale),
                         0.0
                     );
@@ -343,9 +443,38 @@ impl Render {
                         &self.click_animation_textures[frame],
                         graphics::VertexRange::Full
                     );
+                },
+                Renderable::CharacterCast(position, frame) => {
+                    let scale = 0.5;
+                    let matrix = graphics::make_matrix(
+                        Vector2::new(position.x, position.y + position.z) + Vector2::new(0.0, 0.0),
+                        Vector2::new(scale, scale),
+                        0.0
+                    );
+                    self.texture_render.render(
+                        &(proj_view * matrix),
+                        &Vector4::new(1.0, 1.0, 1.0, 1.0),
+                        &self.fireball_ball_grow_animation_textures[frame],
+                        graphics::VertexRange::Full
+                    );
+                },
+                Renderable::StandaloneAnimation(position, frame, flip) => {
+                    let scale = 0.5;
+                    let matrix = graphics::make_matrix(
+                        Vector2::new(position.x, position.y + position.z),
+                        Vector2::new(scale * flip.dir(), scale),
+                        0.0
+                    );
+                    self.texture_render.render(
+                        &(proj_view * matrix),
+                        &Vector4::new(1.0, 1.0, 1.0, 1.0),
+                        &self.fireball_flames_grow_animation_textures[frame],
+                        graphics::VertexRange::Full
+                    );
                 }
             }
         }
+
         if let Some(destination) = render_click {
             let scale = 0.5;
             let matrix = graphics::make_matrix(

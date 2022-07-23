@@ -7,7 +7,7 @@ pub struct State<E> {
 }
 
 #[derive(Clone)]
-pub struct Fsm<E: Clone, V: Clone> {
+pub struct Fsm<E: Clone + Copy + Eq, V: Clone + Copy + Eq> {
     states: Vec<State<E>>,
     ending: E,
     events: Vec<(f32, V)>,
@@ -29,7 +29,7 @@ impl<E: Clone, V: Clone> Changes<E, V> {
     }
 }
 
-impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
+impl<E: Clone + Copy + Eq, V: Clone + Copy + Eq> Fsm<E, V> {
     pub fn new(mut states: Vec<(f32, E)>, ending: E, events: &[(f32, V)]) -> Option<Fsm<E, V>> {
         let sum = {
             let mut sum = states.iter().map(|(t, _)| f32::abs(*t)).sum();
@@ -128,6 +128,20 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy> Fsm<E, V> {
 
     pub fn is_empty(&self) -> bool {
         self.states.is_empty()
+    }
+
+    pub fn get_event_time(&self, total_duration: f32, event: V) -> Option<f32> {
+        for e in &self.events {
+            if e.1 == event {
+                return Some(e.0 * total_duration)
+            }
+        }
+        for e in &self.end_events {
+            if *e == event {
+                return Some(total_duration)
+            }
+        }
+        None
     }
 }
 

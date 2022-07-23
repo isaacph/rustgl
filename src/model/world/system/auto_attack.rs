@@ -76,7 +76,7 @@ pub enum AutoAttackPhase {
     Complete
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AutoAttackFireEvent;
 
 #[derive(Serialize, Deserialize, Debug)]
