@@ -29,6 +29,7 @@ enum StandaloneAnimationType {
 
 struct StandaloneAnimation {
     timer: f32,
+    duration: f32,
     typ: StandaloneAnimationType,
     position: Vector3<f32>,
     flip: CharacterFlip,
@@ -75,7 +76,7 @@ pub struct Render {
     animation_data: HashMap<CharacterID, Animation>,
     animation_fps: f32,
     click_animation_timer: f32,
-    standalone_animations: Vec<StandaloneAnimation>
+    standalone_animations: HashMap<CharacterID, Vec<StandaloneAnimation>>
 }
 
 impl Render {
@@ -148,7 +149,7 @@ impl Render {
             animation_data,
             animation_fps,
             click_animation_timer,
-            standalone_animations: vec![]
+            standalone_animations: HashMap::new()
         }
     }
 
@@ -187,8 +188,10 @@ impl Render {
             self.map_render.render(&(proj_view * matrix), &Vector4::new(1.0, 1.0, 1.0, 1.0), texture, data_texture, tile_count, graphics::VertexRange::Full);
         }
 
-        for anim in self.standalone_animations.iter_mut() {
-            anim.timer += delta_time;
+        for anim in self.standalone_animations.values_mut() {
+            for anim in anim {
+                anim.timer += delta_time;
+            }
         }
 
         enum Renderable {
@@ -243,8 +246,8 @@ impl Render {
         for (cid, auto_attack) in &game.world.auto_attack.components {
             || -> Option<()> {
                 let frames = self.fireball_ball_grow_animation_textures.len();
-                let animation_length = frames as f32 / self.animation_fps;
                 let base = game.world.base.components.get(cid)?;
+                let animation_length = frames as f32 / self.animation_fps * base.attack_speed;
                 let execution = auto_attack.execution.as_ref()?;
                 let info = game.world.info.auto_attack.get(&base.ctype)?;
                 let position = base.position +
@@ -261,34 +264,40 @@ impl Render {
                     let frame = ((timer - start_time) / animation_length * frames as f32) as usize;
                     renderables.push(Renderable::CharacterCast(position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame));
                 }
-                if timer - delta_time <= start_time && start_time < timer {
+                if self.standalone_animations.get(&cid).is_some() {
+                    return None;
+                }
+                if start_time <= timer {
                     // start the particles
-                    self.standalone_animations.push(StandaloneAnimation {
+                    self.standalone_animations.insert(*cid, vec![StandaloneAnimation {
                         timer: timer - start_time,
                         typ: StandaloneAnimationType::FireballCast,
                         position,
-                        flip: base.flip
-                    });
+                        flip: base.flip,
+                        duration: animation_length,
+                    }]);
                 }
                 None
             }();
         }
 
         let mut dead_anim = vec![];
-        for (i, anim) in self.standalone_animations.iter_mut().enumerate() {
-            match anim.typ {
-                StandaloneAnimationType::FireballCast => {
-                    let textures = &self.fireball_flames_grow_animation_textures;
-                    if let Some(frame) = extract_frame_or_die(&mut anim.timer, self.animation_fps, textures.len()) {
-                        renderables.push(Renderable::StandaloneAnimation(anim.position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame, anim.flip));
-                    } else {
-                        dead_anim.push(i);
+        for (cid, anim) in self.standalone_animations.iter_mut() {
+            for anim in anim.iter_mut() {
+                match anim.typ {
+                    StandaloneAnimationType::FireballCast => {
+                        let textures = &self.fireball_flames_grow_animation_textures;
+                        if let Some(frame) = extract_frame_or_die(&mut anim.timer, self.animation_fps / anim.duration, textures.len()) {
+                            renderables.push(Renderable::StandaloneAnimation(anim.position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame, anim.flip));
+                        } else {
+                            dead_anim.push(*cid);
+                        }
                     }
                 }
             }
         }
-        for i in dead_anim.iter().rev() {
-            self.standalone_animations.remove(*i);
+        for i in dead_anim {
+            self.standalone_animations.remove(&i);
         }
 
         renderables.sort_by_key(|elt| match elt {
