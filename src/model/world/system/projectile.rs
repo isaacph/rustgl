@@ -107,7 +107,11 @@ fn projectile_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Re
         Some(_) => {
             world.erase_character(&cid)?;
             // do damage
-            println!("Would do {} damage to {:?}", damage, target);
+            let health = world.health.get_component_mut(&target)?;
+            health.health -= damage;
+            if health.health <= 0.0 {
+                world.erase_character(&target)?;
+            }
         },
         None => (),
     }

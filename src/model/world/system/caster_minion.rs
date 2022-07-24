@@ -60,7 +60,8 @@ pub fn caster_minion_system_init(world: &mut World) -> Result<(), WorldError> {
         targetable: true,
     });
     world.info.health.insert(CharacterType::CasterMinion, CharacterHealth {
-        health: 100.0
+        health: 4.0,
+        max_health: 4.0,
     });
     world.info.auto_attack.insert(CharacterType::CasterMinion, AutoAttackInfo::init(
         CharacterType::CasterMinion,

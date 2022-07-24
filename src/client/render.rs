@@ -3,7 +3,7 @@ use std::ops::Bound::{Included, Unbounded};
 use nalgebra::{Vector2, Vector4, Similarity3, Vector3, Rotation2};
 use crate::model::player::model::PlayerDataView;
 use crate::model::world::character::CharacterType;
-use crate::model::world::component::CharacterFlip;
+use crate::model::world::component::{CharacterFlip, ComponentStorageContainer};
 use crate::model::world::system::auto_attack::AutoAttackFireEvent;
 use crate::{model::world::character::CharacterID, graphics::{self, TextureOptions}};
 use super::camera::CameraMatrix;
@@ -61,7 +61,7 @@ pub struct Render {
     _font_library: graphics::text::FontLibrary,
     _texture_library: graphics::TextureLibrary,
     text: BTreeMap<i32, graphics::text::Font>,
-    _simple_render: graphics::simple::Renderer,
+    simple_render: graphics::simple::Renderer,
     texture_render: graphics::textured::Renderer,
     map_render: graphics::map::Renderer,
 
@@ -136,7 +136,7 @@ impl Render {
             _font_library: font_library,
             _texture_library: texture_library,
             text,
-            _simple_render: simple_render,
+            simple_render,
             texture_render,
             map_render,
             character_walk_textures,
@@ -385,10 +385,15 @@ impl Render {
                                     );
 
                                     // render player name below player
+                                    let above = match base.ctype {
+                                        CharacterType::IceWiz => -1.0,
+                                        CharacterType::CasterMinion => -0.5,
+                                        _ => 0.0,
+                                    };
                                     if let Some(name) = game.character_name.get(cid) {
                                         let text_width = game_font.text_width(name.as_str());
-                                        let player_view_pos = game.camera.world_to_view_pos(Vector2::new(base.position.x, base.position.y));
-                                        let offset = Vector2::new(-text_width / 2.0, game_font.line_height());
+                                        let player_view_pos = game.camera.world_to_view_pos(Vector2::new(base.position.x, base.position.y + above));
+                                        let offset = Vector2::new(-text_width / 2.0, -game_font.line_height() / 2.0);
                                         let sim = Similarity3::<f32>::new(
                                             Vector3::new(player_view_pos.x + offset.x, player_view_pos.y + offset.y, 0.0),
                                             Vector3::z() * std::f32::consts::FRAC_PI_4 * 0.0,
@@ -396,6 +401,26 @@ impl Render {
                                         );
                                         game_font.render(&(proj * sim.to_homogeneous()), name.as_str(), &Vector4::new(1.0, 1.0, 1.0, 1.0));
                                     }
+
+                                    if let Some(health) = game.world.health.components.get(cid) {
+                                        let max_health = health.max_health;
+                                        let health = health.health;
+                                        let width = match base.ctype {
+                                            CharacterType::IceWiz => 150.0,
+                                            CharacterType::CasterMinion => 100.0,
+                                            _ => 100.0
+                                        };
+                                        let height = 20.0;
+                                        let position = game.camera.world_to_view_pos(Vector2::new(base.position.x, base.position.y) + Vector2::new(0.0, above));
+                                        let matrix_red = graphics::make_matrix(position, Vector2::new(width, height), 0.0);
+                                        let matrix_green = graphics::make_matrix(
+                                            position - Vector2::new(width, 0.0) * (1.0 - health / max_health) / 2.0,
+                                            Vector2::new(width * health / max_health, height),
+                                            0.0);
+                                        self.simple_render.render(&(proj * matrix_red), &Vector4::new(1.0, 0.0, 0.0, 1.0), graphics::VertexRange::Full);
+                                        self.simple_render.render(&(proj * matrix_green), &Vector4::new(0.0, 1.0, 0.0, 1.0), graphics::VertexRange::Full);
+                                    }
+
                                     Some(())
                                 })();
                             },

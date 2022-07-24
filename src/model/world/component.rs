@@ -70,7 +70,8 @@ impl GetComponentID for CharacterBase {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct CharacterHealth {
-    pub health: f32
+    pub health: f32,
+    pub max_health: f32,
 }
 
 impl GetComponentID for CharacterHealth {
