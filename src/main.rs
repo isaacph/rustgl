@@ -5,18 +5,12 @@ extern crate glfw;
 
 #[cfg(feature = "client")]
 pub mod graphics;
-// pub mod chatbox;
-// pub mod networking_wrapping;
 pub mod networking;
 pub mod model;
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "server")]
 pub mod server;
-// pub mod game;
-// pub mod server;
-// pub mod world;
-
 
 use std::net::ToSocketAddrs;
 use std::{io::Result, net::SocketAddr};
@@ -36,23 +30,26 @@ pub fn grab_console_line(prompt: &str) -> String {
     String::from(buffer.trim())
 }
 
-fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    // let auto_addr_str = ("test.neotrias.link:1234", "test.neotrias.link:1235");
+pub fn auto_addr() -> (SocketAddr, SocketAddr) {
     let auto_addr_str = ("127.0.0.1:1234", "127.0.0.1:1235");
-    let auto_addr = Some((
+    // let auto_addr_str = ("test.neotrias.link:1234", "test.neotrias.link:1235");
+    (
         auto_addr_str.0.to_socket_addrs().unwrap().next().unwrap(),
         auto_addr_str.1.to_socket_addrs().unwrap().next().unwrap()
-    ));
+    )
+}
+
+fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
     if args.len() == 1 {
         #[cfg(feature = "client")]
-        game::Game::run(auto_addr);
+        game::Game::run(Some(auto_addr()));
         return Ok(());
     }
     match args[1].as_str() {
         "client" => {
             #[cfg(feature = "client")]
-            game::Game::run(auto_addr);
+            game::Game::run(Some(auto_addr()));
         },
         _ => {
             let ports = (1234, 1235);

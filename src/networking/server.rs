@@ -42,7 +42,7 @@ pub struct ServerUpdate {
 
 impl Server {
     pub fn send_data(&mut self, protocol: Protocol, tcp_addr: &SocketAddr, data: Box<[u8]>) -> std::result::Result<(), String> {
-        println!("Sending {} message to {}, length {}", protocol, tcp_addr, data.len());
+        // println!("Sending {} message to {}, length {}", protocol, tcp_addr, data.len());
         match self.connections.get_mut(tcp_addr) {
             Some(info) =>
             match protocol {
@@ -100,7 +100,7 @@ impl Server {
         for (addr, data) in recv {
             for packet in data {
                 //let s = String::from_utf8_lossy(packet.as_ref()).to_string();
-                println!("Received UDP from {:?} of len {}", addr, packet.len());
+                // println!("Received UDP from {:?} of len {}", addr, packet.len());
                 messages.push((Protocol::UDP, addr, packet));
                 // match command.execute(((Protocol::UDP, &addr), &mut server)) {
                 //     Ok(()) => println!("Ran UDP command from {:?}: {}", addr, str),
@@ -247,13 +247,13 @@ impl ConnectionInfo {
             Ok(size) => match size {
                 0 => return Err(ServerError::Disconnected),
                 _ => {
-                    println!("Received TCP bytes: {}", size);
+                    // println!("Received TCP bytes: {}", size);
                     let data = self.tcp_recv.receive(&buffer[0..size]);
-                    for message in &data {
-                        //let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
-                        println!("Received full message TCP length {} from {}", message.len(), addr);
-                    }
-                    messages.extend(data.into_iter().map(|data| (Protocol::TCP, addr, data.into())));
+                    //for message in &data {
+                    //    //let str = String::from_utf8_lossy(&message[0..cmp::min(1024, message.len())]);
+                    //    // println!("Received full message TCP length {} from {}", message.len(), addr);
+                    //}
+                    messages.extend(data.into_iter().map(|data| (Protocol::TCP, addr, data)));
                 }
             },
             Err(err) => match err.kind() {
@@ -276,7 +276,7 @@ impl ConnectionInfo {
                 Ok(sent) => match sent {
                     0 => return Err(ServerError::Disconnected),
                     _ => {
-                        println!("Sent {} TCP bytes", sent);
+                        // println!("Sent {} TCP bytes", sent);
                         self.tcp_send.update_buffer(sent)
                     }
                 },

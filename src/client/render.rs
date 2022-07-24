@@ -3,7 +3,7 @@ use std::ops::Bound::{Included, Unbounded};
 use nalgebra::{Vector2, Vector4, Similarity3, Vector3, Rotation2};
 use crate::model::player::model::PlayerDataView;
 use crate::model::world::character::CharacterType;
-use crate::model::world::component::{CharacterFlip, ComponentStorageContainer};
+use crate::model::world::component::CharacterFlip;
 use crate::model::world::system::auto_attack::AutoAttackFireEvent;
 use crate::{model::world::character::CharacterID, graphics::{self, TextureOptions}};
 use super::camera::CameraMatrix;

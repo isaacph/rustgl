@@ -138,12 +138,12 @@ impl Server {
                 }
             }
             for (protocol, addr, message) in messages {
-                println!("Message from {} over {}", addr, match protocol {
-                    Protocol::TCP => "TCP",
-                    Protocol::UDP => "UDP"
-                });
+                // println!("Message from {} over {}", addr, match protocol {
+                //     Protocol::TCP => "TCP",
+                //     Protocol::UDP => "UDP"
+                // });
                 match execute_server_command(&message, ((protocol, &addr), &mut server)) {
-                    Ok(()) => println!("Ran command"),
+                    Ok(()) => (),// println!("Ran command"),
                     Err(err) => println!("Error running command: {}", err)
                 }
             }
@@ -155,7 +155,7 @@ impl Server {
                 println!("Update loop error: {}", error);
             }
 
-            // std::thread::sleep(Duration::new(0, 1000000 * 16)); // wait 16 ms
+            std::thread::sleep(Duration::new(0, 1000000 * 16)); // wait 16 ms
         }
         Ok(())
     }

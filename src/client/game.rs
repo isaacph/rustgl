@@ -207,7 +207,7 @@ impl Game<'_> {
             for update in game.connection.update() {
                 match update {
                     ClientUpdate::Error(err) => game.chatbox.println(format!("Connection error: {}", err).as_str()),
-                    ClientUpdate::Log(log) => println!("{}", log),
+                    ClientUpdate::Log(_log) => (),// println!("{}", log),
                     ClientUpdate::LogExtra(_) => (), // if you print this, you will get windows
                                                      // alarm spam
                     ClientUpdate::Message(protocol, message) => {
@@ -246,7 +246,8 @@ impl Game<'_> {
             }
 
             game.move_timer += delta_time;
-            if (window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press ||
+            if game.state == State::DEFAULT &&
+                    (window.get_mouse_button(glfw::MouseButtonRight) == glfw::Action::Press ||
                     window.get_mouse_button(glfw::MouseButtonLeft) == glfw::Action::Press) &&
                     !game.clicked_hovered {
                 game.destination = Some(game.mouse_pos_world);
@@ -275,7 +276,7 @@ impl Game<'_> {
                 clickboxes
             };
 
-            if window.get_key(glfw::Key::GraveAccent) != Action::Press {
+            if game.state == State::DEFAULT && window.get_key(glfw::Key::GraveAccent) != Action::Press {
                 game.hovered_character = clickboxes.iter()
                     .find(|(pos, cb, hcid)| {
                         if let Some(scid) = &selected_char {

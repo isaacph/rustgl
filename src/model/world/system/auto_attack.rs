@@ -193,7 +193,7 @@ fn auto_attack_update(world: &mut World, mut delta_time: f32, cid: CharacterID) 
                 // set the cooldown
                 let auto_attack = &mut world.auto_attack.get_component_mut(&cid)?;
                 let targeting = auto_attack.targeting.as_mut()
-                    .ok_or(WorldError::UnexpectedComponentState(
+                    .ok_or_else(|| WorldError::UnexpectedComponentState(
                         cid,
                         ComponentID::AutoAttack,
                         "Targeting was removed?".to_string()))?;
@@ -205,7 +205,7 @@ fn auto_attack_update(world: &mut World, mut delta_time: f32, cid: CharacterID) 
                     starting_attack_speed: attack_speed,
                     target,
                     projectile_gen_id: targeting.ids.next_id()
-                        .ok_or(WorldError::UnexpectedComponentState(
+                        .ok_or_else(|| WorldError::UnexpectedComponentState(
                             cid,
                             ComponentID::AutoAttack,
                             "Ran out of auto attack IDs".to_string()))?
@@ -228,12 +228,12 @@ fn auto_attack_update(world: &mut World, mut delta_time: f32, cid: CharacterID) 
         for change in changes {
             match change {
                 fsm::Changes::Event(time_since, _) => auto_attack_fire(world, &cid, time_since)?,
-                fsm::Changes::StateChange(time_since, phase) => {
-                    println!("New AA phase: {:?}, timer: {}, increment: {}, time_since: {}",
-                        phase,
-                        timer,
-                        delta_time,
-                        time_since);
+                fsm::Changes::StateChange(_time_since, phase) => {
+                    //println!("New AA phase: {:?}, timer: {}, increment: {}, time_since: {}",
+                    //    phase,
+                    //    timer,
+                    //    delta_time,
+                    //    time_since);
                     match phase {
                         AutoAttackPhase::WindUp |
                         AutoAttackPhase::Casting |
@@ -279,7 +279,7 @@ fn auto_attack_fire(world: &mut World, cid: &CharacterID, time_since_fire: f32) 
         (base.ctype, base.attack_damage)
     };
     let execution = world.auto_attack.get_component(cid)?.execution.as_ref()
-        .ok_or(WorldError::UnexpectedComponentState(
+        .ok_or_else(|| WorldError::UnexpectedComponentState(
             *cid,
             ComponentID::AutoAttack,
             "Tried to fire without currently executing auto attack".to_string()))?;

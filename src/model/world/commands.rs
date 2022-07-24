@@ -24,7 +24,7 @@ impl GetCommandID for UpdateCharacter {
 
 impl UpdateCharacter {
     pub fn update_character(mut self, world: &mut World) {
-        println!("Updating character");
+        // println!("Updating character");
         world.characters.insert(self.id);
         for (cid, data) in self.components.drain() {
             world.update_component(&self.id, &cid, data);
@@ -93,3 +93,5 @@ impl GetCommandID for ClearWorld {
         crate::model::commands::CommandID::ClearWorld
     }
 }
+
+//#[derive(Serialize, Deserialize, Debug)]
