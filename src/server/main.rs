@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 use crate::model::world::commands::WorldCommand;
-use crate::model::{Subscription, PrintError};
+use crate::model::{Subscription, PrintError, TICK_RATE};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
@@ -80,6 +80,8 @@ impl Server {
         };
         let mut update_loop = UpdateLoop::init(&server.world);
 
+        let mut tick_timer = 0.0;
+
         let mut last_time = std::time::Instant::now();
         while !server.stop {
             let current_time = std::time::Instant::now();
@@ -87,9 +89,14 @@ impl Server {
             last_time = current_time;
             let delta_time = delta_duration.as_secs_f32();
 
-            server.world.update(delta_time);
-            for error in server.world.errors.drain(0..server.world.errors.len()) {
-                println!("Server world error: {:?}", error);
+            tick_timer += delta_time;
+            while tick_timer >= 1.0 / TICK_RATE {
+                let delta_time = 1.0 / TICK_RATE;
+                tick_timer -= delta_time;
+                server.world.update(delta_time);
+                for error in server.world.errors.drain(0..server.world.errors.len()) {
+                    println!("Server world error: {:?}", error);
+                }
             }
 
             let ServerUpdate {

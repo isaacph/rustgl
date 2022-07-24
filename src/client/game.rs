@@ -11,7 +11,7 @@ use crate::{
     model::{world::{
         World,
         character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest},
-    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}}, networking::{client::ClientUpdate, Protocol},
+    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}, TICK_RATE}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
@@ -164,6 +164,9 @@ impl Game<'_> {
             clickbox_types
         };
 
+
+        let mut tick_timer = 0.0;
+
         unsafe {
             glClearColor(0.0, 0.0, 0.0, 1.0);
             glEnable(GL_BLEND);
@@ -219,10 +222,16 @@ impl Game<'_> {
                     _ => game.chatbox.println(format!("{}", update).as_str())
                 }
             }
-            game.world.update(delta_time);
-            for error in game.world.errors.drain(0..game.world.errors.len()) {
-                // client side errors usually will be a result of lag
-                println!("Client world error: {:?}", error);
+
+            tick_timer += delta_time;
+            while tick_timer >= 1.0 / TICK_RATE {
+                let delta_time = 1.0 / TICK_RATE;
+                tick_timer -= delta_time;
+                game.world.update(delta_time);
+                for error in game.world.errors.drain(0..game.world.errors.len()) {
+                    // client side errors usually will be a result of lag
+                    println!("Client world error: {:?}", error);
+                }
             }
 
 

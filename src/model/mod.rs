@@ -7,6 +7,8 @@ pub mod player;
 pub mod world;
 pub mod commands;
 
+pub const TICK_RATE: f32 = 60.0;
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, EnumString)]
 pub enum Subscription {
     Chat,

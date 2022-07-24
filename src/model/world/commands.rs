@@ -94,4 +94,3 @@ impl GetCommandID for ClearWorld {
     }
 }
 
-//#[derive(Serialize, Deserialize, Debug)]
