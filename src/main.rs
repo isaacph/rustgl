@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 #[cfg(feature = "client")]
 extern crate glfw;
 
@@ -14,6 +16,7 @@ pub mod server;
 // pub mod game;
 // pub mod server;
 // pub mod world;
+
 
 use std::net::ToSocketAddrs;
 use std::{io::Result, net::SocketAddr};
@@ -35,8 +38,8 @@ pub fn grab_console_line(prompt: &str) -> String {
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    // let auto_addr_str = ("test.neotrias.link:1234", "test.neotrias.link:1235");
-    let auto_addr_str = ("127.0.0.1:1234", "127.0.0.1:1235");
+    let auto_addr_str = ("test.neotrias.link:1234", "test.neotrias.link:1235");
+    // let auto_addr_str = ("127.0.0.1:1234", "127.0.0.1:1235");
     let auto_addr = Some((
         auto_addr_str.0.to_socket_addrs().unwrap().next().unwrap(),
         auto_addr_str.1.to_socket_addrs().unwrap().next().unwrap()
@@ -92,4 +95,3 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
-
