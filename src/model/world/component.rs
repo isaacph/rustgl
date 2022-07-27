@@ -85,7 +85,7 @@ pub trait ComponentStorageContainer<T: Sized + Serialize> {
     fn get_component(&self, cid: &CharacterID) -> Result<&T, WorldError>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetComponentID {
     pub components: HashMap<CharacterID, T>
 }

@@ -24,7 +24,7 @@ impl Default for TeamIDGenerator {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Team {
     id: TeamID,
     name: String
@@ -277,7 +277,7 @@ impl PlayerDataView for PlayerManager {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlayerData {
    pub players: HashMap<PlayerID, Player>
 }

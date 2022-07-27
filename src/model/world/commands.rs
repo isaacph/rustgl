@@ -3,17 +3,21 @@ use serde::{Serialize, Deserialize};
 
 use crate::model::commands::GetCommandID;
 
-use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, WorldError};
+use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, WorldError, system::{movement::Movement, auto_attack::AutoAttackCommand}};
 
-pub trait WorldCommand<'a>: Deserialize<'a> + GetCommandID {
-    fn get_tick(&self) -> u32;
+pub trait WorldCommand {
     fn validate(&self, world: &World) -> Result<(), WorldError>;
     fn run(&mut self, world: &mut World) -> Result<(), WorldError>;
 }
 
+pub enum WorldCommandd {
+    Movement(Movement),
+    AutoAttack(AutoAttackCommand),
+    UpdateCharacter(UpdateCharacter),
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateCharacter {
-    pub tick: u32,
     pub id: CharacterID,
     pub components: HashMap<ComponentID, Vec<u8>>
 }

@@ -197,7 +197,7 @@ impl Server {
         }
     }
 
-    pub fn run_world_command<'a, T: WorldCommand<'a>>(&mut self, addr: Option<&SocketAddr>, mut command: T) {
+    pub fn run_world_command<'a, T: WorldCommand>(&mut self, addr: Option<&SocketAddr>, mut command: T) {
         match command.validate(&self.world) {
             Ok(()) => (),
             Err(WorldError::NoopCommand) => (), // the command did nothing

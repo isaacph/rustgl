@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, CharacterBase, ComponentStorageContainer, CharacterFlip}, World, WorldError, ErrLog};
+use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, CharacterBase, ComponentStorageContainer, CharacterFlip}, World, WorldError, ErrLog, WorldInfo};
 
 use super::movement::fly_to;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Projectile {
     pub origin: CharacterID,
     pub target: CharacterID,
@@ -17,14 +17,14 @@ impl GetComponentID for Projectile {
     const ID: ComponentID = ComponentID::Projectile;
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ProjectileInfo {
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProjectileSystem {
     create_frame: HashMap<CharacterID, u64>
 }
 
-impl ProjectileInfo {
+impl ProjectileSystem {
     pub fn init() -> Self {
-        ProjectileInfo { create_frame: HashMap::new() }
+        ProjectileSystem { create_frame: HashMap::new() }
     }
 }
 
@@ -70,8 +70,9 @@ pub fn create(
     projectile_update(world, init_travel_time, info.proj_id)
 }
 
-pub fn projectile_system_init(world: &mut World) -> Result<(), WorldError> {
-    world.info.base.insert(CharacterType::Projectile,
+pub fn projectile_system_init() -> Result<WorldInfo, WorldError> {
+    let mut info = WorldInfo::new();
+    info.base.insert(CharacterType::Projectile,
         CharacterBase {
             ctype: CharacterType::Projectile,
             position: Vector3::new(0.0, 0.0, 0.0),
@@ -84,13 +85,13 @@ pub fn projectile_system_init(world: &mut World) -> Result<(), WorldError> {
             speed: 0.0,
         }
     );
-    Ok(())
+    Ok(info)
 }
 
 fn projectile_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
-    if let Some(frame_id) = world.info.projectile.create_frame.get(&cid) {
+    if let Some(frame_id) = world.projectile_system.create_frame.get(&cid) {
         if *frame_id == world.frame_id {
-            world.info.projectile.create_frame.remove(&cid); // only needed at most once
+            world.projectile_system.create_frame.remove(&cid); // only needed at most once
             return Ok(())
         }
     }

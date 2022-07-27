@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}, TICK_RATE}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -44,6 +44,7 @@ pub struct Game<'a> {
     pub hovered_character: Option<CharacterID>,
     pub clicked_hovered: bool,
     pub tick: u32,
+    pub tick_commands: HashMap<u32, Vec<Box<dyn WorldCommand>>>,
 }
 
 impl Game<'_> {
@@ -117,7 +118,8 @@ impl Game<'_> {
                 ui_scale,
                 locked: true,
                 destination: None,
-                tick: 0
+                tick: 0,
+                tick_commands: HashMap::new(),
             }
         };
 
@@ -167,6 +169,7 @@ impl Game<'_> {
         };
 
         let history = 5;
+        let mut history_tick = 0;
         let mut history_world = World::new();
 
         let mut tick_timer = 0.0;
@@ -231,17 +234,47 @@ impl Game<'_> {
             while tick_timer >= 1.0 / TICK_RATE {
                 let delta_time = 1.0 / TICK_RATE;
                 tick_timer -= delta_time;
-                game.world.update(delta_time);
-                for error in game.world.errors.drain(0..game.world.errors.len()) {
-                    // client side errors usually will be a result of lag
-                    match error {
-                        WorldError::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
-                        _ => println!("Client world error: {:?}", error),
+                let history = game.tick_commands.remove(&history_tick);
+                if let Some(history) = history {
+                    for (command, protocol) in history {
+                        match execute_client_command(&command, (protocol, &mut game)) {
+                            Ok(()) => (),
+                            Err(err) => game.chatbox.println(format!(
+                                "Error executing world command, err: {}",
+                                err
+                            ).as_str())
+                        }
                     }
                 }
-                game.tick += 1;
+                history_world.update(delta_time);
+                history_tick += 1;
             }
 
+            (game.world, game.tick) = {
+                let mut world = history_world.clone();
+                let mut tick = history_tick;
+                for _ in 0..history {
+                    let history_commands = game.tick_commands.remove(&history_tick);
+                    if let Some(history_commands) = history_commands {
+                        for (command, protocol) in history_commands {
+                            match execute_client_command(&command, (protocol, &mut game)) {
+                                Ok(()) => (),
+                                Err(_) => (), // ignore for now
+                            }
+                        }
+                    }
+                    world.update(1.0 / TICK_RATE);
+                    tick += 1;
+                }
+                (world, tick)
+            };
+            for error in game.world.errors.drain(0..game.world.errors.len()) {
+                // client side errors usually will be a result of lag
+                match error {
+                    WorldError::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
+                    _ => println!("Client world error: {:?}", error),
+                }
+            }
 
             let selected_char = {
                 let mut c = None;

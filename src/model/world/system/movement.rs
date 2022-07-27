@@ -1,9 +1,9 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, ErrLog}, commands::GetCommandID};
+use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, ErrLog, WorldInfo}, commands::GetCommandID};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Movement {
     pub destination: Option<Vector2<f32>>
 }
@@ -20,10 +20,7 @@ pub struct MoveCharacter {
     pub reset: bool,
 }
 
-impl<'a> WorldCommand<'a> for MoveCharacter {
-    fn get_tick(&self) -> u32 {
-        self.tick
-    }
+impl WorldCommand for MoveCharacter {
     fn validate(&self, world: &World) -> Result<(), WorldError> {
         if self.destination.x.is_nan() || self.destination.y.is_nan() {
             return Err(WorldError::InvalidCommand);
@@ -123,8 +120,8 @@ pub fn walk_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range:
     }
 }
 
-pub fn movement_system_init(_: &mut World) -> Result<(), WorldError> {
-    Ok(())
+pub fn movement_system_init() -> Result<WorldInfo, WorldError> {
+    Ok(WorldInfo::new())
 }
 
 fn movement_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {

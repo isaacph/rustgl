@@ -7,7 +7,7 @@ use super::{movement::walk_to, projectile::{self, ProjectileCreationInfo}};
 
 pub mod fsm;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoAttackExecution {
     pub timer: f32,
     pub starting_attack_speed: f32,
@@ -15,13 +15,13 @@ pub struct AutoAttackExecution {
     pub projectile_gen_id: CharacterID,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoAttackTargeting {
     pub target: CharacterID,
     pub ids: CharacterIDRange,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoAttack {
     pub timer: f32, // cooldown
     pub execution: Option<AutoAttackExecution>, // currently executing attack
@@ -93,10 +93,7 @@ pub struct AutoAttackCommand {
     pub projectile_gen_ids: CharacterIDRange,
 }
 
-impl<'a> WorldCommand<'a> for AutoAttackCommand {
-    fn get_tick(&self) -> u32 {
-        self.tick
-    }
+impl WorldCommand for AutoAttackCommand {
     fn validate(&self, world: &World) -> Result<(), WorldError> {
         if self.attacker == self.target {
             return Err(WorldError::InvalidCommand)
@@ -157,9 +154,9 @@ impl GetCommandID for AutoAttackRequest {
     }
 }
 
-pub fn auto_attack_system_init(_: &mut World) -> Result<(), WorldError> {
+pub fn auto_attack_system_init() -> Result<WorldInfo, WorldError> {
     // noop
-    Ok(())
+    Ok(WorldInfo::new())
 }
 
 // fn auto_attack_start(world: &mut World, attacker: &CharacterID, target: &CharacterID, projectile_gen_id: &CharacterID) -> Result<(), WorldError> {

@@ -1,4 +1,4 @@
-// #![windows_subsystem = "windows"]
+#![windows_subsystem = "windows"]
 
 #[cfg(feature = "client")]
 extern crate glfw;
@@ -31,8 +31,8 @@ pub fn grab_console_line(prompt: &str) -> String {
 }
 
 pub fn auto_addr() -> (SocketAddr, SocketAddr) {
-    let auto_addr_str = ("127.0.0.1:1234", "127.0.0.1:1235");
-    // let auto_addr_str = ("test.neotrias.link:1234", "test.neotrias.link:1235");
+    // let auto_addr_str = ("127.0.0.1:1234", "127.0.0.1:1235");
+    let auto_addr_str = ("test.neotrias.link:1234", "test.neotrias.link:1235");
     (
         auto_addr_str.0.to_socket_addrs().unwrap().next().unwrap(),
         auto_addr_str.1.to_socket_addrs().unwrap().next().unwrap()

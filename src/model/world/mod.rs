@@ -1,5 +1,6 @@
+use nalgebra::Vector3;
 use strum::IntoEnumIterator;
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, rc::Rc};
 use serde::{Serialize, de::DeserializeOwned};
 
 use self::{
@@ -24,9 +25,8 @@ use self::{
         },
         icewiz::{
             IceWiz,
-            IceWizInfo,
             icewiz_system_init,
-            icewiz_system_update,
+            icewiz_system_update, self,
         },
         auto_attack::{
             AutoAttack,
@@ -38,8 +38,8 @@ use self::{
         projectile::{
             Projectile,
             projectile_system_init,
-            projectile_system_update, ProjectileInfo
-        }, caster_minion::{CasterMinion, caster_minion_system_init, caster_minion_system_update}
+            projectile_system_update, ProjectileSystem
+        }, caster_minion::{CasterMinion, caster_minion_system_init, caster_minion_system_update, self}
     }
 };
 
@@ -87,14 +87,16 @@ pub trait CharacterCreatorCreator {
     fn create(&self) -> Box<dyn CharacterCreator>;
 }
 
+#[derive(Clone)]
 pub struct World {
     pub errors: Vec<WorldError>,
 
-    pub character_creator: HashMap<CharacterType, Box<dyn CharacterCreatorCreator>>,
-    pub info: WorldInfo,
+    pub info: Rc<WorldInfo>,
     pub teams: HashMap<TeamID, Team>,
     pub characters: HashSet<CharacterID>,
     pub players: PlayerData,
+
+    pub projectile_system: ProjectileSystem,
 
     // components that should be serialized across the internet
     pub base: ComponentStorage<CharacterBase>,
@@ -111,13 +113,11 @@ pub struct World {
 
 // immutable info about the world
 // ex: base stats for wizards
+#[derive(Clone)]
 pub struct WorldInfo {
     pub base: HashMap<CharacterType, CharacterBase>,
     pub health: HashMap<CharacterType, CharacterHealth>,
     pub auto_attack: HashMap<CharacterType, AutoAttackInfo>,
-
-    pub icewiz: IceWizInfo,
-    pub projectile: ProjectileInfo,
 }
 
 impl WorldInfo {
@@ -126,22 +126,41 @@ impl WorldInfo {
             base: HashMap::new(),
             health: HashMap::new(),
             auto_attack: HashMap::new(),
-
-            icewiz: IceWizInfo::init(),
-            projectile: ProjectileInfo::init()
         }
+    }
+    pub fn combine(infos: Vec<WorldInfo>) -> WorldInfo {
+        let mut combo = WorldInfo::new();
+        for info in infos {
+            combo.base.extend(info.base.into_iter());
+            combo.health.extend(info.health.into_iter());
+            combo.auto_attack.extend(info.auto_attack.into_iter());
+        }
+        combo
     }
 }
 
 impl World {
     pub fn new() -> World {
-        let mut world = World {
-            errors: vec![],
+        // init each system
+        let (info, errors): (Vec<WorldInfo>, Vec<WorldError>) = [
+            movement_system_init(),
+            auto_attack_system_init(),
+            projectile_system_init(),
+            caster_minion_system_init(),
+            icewiz_system_init(),
+        ].into_iter().fold((vec![], vec![]), |(mut info, mut errors), res| {
+            match res {
+                Ok(ninfo) => info.push(ninfo),
+                Err(err) => errors.push(err),
+            };
+            (info, errors)
+        });
+        World {
+            errors: errors,
             frame_id: 0,
-            info: WorldInfo::new(),
+            info: Rc::new(WorldInfo::combine(info)),
             teams: HashMap::new(),
             characters: HashSet::new(),
-            character_creator: HashMap::new(),
             players: PlayerData { players: HashMap::new() },
             base: ComponentStorage::new(),
             health: ComponentStorage::new(),
@@ -150,21 +169,8 @@ impl World {
             icewiz: ComponentStorage::new(),
             caster_minion: ComponentStorage::new(),
             projectile: ComponentStorage::new(),
-        };
-        // init each system
-        let errors = [
-            movement_system_init(&mut world),
-            auto_attack_system_init(&mut world),
-            projectile_system_init(&mut world),
-            caster_minion_system_init(&mut world),
-            icewiz_system_init(&mut world),
-        ].into_iter().filter_map(|res| match res {
-            Ok(()) => None,
-            Err(err) => Some(err),
-        });
-        world.errors.extend(errors);
-
-        world
+            projectile_system: ProjectileSystem::init(),
+        }
     }
 
     pub fn update(&mut self, delta_time: f32) {
@@ -285,8 +291,7 @@ impl World {
                 ).collect();
                 Some(UpdateCharacter {
                     id,
-                    components,
-                    tick,
+                    components
                 })
             }
         }
@@ -300,21 +305,14 @@ impl World {
     // }
 
     // Only returns Err if world info is corrupt and missing the character creator
-    pub fn create_character(&mut self, idgen: &mut CharacterIDGenerator, typ: CharacterType) -> Result<CharacterID, String> {
-        let mut creator = match self.character_creator.get(&typ) {
-            Some(creator) => creator.create(),
-            None => {
-                let err = WorldError::MissingCharacterCreator(typ);
-                self.errors.push(err.clone());
-                return Err(format!("{:?}", err));
-            }
-        };
+    pub fn create_character(&mut self, idgen: &mut CharacterIDGenerator, typ: CharacterType) -> Result<CharacterID, WorldError> {
         let id = idgen.generate();
-        self.characters.insert(id);
-        match creator.create(self, &id) {
-            Ok(()) => (),
-            Err(err) => self.errors.push(err),
-        }
+        let position = Vector3::new(0.0, 0.0, 0.0);
+        match typ {
+            CharacterType::CasterMinion => caster_minion::create(self, &id, position)?,
+            CharacterType::IceWiz => icewiz::create(self, &id, position)?,
+            _ => return Err(WorldError::MissingCharacterCreator(typ)),
+        };
         Ok(id)
     }
 
