@@ -32,7 +32,7 @@ impl<'a> PlayerCommand<'a> for GenerateCharacter {
                 &ChatMessage(format!("Failed to generate character: {:?}", err))
             ).print()
         };
-        if let Some(cmd) = server.world.make_cmd_update_character(id) {
+        if let Some(cmd) = server.world.make_cmd_update_character(server.tick, id) {
             server.broadcast(Subscription::World, Protocol::UDP, &cmd);
             match server.player_manager.get_player_mut(player_id) {
                 Some(player) => player.selected_char = Some(id),

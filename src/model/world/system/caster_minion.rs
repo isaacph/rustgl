@@ -60,8 +60,8 @@ pub fn caster_minion_system_init(world: &mut World) -> Result<(), WorldError> {
         targetable: true,
     });
     world.info.health.insert(CharacterType::CasterMinion, CharacterHealth {
-        health: 4.0,
-        max_health: 4.0,
+        health: 1000.0,
+        max_health: 1000.0,
     });
     world.info.auto_attack.insert(CharacterType::CasterMinion, AutoAttackInfo::init(
         CharacterType::CasterMinion,
@@ -69,7 +69,7 @@ pub fn caster_minion_system_init(world: &mut World) -> Result<(), WorldError> {
         3.0, // casting duration
         1.0, // wind down duration
         2.5, // fire time (after animation start)
-        1.2, // projectile speed
+        0.5, // projectile speed
         Vector3::new(0.12, 0.0, -0.12) // projectile offset
     )?);
     world.character_creator.insert(CharacterType::CasterMinion, Box::new(CasterMinionCreatorCreator));

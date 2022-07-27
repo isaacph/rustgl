@@ -6,12 +6,14 @@ use crate::model::commands::GetCommandID;
 use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, WorldError};
 
 pub trait WorldCommand<'a>: Deserialize<'a> + GetCommandID {
+    fn get_tick(&self) -> u32;
     fn validate(&self, world: &World) -> Result<(), WorldError>;
     fn run(&mut self, world: &mut World) -> Result<(), WorldError>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateCharacter {
+    pub tick: u32,
     pub id: CharacterID,
     pub components: HashMap<ComponentID, Vec<u8>>
 }

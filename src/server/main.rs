@@ -31,7 +31,7 @@ pub mod update_loop {
             }
         }
 
-        pub fn send_next_update(&mut self, world: &World, now: Instant) -> Vec<Box<[u8]>> {
+        pub fn send_next_update(&mut self, world: &World, now: Instant, tick: u32) -> Vec<Box<[u8]>> {
             let should_update = match self.last_update {
                 None => true,
                 Some(time) => now - time > self.update_interval
@@ -41,7 +41,7 @@ pub mod update_loop {
                 true => {
                     self.last_update = Some(now);
                     world.characters.iter()
-                        .filter_map(|cid| world.make_cmd_update_character(*cid))
+                        .filter_map(|cid| world.make_cmd_update_character(tick, *cid))
                         .filter_map(|cmd| match (&cmd).make_bytes() {
                             Ok(bytes) => Some(bytes),
                             Err(err) => {
@@ -63,6 +63,7 @@ pub struct Server {
     pub character_id_gen: CharacterIDGenerator,
     pub player_manager: PlayerManager,
     pub connection: Connection,
+    pub tick: u32,
 }
 
 
@@ -76,6 +77,7 @@ impl Server {
                 character_id_gen: CharacterIDGenerator::new(),
                 player_manager: PlayerManager::new(),
                 connection: Connection::init(ports)?,
+                tick: 0u32,
             }
         };
         let mut update_loop = UpdateLoop::init(&server.world);
@@ -89,15 +91,6 @@ impl Server {
             last_time = current_time;
             let delta_time = delta_duration.as_secs_f32();
 
-            tick_timer += delta_time;
-            while tick_timer >= 1.0 / TICK_RATE {
-                let delta_time = 1.0 / TICK_RATE;
-                tick_timer -= delta_time;
-                server.world.update(delta_time);
-                for error in server.world.errors.drain(0..server.world.errors.len()) {
-                    println!("Server world error: {:?}", error);
-                }
-            }
 
             let ServerUpdate {
                 messages,
@@ -155,14 +148,25 @@ impl Server {
                 }
             }
 
-            let update_data = update_loop.send_next_update(&server.world, current_time);
+            let update_data = update_loop.send_next_update(&server.world, current_time, server.tick);
             server.broadcast_data(Subscription::World, Protocol::UDP, &update_data);
 
             for error in update_loop.errors.drain(0..update_loop.errors.len()) {
                 println!("Update loop error: {}", error);
             }
 
-            std::thread::sleep(Duration::new(0, 1000000 * 16)); // wait 16 ms
+            tick_timer += delta_time;
+            while tick_timer >= 1.0 / TICK_RATE {
+                let delta_time = 1.0 / TICK_RATE;
+                tick_timer -= delta_time;
+                server.world.update(delta_time);
+                for error in server.world.errors.drain(0..server.world.errors.len()) {
+                    println!("Server world error: {:?}", error);
+                }
+                server.tick += 1;
+            }
+
+            // std::thread::sleep(Duration::new(0, 1000000 * 16)); // wait 16 ms
         }
         Ok(())
     }

@@ -260,11 +260,11 @@ impl Render {
                 let fire_time = info.fsm.get_event_time(execution.starting_attack_speed, AutoAttackFireEvent)?;
                 let start_time = fire_time - animation_length;
 
-                if start_time <= timer && timer < fire_time {
+                if start_time <= timer && timer < fire_time && timer - start_time < animation_length {
                     let frame = ((timer - start_time) / animation_length * frames as f32) as usize;
                     renderables.push(Renderable::CharacterCast(position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame, base.flip));
                 }
-                if self.standalone_animations.get(&cid).is_some() {
+                if self.standalone_animations.get(cid).is_some() {
                     return None;
                 }
                 if start_time <= timer {

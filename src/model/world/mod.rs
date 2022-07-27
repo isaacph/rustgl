@@ -72,7 +72,8 @@ pub enum WorldError {
     InvalidAttackPhase(CharacterID, AutoAttackPhase),
     NoopCommand,
     IllegalInterrupt(CharacterID),
-    OnCooldown(CharacterID, ComponentID)
+    OnCooldown(CharacterID, ComponentID),
+    DesyncError(CharacterID, ComponentID, String),
 }
 
 pub trait CharacterCreator {
@@ -232,7 +233,25 @@ impl World {
             ComponentID::Health => insert(&mut self.health, id, cid, data),
             ComponentID::Movement => insert(&mut self.movement, id, cid, data),
             ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
-            ComponentID::AutoAttack => insert(&mut self.auto_attack, id, cid, data),
+            ComponentID::AutoAttack => {
+                let des: AutoAttack = match bincode::deserialize(data.as_slice()) {
+                    Err(e) => {
+                        println!("Failed to deserialize component of id {}: {}", cid, e);
+                        return
+                    },
+                    Ok(x) => x
+                };
+                if let Some(current) = self.auto_attack.components.get(id) {
+                    if current.execution.is_some() != des.execution.is_some() {
+                        self.errors.push(WorldError::DesyncError(*id, *cid, format!(
+                                    "Current executing: {}, remote executing: {}",
+                                    current.execution.is_some(),
+                                    des.execution.is_some())));
+                    }
+                }
+                self.auto_attack.get_storage_mut().insert(*id, des);
+//                insert(&mut self.auto_attack, id, cid, data)
+            },
             ComponentID::Projectile => insert(&mut self.projectile, id, cid, data),
             ComponentID::CasterMinion => insert(&mut self.caster_minion, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
@@ -256,7 +275,7 @@ impl World {
         }
     }
 
-    pub fn make_cmd_update_character(&self, id: CharacterID) -> Option<UpdateCharacter> {
+    pub fn make_cmd_update_character(&self, tick: u32, id: CharacterID) -> Option<UpdateCharacter> {
         match self.characters.get(&id) {
             None => None,
             Some(&id) => {
@@ -266,7 +285,8 @@ impl World {
                 ).collect();
                 Some(UpdateCharacter {
                     id,
-                    components
+                    components,
+                    tick,
                 })
             }
         }

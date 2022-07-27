@@ -14,12 +14,16 @@ impl GetComponentID for Movement {
 
 #[derive(Serialize, Deserialize)]
 pub struct MoveCharacter {
+    pub tick: u32,
     pub to_move: CharacterID,
     pub destination: Vector2<f32>,
     pub reset: bool,
 }
 
 impl<'a> WorldCommand<'a> for MoveCharacter {
+    fn get_tick(&self) -> u32 {
+        self.tick
+    }
     fn validate(&self, world: &World) -> Result<(), WorldError> {
         if self.destination.x.is_nan() || self.destination.y.is_nan() {
             return Err(WorldError::InvalidCommand);
@@ -189,6 +193,7 @@ pub mod server {
                     } else { false }
                 } else { false };
                 let command = MoveCharacter {
+                    tick: server.tick,
                     to_move: self.id,
                     destination: self.dest,
                     reset

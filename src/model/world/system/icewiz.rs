@@ -65,8 +65,8 @@ pub fn icewiz_system_init(world: &mut World) -> Result<(), WorldError> {
         targetable: true,
     });
     world.info.health.insert(CharacterType::IceWiz, CharacterHealth {
-        health: 8.0,
-        max_health: 8.0,
+        health: 1000.0,
+        max_health: 1000.0,
     });
     world.info.auto_attack.insert(CharacterType::IceWiz, AutoAttackInfo::init(
         CharacterType::IceWiz,

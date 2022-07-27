@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest},
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}, TICK_RATE}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -43,6 +43,7 @@ pub struct Game<'a> {
     pub destination: Option<Vector2<f32>>,
     pub hovered_character: Option<CharacterID>,
     pub clicked_hovered: bool,
+    pub tick: u32,
 }
 
 impl Game<'_> {
@@ -116,6 +117,7 @@ impl Game<'_> {
                 ui_scale,
                 locked: true,
                 destination: None,
+                tick: 0
             }
         };
 
@@ -164,6 +166,8 @@ impl Game<'_> {
             clickbox_types
         };
 
+        let history = 5;
+        let mut history_world = World::new();
 
         let mut tick_timer = 0.0;
 
@@ -230,8 +234,12 @@ impl Game<'_> {
                 game.world.update(delta_time);
                 for error in game.world.errors.drain(0..game.world.errors.len()) {
                     // client side errors usually will be a result of lag
-                    println!("Client world error: {:?}", error);
+                    match error {
+                        WorldError::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
+                        _ => println!("Client world error: {:?}", error),
+                    }
                 }
+                game.tick += 1;
             }
 
 
@@ -666,5 +674,12 @@ impl Game<'_> {
                 _ => Err("Unknown command or incorrect parameters.".to_string())
             }
         }
+    }
+
+    pub fn notify_tick(&mut self, tick: u32) {
+        if self.tick != tick {
+            self.chatbox.println(format!("Tick offset! Other: {}, mine: {}", tick, self.tick).as_str());
+        }
+        self.tick = tick;
     }
 }

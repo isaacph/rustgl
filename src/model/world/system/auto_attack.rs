@@ -87,12 +87,16 @@ pub struct AutoAttackRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AutoAttackCommand {
+    pub tick: u32,
     pub attacker: CharacterID,
     pub target: CharacterID,
     pub projectile_gen_ids: CharacterIDRange,
 }
 
 impl<'a> WorldCommand<'a> for AutoAttackCommand {
+    fn get_tick(&self) -> u32 {
+        self.tick
+    }
     fn validate(&self, world: &World) -> Result<(), WorldError> {
         if self.attacker == self.target {
             return Err(WorldError::InvalidCommand)
@@ -321,6 +325,7 @@ pub mod server {
             if server.player_manager.can_use_character(player_id, &self.attacker) {
                 let gen_ids = server.character_id_gen.generate_range(1000);
                 server.run_world_command(Some(addr), AutoAttackCommand {
+                    tick: server.tick,
                     attacker: self.attacker,
                     target: self.target,
                     projectile_gen_ids: gen_ids,
