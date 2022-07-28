@@ -2,33 +2,33 @@ use std::{collections::{HashMap, HashSet}, fmt::Display, net::SocketAddr};
 use serde::{Serialize, Deserialize};
 use crate::model::{Subscription, world::character::CharacterID};
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct TeamID(i32);
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TeamIDGenerator(i32);
-
-impl TeamIDGenerator {
-    pub fn new() -> Self {
-        TeamIDGenerator(0)
-    }
-    pub fn generate(&mut self) -> TeamID {
-        self.0 += 1;
-        TeamID(self.0 - 1)
-    }
-}
-
-impl Default for TeamIDGenerator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Team {
-    id: TeamID,
-    name: String
-}
+// #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
+// pub struct TeamID(i32);
+// 
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct TeamIDGenerator(i32);
+// 
+// impl TeamIDGenerator {
+//     pub fn new() -> Self {
+//         TeamIDGenerator(0)
+//     }
+//     pub fn generate(&mut self) -> TeamID {
+//         self.0 += 1;
+//         TeamID(self.0 - 1)
+//     }
+// }
+// 
+// impl Default for TeamIDGenerator {
+//     fn default() -> Self {
+//         Self::new()
+//     }
+// }
+// 
+// #[derive(Serialize, Deserialize, Debug, Clone)]
+// pub struct Team {
+//     id: TeamID,
+//     name: String
+// }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct PlayerID(i32);

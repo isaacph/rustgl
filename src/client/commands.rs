@@ -34,16 +34,6 @@ fn drun<'a, T: ClientCommand<'a>>(data: &'a [u8], context: (Protocol, &mut Game)
     T::run(deserialized, context);
     Ok(())
 }
-// stands for "deserialize and run in world"
-fn drun_w<'a, T: WorldCommand<'a>>(data: &'a [u8], (_, game): (Protocol, &mut Game)) -> Result<(), bincode::Error> {
-    let mut deserialized: T = bincode::deserialize::<'a>(data)?; // TODO: error handling
-    game.notify_tick(deserialized.get_tick());
-    match T::run(&mut deserialized, &mut game.world) {
-        Ok(()) => (),
-        Err(err) => game.world.errors.push(err),
-    }
-    Ok(())
-}
 
 pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) -> Result<(), String> {
     let id_num = u16::from_be_bytes([command[command.len() - 2], command[command.len() - 1]]);
@@ -59,12 +49,10 @@ pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) ->
             SetUDPAddress => drun::<crate::model::player::commands::PlayerDataPayload>(data, context),
             IndicateClientPlayer => drun::<crate::model::player::commands::IndicateClientPlayer>(data, context),
             PlayerDataPayload => drun::<crate::model::player::commands::PlayerDataPayload>(data, context),
-            
+
             // tick matters
             ClearWorld => drun::<crate::model::world::commands::ClearWorld>(data, context),
-            AutoAttackCommand => drun_w::<crate::model::world::system::auto_attack::AutoAttackCommand>(data, context),
-            MoveCharacter => drun_w::<crate::model::world::system::movement::MoveCharacter>(data, context),
-            UpdateCharacter => drun::<crate::model::world::commands::UpdateCharacter>(data, context),
+            RunWorldCommand => drun::<crate::model::world::commands::RunWorldCommand>(data, context),
             _ => {
                 println!("Command ID not implemented on client: {:?}", id);
                 Ok(())

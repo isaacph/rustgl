@@ -6,11 +6,13 @@ impl <'a> ClientCommand<'a> for PlayerDataPayload {
         game.character_name.clear();
         for player in self.0.players.values() {
             match player.selected_char {
-                Some(cid) => game.character_name.insert(cid, player.name.clone()),
+                Some(cid) => {
+                    game.character_name.insert(cid, player.name.clone())
+                },
                 None => None
             };
         }
-        game.world.players = self.0;
+        game.players = self.0;
         game.chatbox.println("Updated players");
     }
 }

@@ -16,34 +16,33 @@ use self::{
         CharacterHealth,
         ComponentStorageContainer
     },
-    commands::UpdateCharacter,
+    commands::{UpdateCharacter, WorldCommand, CharacterCommand},
     system::{
         movement::{
             Movement,
-            movement_system_update,
-            movement_system_init
+            MovementSystem
         },
         icewiz::{
             IceWiz,
-            icewiz_system_init,
-            icewiz_system_update, self,
+            self, IceWizSystem,
         },
         auto_attack::{
             AutoAttack,
-            auto_attack_system_init,
-            auto_attack_system_update,
             AutoAttackInfo,
-            AutoAttackPhase
+            AutoAttackPhase, AutoAttackSystem
         },
         projectile::{
             Projectile,
-            projectile_system_init,
-            projectile_system_update, ProjectileSystem
-        }, caster_minion::{CasterMinion, caster_minion_system_init, caster_minion_system_update, self}
+            ProjectileSystem
+        },
+        caster_minion::{
+            CasterMinion,
+            self, CasterMinionSystem
+        }
     }
 };
 
-use super::{player::model::{TeamID, Team, PlayerData}, commands::CommandID};
+use super::commands::CommandID;
 
 //pub mod player;
 pub mod character;
@@ -62,9 +61,11 @@ pub mod client;
 pub enum WorldError {
     MissingCharacter(CharacterID, String),
     MissingCharacterComponent(CharacterID, ComponentID),
+    MissingCharacterComponentSystem(CharacterID, ComponentID),
     MissingCharacterCreator(CharacterType),
     InvalidCommandReplacement(CharacterID, CommandID),
     InvalidCommand,
+    InvalidCommandMapping,
     OutOfRange(CharacterID), // character whose range we are out of
     UnexpectedComponentState(CharacterID, ComponentID, String),
     MissingCharacterInfoComponent(CharacterType, ComponentID),
@@ -92,11 +93,9 @@ pub struct World {
     pub errors: Vec<WorldError>,
 
     pub info: Rc<WorldInfo>,
-    pub teams: HashMap<TeamID, Team>,
+    // pub teams: HashMap<TeamID, Team>,
     pub characters: HashSet<CharacterID>,
-    pub players: PlayerData,
-
-    pub projectile_system: ProjectileSystem,
+    // pub players: PlayerData,
 
     // components that should be serialized across the internet
     pub base: ComponentStorage<CharacterBase>,
@@ -104,20 +103,29 @@ pub struct World {
     pub movement: ComponentStorage<Movement>,
     pub auto_attack: ComponentStorage<AutoAttack>,
     pub projectile: ComponentStorage<Projectile>,
-    
+
     pub icewiz: ComponentStorage<IceWiz>,
     pub caster_minion: ComponentStorage<CasterMinion>,
 
     pub frame_id: u64,
 }
 
+pub trait WorldSystem {
+    fn get_component_id(&self) -> ComponentID;
+    fn init_world_info(&self) -> Result<WorldInfo, WorldError>;
+    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError>;
+    fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError>;
+    fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError>;
+}
+
 // immutable info about the world
 // ex: base stats for wizards
-#[derive(Clone)]
 pub struct WorldInfo {
     pub base: HashMap<CharacterType, CharacterBase>,
     pub health: HashMap<CharacterType, CharacterHealth>,
     pub auto_attack: HashMap<CharacterType, AutoAttackInfo>,
+
+    pub systems: HashMap<ComponentID, Box<dyn WorldSystem>>,
 }
 
 impl WorldInfo {
@@ -126,42 +134,55 @@ impl WorldInfo {
             base: HashMap::new(),
             health: HashMap::new(),
             auto_attack: HashMap::new(),
+            systems: HashMap::new(),
         }
     }
-    pub fn combine(infos: Vec<WorldInfo>) -> WorldInfo {
+    pub fn combine(infos: Vec<WorldInfo>, systems: HashMap<ComponentID, Box<dyn WorldSystem>>) -> WorldInfo {
         let mut combo = WorldInfo::new();
         for info in infos {
             combo.base.extend(info.base.into_iter());
             combo.health.extend(info.health.into_iter());
             combo.auto_attack.extend(info.auto_attack.into_iter());
         }
+        combo.systems = systems;
         combo
     }
+}
+
+pub enum CommandRunResult {
+    Invalid(WorldError),
+    ValidError(WorldError),
+    Valid,
 }
 
 impl World {
     pub fn new() -> World {
         // init each system
-        let (info, errors): (Vec<WorldInfo>, Vec<WorldError>) = [
-            movement_system_init(),
-            auto_attack_system_init(),
-            projectile_system_init(),
-            caster_minion_system_init(),
-            icewiz_system_init(),
-        ].into_iter().fold((vec![], vec![]), |(mut info, mut errors), res| {
-            match res {
-                Ok(ninfo) => info.push(ninfo),
-                Err(err) => errors.push(err),
-            };
-            (info, errors)
-        });
+        let mut systems = HashMap::new();
+        for system in [
+            Box::new(MovementSystem) as Box<dyn WorldSystem>,
+            Box::new(AutoAttackSystem) as Box<dyn WorldSystem>,
+            Box::new(ProjectileSystem) as Box<dyn WorldSystem>,
+            Box::new(IceWizSystem) as Box<dyn WorldSystem>,
+            Box::new(CasterMinionSystem) as Box<dyn WorldSystem>,
+        ] {
+            systems.insert(system.get_component_id(), system);
+        }
+        let (info, errors): (Vec<WorldInfo>, Vec<WorldError>) = systems.values()
+            .map(|system| system.init_world_info())
+            .fold((vec![], vec![]), |(mut info, mut errors), res| {
+                match res {
+                    Ok(ninfo) => info.push(ninfo),
+                    Err(err) => errors.push(err),
+                };
+                (info, errors)
+            }
+        );
         World {
-            errors: errors,
+            errors,
             frame_id: 0,
-            info: Rc::new(WorldInfo::combine(info)),
-            teams: HashMap::new(),
+            info: Rc::new(WorldInfo::combine(info, systems)),
             characters: HashSet::new(),
-            players: PlayerData { players: HashMap::new() },
             base: ComponentStorage::new(),
             health: ComponentStorage::new(),
             movement: ComponentStorage::new(),
@@ -169,23 +190,63 @@ impl World {
             icewiz: ComponentStorage::new(),
             caster_minion: ComponentStorage::new(),
             projectile: ComponentStorage::new(),
-            projectile_system: ProjectileSystem::init(),
         }
     }
 
     pub fn update(&mut self, delta_time: f32) {
+        let info = self.info.clone();
+        for cid in self.characters.clone().iter() {
+            for comp_id in self.get_components(cid) {
+                match match info.systems.get(&comp_id) {
+                    Some(system) => system.update_character(self, cid, delta_time),
+                    // None => Err(WorldError::MissingCharacterComponentSystem(*cid, comp_id)),
+                    None => Ok(()) // components don't need to have systems
+                } {
+                    Ok(()) => (),
+                    Err(err) => self.errors.push(err)
+                }
+            }
+        }
+        // let errors = self.characters.clone().iter()
+        //     .flat_map(|cid| info.systems.values()
+        //     .map(|system| system.update_character(self, cid, delta_time)))
+        //     .filter_map(|res| match res {
+        //     Ok(()) => None,
+        //     Err(err) => Some(err),
+        // });
+        // self.errors.extend(errors);
         self.frame_id += 1;
-        let errors = [
-            movement_system_update(self, delta_time),
-            auto_attack_system_update(self, delta_time),
-            projectile_system_update(self, delta_time),
-            icewiz_system_update(self, delta_time),
-            caster_minion_system_update(self, delta_time),
-        ].into_iter().filter_map(|res| match res {
-            Ok(()) => None,
-            Err(err) => Some(err),
-        });
-        self.errors.extend(errors);
+    }
+
+    pub fn run_command(&mut self, command: WorldCommand) -> Result<CommandRunResult, WorldError> {
+        match command {
+            WorldCommand::CharacterComponent(cid, compid, cmd) => {
+                match self.characters.get(&cid) {
+                    Some(_) => {
+                        match self.info.clone().systems.get(&compid) {
+                            Some(system) => {
+                                if let Err(err) = system.validate_character_command(self, &cid, &cmd) {
+                                    return Ok(CommandRunResult::Invalid(err));
+                                }
+                                if let Err(err) = system.run_character_command(self, &cid, cmd) {
+                                    return Ok(CommandRunResult::ValidError(err));
+                                }
+                                Ok(CommandRunResult::Valid)
+                            },
+                            None => Err(WorldError::MissingCharacterComponentSystem(cid, compid)),
+                        }
+                    },
+                    None => Err(WorldError::MissingCharacter(cid, "Failed to run command for character".to_string())),
+                }
+            },
+            WorldCommand::World(_) => {
+                panic!("Not implemented");
+            },
+            WorldCommand::Update(update_cmd) => {
+                println!("Update character");
+                update_cmd.update_character(self).map(|_| CommandRunResult::Valid)
+            }
+        }
     }
 
     pub fn has_component(&self, id: &CharacterID, cid: &ComponentID) -> bool {
@@ -281,7 +342,7 @@ impl World {
         }
     }
 
-    pub fn make_cmd_update_character(&self, tick: u32, id: CharacterID) -> Option<UpdateCharacter> {
+    pub fn make_cmd_update_character(&self, _: u32, id: CharacterID) -> Option<UpdateCharacter> {
         match self.characters.get(&id) {
             None => None,
             Some(&id) => {
@@ -317,8 +378,8 @@ impl World {
     }
 
     pub fn erase_character(&mut self, cid: &CharacterID) -> Result<(), WorldError> {
-        self.characters.remove(&cid);
-        for id in self.get_components(&cid) {
+        self.characters.remove(cid);
+        for id in self.get_components(cid) {
             self.erase_component(cid, &id);
         }
         Ok(())

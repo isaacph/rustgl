@@ -1,7 +1,7 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::WorldCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, ErrLog, WorldInfo}, commands::GetCommandID};
+use crate::model::{world::{character::CharacterID, commands::CharacterCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, WorldSystem, WorldInfo}, commands::GetCommandID};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Movement {
@@ -12,52 +12,51 @@ impl GetComponentID for Movement {
     const ID: ComponentID = ComponentID::Movement;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MoveCharacter {
     pub tick: u32,
-    pub to_move: CharacterID,
     pub destination: Vector2<f32>,
     pub reset: bool,
 }
 
-impl WorldCommand for MoveCharacter {
-    fn validate(&self, world: &World) -> Result<(), WorldError> {
-        if self.destination.x.is_nan() || self.destination.y.is_nan() {
-            return Err(WorldError::InvalidCommand);
-        }
-        if !world.characters.contains(&self.to_move) {
-            return Err(WorldError::MissingCharacter(
-                self.to_move,
-                "Cannot move nonexistent character".to_string()))
-        }
-        let base = world.base.get_component(&self.to_move)?;
-        if self.reset {
-            if let Some(auto_attack) = world.auto_attack.components.get(&self.to_move) {
-                if auto_attack.is_casting(base.ctype, &world.info) {
-                    return Err(WorldError::IllegalInterrupt(self.to_move));
-                }
-            }
-        }
-        Ok(())
-    }
-    fn run(&mut self, world: &mut World) -> Result<(), WorldError> {
-        let movement = world.movement.get_component_mut(&self.to_move)?;
-        movement.destination = Some(self.destination);
-        if let Some(auto_attack) = world.auto_attack.components.get_mut(&self.to_move) {
-            auto_attack.targeting = None;
-        }
-        if self.reset {
-            world.auto_attack.get_component_mut(&self.to_move)?.execution = None;
-        }
-        Ok(())
-    }
-}
-
-impl GetCommandID for MoveCharacter {
-    fn command_id(&self) -> crate::model::commands::CommandID {
-        crate::model::commands::CommandID::MoveCharacter
-    }
-}
+// impl WorldCommand for MoveCharacter {
+//     fn validate(&self, world: &World) -> Result<(), WorldError> {
+//         if self.destination.x.is_nan() || self.destination.y.is_nan() {
+//             return Err(WorldError::InvalidCommand);
+//         }
+//         if !world.characters.contains(&self.to_move) {
+//             return Err(WorldError::MissingCharacter(
+//                 self.to_move,
+//                 "Cannot move nonexistent character".to_string()))
+//         }
+//         let base = world.base.get_component(&self.to_move)?;
+//         if self.reset {
+//             if let Some(auto_attack) = world.auto_attack.components.get(&self.to_move) {
+//                 if auto_attack.is_casting(base.ctype, &world.info) {
+//                     return Err(WorldError::IllegalInterrupt(self.to_move));
+//                 }
+//             }
+//         }
+//         Ok(())
+//     }
+//     fn run(&mut self, world: &mut World) -> Result<(), WorldError> {
+//         let movement = world.movement.get_component_mut(&self.to_move)?;
+//         movement.destination = Some(self.destination);
+//         if let Some(auto_attack) = world.auto_attack.components.get_mut(&self.to_move) {
+//             auto_attack.targeting = None;
+//         }
+//         if self.reset {
+//             world.auto_attack.get_component_mut(&self.to_move)?.execution = None;
+//         }
+//         Ok(())
+//     }
+// }
+// 
+// impl GetCommandID for MoveCharacter {
+//     fn command_id(&self) -> crate::model::commands::CommandID {
+//         crate::model::commands::CommandID::MoveCharacter
+//     }
+// }
 
 // try to start an action on a target at a range. if in range, return Some(0.0), indicating to start the action.
 // if out of range, move towards the target, and if the target ends up in range during the frame,
@@ -120,45 +119,127 @@ pub fn walk_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range:
     }
 }
 
-pub fn movement_system_init() -> Result<WorldInfo, WorldError> {
-    Ok(WorldInfo::new())
-}
+pub struct MovementSystem;
 
-fn movement_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
-    match world.movement.get_component(&cid)?.destination.as_ref() {
-        Some(dest) => {// currently executing the action
-            // cancel auto attack
-            let base = world.base.get_component(&cid)?;
-            if let Some(auto_attack) = world.auto_attack.components.get_mut(&cid) {
-                auto_attack.targeting = None;
-                if !auto_attack.is_casting(base.ctype, &world.info) {
-                    auto_attack.execution = None;
-                } else {
-                    return Ok(());
+impl WorldSystem for MovementSystem {
+    fn get_component_id(&self) -> ComponentID {
+        ComponentID::Movement
+    }
+
+    fn init_world_info(&self) -> Result<WorldInfo, WorldError> {
+        Ok(WorldInfo::new())
+    }
+
+    fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError> {
+        match world.movement.get_component(cid)?.destination.as_ref() {
+            Some(dest) => {// currently executing the action
+                // cancel auto attack
+                let base = world.base.get_component(cid)?;
+                if let Some(auto_attack) = world.auto_attack.components.get_mut(cid) {
+                    auto_attack.targeting = None;
+                    if !auto_attack.is_casting(base.ctype, &world.info) {
+                        auto_attack.execution = None;
+                    } else {
+                        return Ok(());
+                    }
+                }
+
+                // move
+                let dest = *dest;
+                match walk_to(world, cid, &dest, 0.0, delta_time)? {
+                    Some(_) => {
+                        world.movement.get_component_mut(cid)?.destination = None;
+                    },
+                    None => ()
                 }
             }
-
-            // move
-            let dest = *dest;
-            match walk_to(world, &cid, &dest, 0.0, delta_time)? {
-                Some(_) => {
-                    world.movement.get_component_mut(&cid)?.destination = None;
-                },
-                None => ()
-            }
+            None => (), // waiting to execute the action
         }
-        None => (), // waiting to execute the action
+        Ok(())
     }
-    Ok(())
+
+    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {
+        match cmd {
+            CharacterCommand::Movement(cmd) => {
+                if cmd.destination.x.is_nan() || cmd.destination.y.is_nan() {
+                    return Err(WorldError::InvalidCommand);
+                }
+                if !world.characters.contains(cid) {
+                    return Err(WorldError::MissingCharacter(
+                        *cid,
+                        "Cannot move nonexistent character".to_string()))
+                }
+                let base = world.base.get_component(cid)?;
+                if cmd.reset {
+                    if let Some(auto_attack) = world.auto_attack.components.get(cid) {
+                        if auto_attack.is_casting(base.ctype, &world.info) {
+                            return Err(WorldError::IllegalInterrupt(*cid));
+                        }
+                    }
+                }
+                Ok(())
+            },
+            _ => Err(WorldError::InvalidCommandMapping)
+        }
+    }
+
+    fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError> {
+        match cmd {
+            CharacterCommand::Movement(cmd) => {
+                let movement = world.movement.get_component_mut(cid)?;
+                movement.destination = Some(cmd.destination);
+                if let Some(auto_attack) = world.auto_attack.components.get_mut(cid) {
+                    auto_attack.targeting = None;
+                }
+                if cmd.reset {
+                    world.auto_attack.get_component_mut(cid)?.execution = None;
+                }
+                Ok(())
+            },
+            _ => Err(WorldError::InvalidCommandMapping)
+        }
+    }
 }
 
-pub fn movement_system_update(world: &mut World, delta_time: f32) -> Result<(), WorldError> {
-    let cids: Vec<CharacterID> = world.movement.components.keys().copied().collect();
-    for cid in cids {
-        movement_update(world, delta_time, cid).err_log(world);
-    }
-    Ok(())
-}
+// pub fn movement_system_init() -> Result<WorldInfo, WorldError> {
+//     Ok(WorldInfo::new())
+// }
+// 
+// fn movement_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
+//     match world.movement.get_component(&cid)?.destination.as_ref() {
+//         Some(dest) => {// currently executing the action
+//             // cancel auto attack
+//             let base = world.base.get_component(&cid)?;
+//             if let Some(auto_attack) = world.auto_attack.components.get_mut(&cid) {
+//                 auto_attack.targeting = None;
+//                 if !auto_attack.is_casting(base.ctype, &world.info) {
+//                     auto_attack.execution = None;
+//                 } else {
+//                     return Ok(());
+//                 }
+//             }
+// 
+//             // move
+//             let dest = *dest;
+//             match walk_to(world, &cid, &dest, 0.0, delta_time)? {
+//                 Some(_) => {
+//                     world.movement.get_component_mut(&cid)?.destination = None;
+//                 },
+//                 None => ()
+//             }
+//         }
+//         None => (), // waiting to execute the action
+//     }
+//     Ok(())
+// }
+// 
+// pub fn movement_system_update(world: &mut World, delta_time: f32) -> Result<(), WorldError> {
+//     let cids: Vec<CharacterID> = world.movement.components.keys().copied().collect();
+//     for cid in cids {
+//         movement_update(world, delta_time, cid).err_log(world);
+//     }
+//     Ok(())
+// }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MoveCharacterRequest {
@@ -175,7 +256,7 @@ impl GetCommandID for MoveCharacterRequest {
 #[cfg(feature = "server")]
 pub mod server {
     use std::net::SocketAddr;
-    use crate::{model::{player::{server::PlayerCommand, model::{PlayerID, PlayerDataView}, commands::ChatMessage}, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
+    use crate::{model::{player::{server::PlayerCommand, model::{PlayerID, PlayerDataView}, commands::ChatMessage}, PrintError, world::{commands::{WorldCommand, CharacterCommand}, component::ComponentID}}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
     use super::{MoveCharacterRequest, MoveCharacter};
 
     impl<'a> PlayerCommand<'a> for MoveCharacterRequest {
@@ -189,12 +270,11 @@ pub mod server {
                         !auto_attack.is_casting(base.ctype, &server.world.info)
                     } else { false }
                 } else { false };
-                let command = MoveCharacter {
+                let command = WorldCommand::CharacterComponent(self.id, ComponentID::Movement, CharacterCommand::Movement(MoveCharacter {
                     tick: server.tick,
-                    to_move: self.id,
                     destination: self.dest,
                     reset
-                };
+                }));
                 server.run_world_command(Some(addr), command);
             } else {
                 server.connection.send(Protocol::TCP, addr, &ChatMessage("Error: missing permissions".to_string())).print()

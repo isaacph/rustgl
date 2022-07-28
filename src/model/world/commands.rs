@@ -3,20 +3,27 @@ use serde::{Serialize, Deserialize};
 
 use crate::model::commands::GetCommandID;
 
-use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, WorldError, system::{movement::Movement, auto_attack::AutoAttackCommand}};
+use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, system::{movement::MoveCharacter, auto_attack::AutoAttackCommand}, WorldError};
 
-pub trait WorldCommand {
-    fn validate(&self, world: &World) -> Result<(), WorldError>;
-    fn run(&mut self, world: &mut World) -> Result<(), WorldError>;
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum WorldCommand {
+    CharacterComponent(CharacterID, ComponentID, CharacterCommand),
+    World(GlobalCommand),
+    Update(UpdateCharacter),
 }
 
-pub enum WorldCommandd {
-    Movement(Movement),
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum GlobalCommand {
+    Clear
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum CharacterCommand {
+    Movement(MoveCharacter),
     AutoAttack(AutoAttackCommand),
-    UpdateCharacter(UpdateCharacter),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UpdateCharacter {
     pub id: CharacterID,
     pub components: HashMap<ComponentID, Vec<u8>>
@@ -29,12 +36,14 @@ impl GetCommandID for UpdateCharacter {
 }
 
 impl UpdateCharacter {
-    pub fn update_character(mut self, world: &mut World) {
-        // println!("Updating character");
+    pub fn update_character(mut self, world: &mut World) -> Result<(), WorldError> {
+        let x: Vec<ComponentID> = self.components.keys().copied().collect();
+        println!("Updating character, {:?}", x);
         world.characters.insert(self.id);
         for (cid, data) in self.components.drain() {
             world.update_component(&self.id, &cid, data);
         }
+        Ok(())
     }
 }
 
@@ -100,3 +109,14 @@ impl GetCommandID for ClearWorld {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RunWorldCommand {
+    pub command: WorldCommand,
+    pub tick: u32,
+}
+
+impl GetCommandID for RunWorldCommand {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        crate::model::commands::CommandID::RunWorldCommand
+    }
+}

@@ -10,8 +10,8 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError,
-    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerDataView}}, TICK_RATE}, networking::{client::ClientUpdate, Protocol},
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError, CommandRunResult,
+    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerData, PlayerDataView}}, TICK_RATE}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
@@ -44,7 +44,10 @@ pub struct Game<'a> {
     pub hovered_character: Option<CharacterID>,
     pub clicked_hovered: bool,
     pub tick: u32,
-    pub tick_commands: HashMap<u32, Vec<Box<dyn WorldCommand>>>,
+    pub tick_base: u32,
+    pub tick_commands: HashMap<u32, Vec<WorldCommand>>,
+    pub server_tick_options: HashMap<u32, u64>,
+    pub players: PlayerData,
 }
 
 impl Game<'_> {
@@ -70,8 +73,7 @@ impl Game<'_> {
         unsafe {
             load_gl_with(|f_name| {
                 let cstr = CStr::from_ptr(f_name);
-                let str = cstr.to_str().expect("Failed to convert OGL function name");
-                window.get_proc_address(str)
+                let str = cstr.to_str().expect("Failed to convert OGL function name"); window.get_proc_address(str)
             });
         }
 
@@ -119,7 +121,10 @@ impl Game<'_> {
                 locked: true,
                 destination: None,
                 tick: 0,
+                tick_base: 0,
                 tick_commands: HashMap::new(),
+                server_tick_options: HashMap::new(),
+                players: PlayerData { players: HashMap::new() }
             }
         };
 
@@ -168,9 +173,10 @@ impl Game<'_> {
             clickbox_types
         };
 
-        let history = 5;
+        let targeted_history_distance = 5;
+        let init_world = World::new();
         let mut history_tick = 0;
-        let mut history_world = World::new();
+        let mut history_world = init_world.clone();
 
         let mut tick_timer = 0.0;
 
@@ -236,30 +242,36 @@ impl Game<'_> {
                 tick_timer -= delta_time;
                 let history = game.tick_commands.remove(&history_tick);
                 if let Some(history) = history {
-                    for (command, protocol) in history {
-                        match execute_client_command(&command, (protocol, &mut game)) {
-                            Ok(()) => (),
-                            Err(err) => game.chatbox.println(format!(
-                                "Error executing world command, err: {}",
-                                err
-                            ).as_str())
+                    for cmd in history {
+                        match history_world.run_command(cmd.clone()) {
+                            Ok(res) => match res {
+                                CommandRunResult::Valid => (),
+                                CommandRunResult::ValidError(err) => history_world.errors.push(err),
+                                CommandRunResult::Invalid(err) => history_world.errors.push(err)
+                            },
+                            Err(err) => history_world.errors.push(err)
                         }
                     }
                 }
                 history_world.update(delta_time);
                 history_tick += 1;
+                game.tick_base += 1;
             }
 
             (game.world, game.tick) = {
                 let mut world = history_world.clone();
                 let mut tick = history_tick;
                 for _ in 0..history {
-                    let history_commands = game.tick_commands.remove(&history_tick);
+                    let history_commands = game.tick_commands.get(&history_tick);
                     if let Some(history_commands) = history_commands {
-                        for (command, protocol) in history_commands {
-                            match execute_client_command(&command, (protocol, &mut game)) {
-                                Ok(()) => (),
-                                Err(_) => (), // ignore for now
+                        for cmd in history_commands {
+                            match history_world.run_command(cmd.clone()) {
+                                Ok(res) => match res {
+                                    CommandRunResult::Valid => (),
+                                    CommandRunResult::ValidError(err) => history_world.errors.push(err),
+                                    CommandRunResult::Invalid(err) => history_world.errors.push(err)
+                                },
+                                Err(err) => history_world.errors.push(err)
                             }
                         }
                     }
@@ -268,6 +280,17 @@ impl Game<'_> {
                 }
                 (world, tick)
             };
+            // if let Some(pid) = game.selected_player {
+            //     if let Some(player) = game.players.get_player(&pid) {
+            //         if let Some(cid) = player.selected_char {
+            //             println!("game.world {:?}", game.world.get_components(&cid));
+            //         } else {
+            //             println!("no selected char");
+            //         }
+            //     } else {
+            //         println!("selected player doesn't exist");
+            //     }
+            // }
             for error in game.world.errors.drain(0..game.world.errors.len()) {
                 // client side errors usually will be a result of lag
                 match error {
@@ -279,7 +302,7 @@ impl Game<'_> {
             let selected_char = {
                 let mut c = None;
                 if let Some(pid) = game.selected_player {
-                    if let Some(player) = game.world.players.get_player(&pid) {
+                    if let Some(player) = game.players.get_player(&pid) {
                         if let Some(cid) = player.selected_char {
                             c = Some(cid)
                         }
@@ -303,7 +326,7 @@ impl Game<'_> {
                 game.destination = Some(game.mouse_pos_world);
                 if game.move_timer >= 0.2 {
                     if let Some(pid) = game.selected_player {
-                        if let Some(player) = game.world.players.get_player(&pid) {
+                        if let Some(player) = game.players.get_player(&pid) {
                             if let Some(cid) = player.selected_char {
                                 game.move_timer = 0.0;
                                 game.connection.send(Protocol::UDP, &MoveCharacterRequest {
@@ -465,7 +488,7 @@ impl Game<'_> {
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Release, _)) => {
                         if game.connection.is_connected() && !game.clicked_hovered {
                             if let Some(pid) = game.selected_player {
-                                if let Some(player) = game.world.players.get_player(&pid) {
+                                if let Some(player) = game.players.get_player(&pid) {
                                     if let Some(cid) = player.selected_char {
                                         game.destination = Some(game.mouse_pos_world);
                                         game.move_timer = 0.0;
@@ -483,7 +506,7 @@ impl Game<'_> {
                     (State::DEFAULT, glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _)) => {
                         if game.connection.is_connected() {
                             if let Some(pid) = game.selected_player {
-                                if let Some(player) = game.world.players.get_player(&pid) {
+                                if let Some(player) = game.players.get_player(&pid) {
                                     if let Some(cid) = player.selected_char {
                                         if let Some(scid) = &game.hovered_character {
                                             // we clicked a unit
@@ -673,7 +696,7 @@ impl Game<'_> {
                     self.connection.send(Protocol::TCP, &ListChar)?;
                     Ok(Some(format!("Selected: {}\nLocal:\n{}", {
                         if let Some(player) = self.selected_player {
-                            match self.world.players.get_player(&player) {
+                            match self.players.get_player(&player) {
                                 None => format!("Selected player not found: {:?}", player),
                                 Some(player) => format!("{:?}", player.selected_char)
                             }

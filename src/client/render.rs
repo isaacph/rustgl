@@ -171,7 +171,7 @@ impl Render {
         let selected_char = {
             let mut c = None;
             if let Some(pid) = game.selected_player {
-                if let Some(player) = game.world.players.get_player(&pid) {
+                if let Some(player) = game.players.get_player(&pid) {
                     if let Some(cid) = player.selected_char {
                         c = Some(cid)
                     }

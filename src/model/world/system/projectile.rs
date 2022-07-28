@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, CharacterBase, ComponentStorageContainer, CharacterFlip}, World, WorldError, ErrLog, WorldInfo};
+use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, CharacterBase, ComponentStorageContainer, CharacterFlip}, World, WorldError, WorldInfo, WorldSystem, commands::CharacterCommand};
 
 use super::movement::fly_to;
 
@@ -17,17 +15,6 @@ impl GetComponentID for Projectile {
     const ID: ComponentID = ComponentID::Projectile;
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ProjectileSystem {
-    create_frame: HashMap<CharacterID, u64>
-}
-
-impl ProjectileSystem {
-    pub fn init() -> Self {
-        ProjectileSystem { create_frame: HashMap::new() }
-    }
-}
-
 pub struct ProjectileCreationInfo {
     pub proj_id: CharacterID,
     pub origin: CharacterID,
@@ -39,8 +26,7 @@ pub struct ProjectileCreationInfo {
 
 pub fn create(
     world: &mut World,
-    info: &ProjectileCreationInfo,
-    init_travel_time: f32
+    info: &ProjectileCreationInfo
 ) -> Result<(), WorldError> {
     let typ = CharacterType::Projectile;
     world.characters.insert(info.proj_id);
@@ -67,62 +53,121 @@ pub fn create(
             target: info.target
         }
     );
-    projectile_update(world, init_travel_time, info.proj_id)
+    Ok(())
 }
 
-pub fn projectile_system_init() -> Result<WorldInfo, WorldError> {
-    let mut info = WorldInfo::new();
-    info.base.insert(CharacterType::Projectile,
-        CharacterBase {
-            ctype: CharacterType::Projectile,
-            position: Vector3::new(0.0, 0.0, 0.0),
-            center_offset: Vector3::new(0.0, 0.0, 0.0),
-            attack_damage: 0.0,
-            range: 0.0,
-            attack_speed: 0.0,
-            flip: CharacterFlip::Right,
-            targetable: false,
-            speed: 0.0,
-        }
-    );
-    Ok(info)
-}
+pub struct ProjectileSystem;
 
-fn projectile_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
-    if let Some(frame_id) = world.projectile_system.create_frame.get(&cid) {
-        if *frame_id == world.frame_id {
-            world.projectile_system.create_frame.remove(&cid); // only needed at most once
-            return Ok(())
-        }
+impl WorldSystem for ProjectileSystem {
+    fn get_component_id(&self) -> ComponentID {
+        ComponentID::Projectile
     }
-    let target = world.projectile.get_component(&cid)?.target;
-    if world.characters.get(&target).is_none() {
-        world.erase_character(&cid)?;
-        return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
-    }
-    let base = world.base.get_component(&target)?;
-    let dest = base.position + base.center_offset;
-    let range = 0.0;
-    let damage = world.base.get_component(&cid)?.attack_damage;
-    match fly_to(world, &cid, &dest, range, delta_time)? {
-        Some(_) => {
-            world.erase_character(&cid)?;
-            // do damage
-            let health = world.health.get_component_mut(&target)?;
-            health.health -= damage;
-            if health.health <= 0.0 {
-                world.erase_character(&target)?;
+
+    fn init_world_info(&self) -> Result<WorldInfo, WorldError> {
+        let mut info = WorldInfo::new();
+        info.base.insert(CharacterType::Projectile,
+            CharacterBase {
+                ctype: CharacterType::Projectile,
+                position: Vector3::new(0.0, 0.0, 0.0),
+                center_offset: Vector3::new(0.0, 0.0, 0.0),
+                attack_damage: 0.0,
+                range: 0.0,
+                attack_speed: 0.0,
+                flip: CharacterFlip::Right,
+                targetable: false,
+                speed: 0.0,
             }
-        },
-        None => (),
+        );
+        Ok(info)
     }
-    Ok(())
+
+    fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError> {
+        let target = world.projectile.get_component(&cid)?.target;
+        if world.characters.get(&target).is_none() {
+            world.erase_character(&cid)?;
+            return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
+        }
+        let base = world.base.get_component(&target)?;
+        let dest = base.position + base.center_offset;
+        let range = 0.0;
+        let damage = world.base.get_component(&cid)?.attack_damage;
+        match fly_to(world, &cid, &dest, range, delta_time)? {
+            Some(_) => {
+                world.erase_character(&cid)?;
+                // do damage
+                let health = world.health.get_component_mut(&target)?;
+                health.health -= damage;
+                if health.health <= 0.0 {
+                    world.erase_character(&target)?;
+                }
+            },
+            None => (),
+        }
+        Ok(())
+    }
+
+    fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
+        Err(WorldError::InvalidCommandMapping)
+    }
+
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
+        Err(WorldError::InvalidCommandMapping)
+    }
 }
 
-pub fn projectile_system_update(world: &mut World, delta_time: f32) -> Result<(), WorldError> {
-    let cids: Vec<CharacterID> = world.projectile.components.keys().copied().collect();
-    for cid in cids {
-        projectile_update(world, delta_time, cid).err_log(world);
-    }
-    Ok(())
-}
+// pub fn projectile_system_init() -> Result<WorldInfo, WorldError> {
+//     let mut info = WorldInfo::new();
+//     info.base.insert(CharacterType::Projectile,
+//         CharacterBase {
+//             ctype: CharacterType::Projectile,
+//             position: Vector3::new(0.0, 0.0, 0.0),
+//             center_offset: Vector3::new(0.0, 0.0, 0.0),
+//             attack_damage: 0.0,
+//             range: 0.0,
+//             attack_speed: 0.0,
+//             flip: CharacterFlip::Right,
+//             targetable: false,
+//             speed: 0.0,
+//         }
+//     );
+//     Ok(info)
+// }
+
+// fn projectile_update(world: &mut World, delta_time: f32, cid: CharacterID) -> Result<(), WorldError> {
+//     if let Some(frame_id) = world.projectile_system.create_frame.get(&cid) {
+//         if *frame_id == world.frame_id {
+//             world.projectile_system.create_frame.remove(&cid); // only needed at most once
+//             return Ok(())
+//         }
+//     }
+//     let target = world.projectile.get_component(&cid)?.target;
+//     if world.characters.get(&target).is_none() {
+//         world.erase_character(&cid)?;
+//         return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
+//     }
+//     let base = world.base.get_component(&target)?;
+//     let dest = base.position + base.center_offset;
+//     let range = 0.0;
+//     let damage = world.base.get_component(&cid)?.attack_damage;
+//     match fly_to(world, &cid, &dest, range, delta_time)? {
+//         Some(_) => {
+//             world.erase_character(&cid)?;
+//             // do damage
+//             let health = world.health.get_component_mut(&target)?;
+//             health.health -= damage;
+//             if health.health <= 0.0 {
+//                 world.erase_character(&target)?;
+//             }
+//         },
+//         None => (),
+//     }
+//     Ok(())
+// }
+// 
+// pub fn projectile_system_update(world: &mut World, delta_time: f32) -> Result<(), WorldError> {
+//     let cids: Vec<CharacterID> = world.projectile.components.keys().copied().collect();
+//     for cid in cids {
+//         projectile_update(world, delta_time, cid).err_log(world);
+//     }
+//     Ok(())
+// }
