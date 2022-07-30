@@ -14,7 +14,6 @@ impl GetComponentID for Movement {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MoveCharacter {
-    pub tick: u32,
     pub destination: Vector2<f32>,
     pub reset: bool,
 }
@@ -271,7 +270,6 @@ pub mod server {
                     } else { false }
                 } else { false };
                 let command = WorldCommand::CharacterComponent(self.id, ComponentID::Movement, CharacterCommand::Movement(MoveCharacter {
-                    tick: server.tick,
                     destination: self.dest,
                     reset
                 }));

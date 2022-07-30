@@ -29,12 +29,6 @@ pub struct UpdateCharacter {
     pub components: HashMap<ComponentID, Vec<u8>>
 }
 
-impl GetCommandID for UpdateCharacter {
-    fn command_id(&self) -> crate::model::commands::CommandID {
-        crate::model::commands::CommandID::UpdateCharacter
-    }
-}
-
 impl UpdateCharacter {
     pub fn update_character(mut self, world: &mut World) -> Result<(), WorldError> {
         let x: Vec<ComponentID> = self.components.keys().copied().collect();
@@ -112,7 +106,7 @@ impl GetCommandID for ClearWorld {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RunWorldCommand {
     pub command: WorldCommand,
-    pub tick: u32,
+    pub tick: i32,
 }
 
 impl GetCommandID for RunWorldCommand {

@@ -296,7 +296,24 @@ impl World {
             storage.get_storage_mut().insert(*id, des);
         }
         match cid {
-            ComponentID::Base => insert(&mut self.base, id, cid, data),
+            // ComponentID::Base => insert(&mut self.base, id, cid, data),
+            ComponentID::Base => {
+                let des: CharacterBase = match bincode::deserialize(data.as_slice()) {
+                    Err(e) => {
+                        println!("Failed to deserialize component of id {}: {}", cid, e);
+                        return
+                    },
+                    Ok(x) => x
+                };
+                if let Some(current) = self.base.components.get(id) {
+                    let diff = (current.position - des.position).magnitude();
+                    if diff > 0.0 {
+                        self.errors.push(WorldError::DesyncError(*id, *cid, format!("pos diff: {}", diff)));
+                    }
+                }
+                self.base.get_storage_mut().insert(*id, des);
+//                insert(&mut self.auto_attack, id, cid, data)
+            },
             ComponentID::Health => insert(&mut self.health, id, cid, data),
             ComponentID::Movement => insert(&mut self.movement, id, cid, data),
             ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
@@ -342,7 +359,7 @@ impl World {
         }
     }
 
-    pub fn make_cmd_update_character(&self, _: u32, id: CharacterID) -> Option<UpdateCharacter> {
+    pub fn make_cmd_update_character(&self, id: CharacterID) -> Option<UpdateCharacter> {
         match self.characters.get(&id) {
             None => None,
             Some(&id) => {

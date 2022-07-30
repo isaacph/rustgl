@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 use crate::model::world::commands::{WorldCommand, RunWorldCommand};
-use crate::model::{Subscription, PrintError, TICK_RATE};
+use crate::model::{Subscription, PrintError, TICK_RATE, Tick};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
@@ -31,7 +31,7 @@ pub mod update_loop {
             }
         }
 
-        pub fn send_next_update(&mut self, world: &World, now: Instant, tick: u32) -> Vec<Box<[u8]>> {
+        pub fn send_next_update(&mut self, world: &World, now: Instant, tick: i32) -> Vec<Box<[u8]>> {
             let should_update = match self.last_update {
                 None => true,
                 Some(time) => now - time > self.update_interval
@@ -41,8 +41,8 @@ pub mod update_loop {
                 true => {
                     self.last_update = Some(now);
                     world.characters.iter()
-                        .filter_map(|cid| world.make_cmd_update_character(tick, *cid))
-                        .filter_map(|cmd| match (&RunWorldCommand { command: WorldCommand::Update(cmd), tick }).make_bytes() {
+                        .filter_map(|cid| world.make_cmd_update_character(*cid))
+                        .filter_map(|cmd| match (&RunWorldCommand { command: WorldCommand::Update(cmd), tick: tick }).make_bytes() {
                             Ok(bytes) => Some(bytes),
                             Err(err) => {
                                 self.errors.push(format!("Error serializing update command: {}", err));
@@ -63,7 +63,7 @@ pub struct Server {
     pub character_id_gen: CharacterIDGenerator,
     pub player_manager: PlayerManager,
     pub connection: Connection,
-    pub tick: u32,
+    pub tick: Tick,
 }
 
 
@@ -77,7 +77,7 @@ impl Server {
                 character_id_gen: CharacterIDGenerator::new(),
                 player_manager: PlayerManager::new(),
                 connection: Connection::init(ports)?,
-                tick: 0u32,
+                tick: 0,
             }
         };
         let mut update_loop = UpdateLoop::init(&server.world);

@@ -11,7 +11,7 @@ use crate::{
     model::{world::{
         World,
         character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError, CommandRunResult,
-    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerData, PlayerDataView}}, TICK_RATE}, networking::{client::ClientUpdate, Protocol},
+    }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerData, PlayerDataView}}, TICK_RATE, Tick}, networking::{client::ClientUpdate, Protocol},
 };
 
 use crate::networking::client::Client as Connection;
@@ -23,6 +23,8 @@ pub enum State {
     DEFAULT,
     TYPING
 }
+
+pub type TickDiff = Tick;
 
 pub struct Game<'a> {
     pub window_size: Vector2<i32>,
@@ -43,10 +45,10 @@ pub struct Game<'a> {
     pub destination: Option<Vector2<f32>>,
     pub hovered_character: Option<CharacterID>,
     pub clicked_hovered: bool,
-    pub tick: u32,
-    pub tick_base: u32,
-    pub tick_commands: HashMap<u32, Vec<WorldCommand>>,
-    pub server_tick_options: HashMap<u32, u64>,
+    pub tick_current: Tick,
+    pub tick_base: Tick,
+    pub tick_commands: HashMap<Tick, Vec<WorldCommand>>,
+    pub tick_count: HashMap<Tick, HashMap<TickDiff, u32>>,
     pub players: PlayerData,
 }
 
@@ -120,10 +122,10 @@ impl Game<'_> {
                 ui_scale,
                 locked: true,
                 destination: None,
-                tick: 0,
+                tick_current: 0,
                 tick_base: 0,
                 tick_commands: HashMap::new(),
-                server_tick_options: HashMap::new(),
+                tick_count: HashMap::new(),
                 players: PlayerData { players: HashMap::new() }
             }
         };
@@ -173,10 +175,12 @@ impl Game<'_> {
             clickbox_types
         };
 
-        let targeted_history_distance = 5;
+        let target_history_distance = 3;
         let init_world = World::new();
         let mut history_tick = 0;
         let mut history_world = init_world.clone();
+        let tick_count_history = 600;
+        let mut last_display_tick_diff = 0;
 
         let mut tick_timer = 0.0;
 
@@ -236,43 +240,103 @@ impl Game<'_> {
                 }
             }
 
+            // update base tick
             tick_timer += delta_time;
             while tick_timer >= 1.0 / TICK_RATE {
                 let delta_time = 1.0 / TICK_RATE;
                 tick_timer -= delta_time;
-                let history = game.tick_commands.remove(&history_tick);
-                if let Some(history) = history {
-                    for cmd in history {
-                        match history_world.run_command(cmd.clone()) {
-                            Ok(res) => match res {
-                                CommandRunResult::Valid => (),
-                                CommandRunResult::ValidError(err) => history_world.errors.push(err),
-                                CommandRunResult::Invalid(err) => history_world.errors.push(err)
-                            },
-                            Err(err) => history_world.errors.push(err)
-                        }
-                    }
-                }
-                history_world.update(delta_time);
-                history_tick += 1;
                 game.tick_base += 1;
             }
 
-            (game.world, game.tick) = {
-                let mut world = history_world.clone();
-                let mut tick = history_tick;
-                for _ in 0..history {
-                    let history_commands = game.tick_commands.get(&history_tick);
-                    if let Some(history_commands) = history_commands {
-                        for cmd in history_commands {
-                            match history_world.run_command(cmd.clone()) {
+            // find the best tick to display to the user
+            // current strategy: find the most popular tick diff (server tick - game.tick_base) of
+            // recent commands
+            let display_tick_diff = {
+                let popular = ((game.tick_base - tick_count_history + 1)..=game.tick_base)
+                .map(|tick| game.tick_count.get(&tick).cloned().unwrap_or_default())
+                .fold(HashMap::new(), |mut map, next| {
+                    for (diff, count) in next {
+                        *map.entry(diff).or_insert(0) += count;
+                    }
+                    map
+                }).iter().fold((0i32, 0u32), |(diff_max, count_max), (diff, count)| {
+                    if *count > count_max || *count == count_max && *diff > diff_max {
+                        return (*diff, *count);
+                    }
+                    (diff_max, count_max)
+                }).0;
+                if Tick::abs(popular - last_display_tick_diff) > 2 {
+                    game.chatbox.println(format!("Display tick diff changed: {} -> {}", last_display_tick_diff, popular).as_str());
+                    last_display_tick_diff = popular;
+                    popular
+                } else {
+                    last_display_tick_diff
+                }
+            };
+            let display_tick = game.tick_base + display_tick_diff;
+            let history_difference = display_tick - history_tick;
+            if history_difference < 0 {
+                history_tick = display_tick;
+                game.chatbox.println(format!("History tick is in front of display tick! Resetting.").as_str());
+            } else if history_difference > target_history_distance {
+                // move forward in history to catch up with target
+                let world = &mut history_world;
+                let catch_up = history_difference - target_history_distance;
+
+                // transfer older commands to the history tick's commands
+                // this causes desync because it means commands arrived too late for our history to
+                // calculate on. but it's probably better to execute these than to discard them, as
+                // long as their time difference isn't too large
+                for i in (history_tick-60)..history_tick {
+                    if let Some(history) = game.tick_commands.remove(&i) {
+                        game.chatbox.println(format!("{} commands arrived {} ticks too late", history.len(), (history_tick - i)).as_str());
+                        game.tick_commands.entry(history_tick).or_insert(vec![]).extend(history.into_iter());
+                    }
+                }
+
+                for _ in 0..catch_up {
+                    let history = game.tick_commands.remove(&history_tick);
+                    if let Some(history) = history {
+                        for cmd in history {
+                            match world.run_command(cmd) {
                                 Ok(res) => match res {
                                     CommandRunResult::Valid => (),
-                                    CommandRunResult::ValidError(err) => history_world.errors.push(err),
-                                    CommandRunResult::Invalid(err) => history_world.errors.push(err)
+                                    CommandRunResult::ValidError(err) => world.errors.push(err),
+                                    CommandRunResult::Invalid(err) => world.errors.push(err)
                                 },
-                                Err(err) => history_world.errors.push(err)
+                                Err(err) => world.errors.push(err)
                             }
+                        }
+                    }
+                    world.update(1.0 / TICK_RATE);
+                    for error in world.errors.drain(0..world.errors.len()) {
+                        // client side errors usually will be a result of lag
+                        match error {
+                            WorldError::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
+                            _ => println!("Client world error: {:?}", error),
+                        }
+                    }
+                    history_tick += 1;
+                }
+            }
+
+            // recalculate display world
+            (game.world, game.tick_current) = {
+                let mut world = history_world.clone();
+                let mut tick = history_tick;
+                let update_count = {
+                    let mut count = display_tick - history_tick;
+                    if count > target_history_distance {
+                        game.chatbox.println(format!("Cannot display correct world since update count is too high: {}", count).as_str());
+                        count = target_history_distance;
+                    }
+                    count
+                };
+                for _ in 0..update_count {
+                    let history_commands = game.tick_commands.get(&tick);
+                    if let Some(history_commands) = history_commands {
+                        for cmd in history_commands {
+                            world.run_command(cmd.clone()).ok();
                         }
                     }
                     world.update(1.0 / TICK_RATE);
@@ -291,13 +355,6 @@ impl Game<'_> {
             //         println!("selected player doesn't exist");
             //     }
             // }
-            for error in game.world.errors.drain(0..game.world.errors.len()) {
-                // client side errors usually will be a result of lag
-                match error {
-                    WorldError::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
-                    _ => println!("Client world error: {:?}", error),
-                }
-            }
 
             let selected_char = {
                 let mut c = None;
@@ -730,12 +787,5 @@ impl Game<'_> {
                 _ => Err("Unknown command or incorrect parameters.".to_string())
             }
         }
-    }
-
-    pub fn notify_tick(&mut self, tick: u32) {
-        if self.tick != tick {
-            self.chatbox.println(format!("Tick offset! Other: {}, mine: {}", tick, self.tick).as_str());
-        }
-        self.tick = tick;
     }
 }

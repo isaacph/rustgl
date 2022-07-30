@@ -34,7 +34,6 @@ pub enum CommandID {
     // commands to run on both
     EchoMessage,
     ChatMessage,
-    UpdateCharacter,
 
     // world commands (also on both, but focus run on world)
     AutoAttackRequest,

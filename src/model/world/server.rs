@@ -1,15 +1,15 @@
 use std::net::SocketAddr;
 
 use crate::{model::{player::{server::PlayerCommand, model::{PlayerID, PlayerDataView}, commands::ChatMessage}, Subscription, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
-use super::{commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter, ClearWorld}, character::CharacterType, World};
+use super::{commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, RunWorldCommand, WorldCommand}, character::CharacterType, World};
 
 impl<'a> PlayerCommand<'a> for UpdateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
 
-    fn run(self, _: &std::net::SocketAddr, _: &PlayerID, server: &mut Server) {
+    fn run(self, _: &std::net::SocketAddr, _: &PlayerID, _server: &mut Server) {
         // TODO: validate update command
-        server.broadcast(Subscription::World, Protocol::UDP, &self);
-        self.update_character(&mut server.world);
+        // server.broadcast(Subscription::World, Protocol::UDP, &self);
+        // self.update_character(&mut server.world).ok();
     }
 }
 
@@ -32,15 +32,22 @@ impl<'a> PlayerCommand<'a> for GenerateCharacter {
                 &ChatMessage(format!("Failed to generate character: {:?}", err))
             ).print()
         };
-        if let Some(cmd) = server.world.make_cmd_update_character(server.tick, id) {
-            server.broadcast(Subscription::World, Protocol::UDP, &cmd);
-            match server.player_manager.get_player_mut(player_id) {
-                Some(player) => player.selected_char = Some(id),
-                None => ()
-            }
-        } else {
-            server.connection.send(Protocol::TCP, tcp_addr, &ChatMessage("Failed to generate character".to_string())).print();
-        };
+        match server.player_manager.get_player_mut(player_id) {
+            Some(player) => player.selected_char = Some(id),
+            None => ()
+        }
+        // if let Some(command) = server.world.make_cmd_update_character(id) {
+        //     server.broadcast(
+        //         Subscription::World,
+        //         Protocol::UDP,
+        //         &RunWorldCommand {
+        //             command: WorldCommand::Update(command),
+        //             tick: server.tick
+        //         }
+        //     );
+        // } else {
+        //     server.connection.send(Protocol::TCP, tcp_addr, &ChatMessage("Failed to generate character".to_string())).print();
+        // };
     }
 }
 
