@@ -75,6 +75,7 @@ pub enum WorldError {
     IllegalInterrupt(CharacterID),
     OnCooldown(CharacterID, ComponentID),
     DesyncError(CharacterID, ComponentID, String),
+    Info(String),
 }
 
 pub trait CharacterCreator {
@@ -195,10 +196,12 @@ impl World {
 
     pub fn update(&mut self, delta_time: f32) {
         let info = self.info.clone();
-        for cid in self.characters.clone().iter() {
-            for comp_id in self.get_components(cid) {
+        let mut sorted: Vec<CharacterID> = self.characters.clone().into_iter().collect();
+        sorted.sort_by_key(|id| id.get_num());
+        for cid in sorted {
+            for comp_id in self.get_components(&cid) {
                 match match info.systems.get(&comp_id) {
-                    Some(system) => system.update_character(self, cid, delta_time),
+                    Some(system) => system.update_character(self, &cid, delta_time),
                     // None => Err(WorldError::MissingCharacterComponentSystem(*cid, comp_id)),
                     None => Ok(()) // components don't need to have systems
                 } {
@@ -218,7 +221,9 @@ impl World {
         self.frame_id += 1;
     }
 
-    pub fn run_command(&mut self, command: WorldCommand) -> Result<CommandRunResult, WorldError> {
+    pub fn run_command(&mut self, _tick: i32, command: WorldCommand) -> Result<CommandRunResult, WorldError> {
+        let x = format!("{:?}", command);
+        self.errors.push(WorldError::Info(format!("Run cmd: {:?}", x.as_str()[0..std::cmp::min(70, x.len())].to_string())));
         match command {
             WorldCommand::CharacterComponent(cid, compid, cmd) => {
                 match self.characters.get(&cid) {
@@ -243,7 +248,7 @@ impl World {
                 panic!("Not implemented");
             },
             WorldCommand::Update(update_cmd) => {
-                println!("Update character");
+                // println!("Update character");
                 update_cmd.update_character(self).map(|_| CommandRunResult::Valid)
             }
         }
@@ -331,6 +336,15 @@ impl World {
                                     "Current executing: {}, remote executing: {}",
                                     current.execution.is_some(),
                                     des.execution.is_some())));
+                    } else if let Some(my_exec) = &current.execution {
+                        if let Some(their_exec) = &des.execution {
+                            if my_exec.timer != their_exec.timer {
+                                self.errors.push(WorldError::DesyncError(*id, *cid, format!(
+                                            "Current executing timer: {}, remote executing timer: {}",
+                                            my_exec.timer,
+                                            their_exec.timer)));
+                            }
+                        }
                     }
                 }
                 self.auto_attack.get_storage_mut().insert(*id, des);

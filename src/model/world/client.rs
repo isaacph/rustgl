@@ -22,11 +22,11 @@ impl<'a> ClientCommand<'a> for ClearWorld {
 impl<'a> ClientCommand<'a> for RunWorldCommand {
     fn run(self, (_, game): (Protocol, &mut Game)) {
         // todo: discard old ticks
-        println!("Add new command {:?} to tick {}", self.command, self.tick);
+        // println!("Add new command {:?} to tick {}", self.command, self.tick);
 
         // sum up relative ticks to find which is most popular
         let offset = match self.command {
-            WorldCommand::Update(_) => 0,
+            WorldCommand::Update(_) => 1,
             _ => 0,
         };
         let server_tick_slot = game.tick_count.entry(game.tick_base + offset).or_insert_with(HashMap::new);
@@ -34,9 +34,16 @@ impl<'a> ClientCommand<'a> for RunWorldCommand {
 
         // add command to its correct tick
         match game.tick_commands.get_mut(&self.tick) {
-            Some(commands) => commands.push(self.command),
+            Some(commands) => {
+                commands.insert(
+                    commands.iter()
+                        .position(|(other_ord, _)| self.ordering < *other_ord)
+                        .unwrap_or(commands.len()),
+                    (self.ordering, self.command)
+                );
+            },
             None => {
-                game.tick_commands.insert(self.tick, vec![self.command]);
+                game.tick_commands.insert(self.tick, vec![(self.ordering, self.command)]);
             },
         }
     }

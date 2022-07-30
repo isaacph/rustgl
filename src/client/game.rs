@@ -47,7 +47,7 @@ pub struct Game<'a> {
     pub clicked_hovered: bool,
     pub tick_current: Tick,
     pub tick_base: Tick,
-    pub tick_commands: HashMap<Tick, Vec<WorldCommand>>,
+    pub tick_commands: HashMap<Tick, Vec<(u32, WorldCommand)>>,
     pub tick_count: HashMap<Tick, HashMap<TickDiff, u32>>,
     pub players: PlayerData,
 }
@@ -297,8 +297,8 @@ impl Game<'_> {
                 for _ in 0..catch_up {
                     let history = game.tick_commands.remove(&history_tick);
                     if let Some(history) = history {
-                        for cmd in history {
-                            match world.run_command(cmd) {
+                        for (_, cmd) in history {
+                            match world.run_command(history_tick, cmd) {
                                 Ok(res) => match res {
                                     CommandRunResult::Valid => (),
                                     CommandRunResult::ValidError(err) => world.errors.push(err),
@@ -313,6 +313,7 @@ impl Game<'_> {
                         // client side errors usually will be a result of lag
                         match error {
                             WorldError::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
+                            WorldError::Info(st) => println!("Tick {}, {}", history_tick, st.as_str()),
                             _ => println!("Client world error: {:?}", error),
                         }
                     }
@@ -335,8 +336,8 @@ impl Game<'_> {
                 for _ in 0..update_count {
                     let history_commands = game.tick_commands.get(&tick);
                     if let Some(history_commands) = history_commands {
-                        for cmd in history_commands {
-                            world.run_command(cmd.clone()).ok();
+                        for (_, cmd) in history_commands {
+                            world.run_command(tick, cmd.clone()).ok();
                         }
                     }
                     world.update(1.0 / TICK_RATE);

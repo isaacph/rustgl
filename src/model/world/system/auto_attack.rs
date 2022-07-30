@@ -185,6 +185,7 @@ impl WorldSystem for AutoAttackSystem {
                     auto_attack.timer = attack_speed - new_remaining_time;
 
                     // start the execution fsm
+                    world.errors.push(WorldError::Info(format!("Start AA execution for {:?} on {:?}", *cid, target)));
                     auto_attack.execution = Some(AutoAttackExecution {
                         timer: 0.0,
                         starting_attack_speed: attack_speed,

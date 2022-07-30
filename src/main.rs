@@ -97,7 +97,11 @@ fn main() -> Result<()> {
 }
 
 pub mod test {
-    use crate::model::{world::{World, character::CharacterIDGenerator}, TICK_RATE};
+    use std::f32::consts::PI;
+
+    use nalgebra::{Rotation2, Vector2, Vector3};
+
+    use crate::model::{world::{World, character::{CharacterIDGenerator, CharacterID, CharacterIDRange}, system::{caster_minion, auto_attack::AutoAttackCommand, movement::MoveCharacter}, WorldError, commands::{WorldCommand, CharacterCommand}, component::ComponentID}, TICK_RATE};
 
     pub fn test() {
         let mut wa = World::new();
@@ -110,7 +114,45 @@ pub mod test {
         }
     }
 
-    pub fn make_complex_data(id_gen: &mut CharacterIDGenerator, world: &mut World) {
-        
+    pub fn make_mover(id: CharacterID, world: &mut World) -> Result<(), WorldError> {
+        let p = Vector2::new(-10.0, -10.0);
+        let dest = Vector2::new(10.0, 10.0);
+        caster_minion::create(world, &id, Vector3::new(p.x, p.y, 0.0))?;
+        let mvcmd = WorldCommand::CharacterComponent(
+            id,
+            ComponentID::Movement,
+            CharacterCommand::Movement(MoveCharacter {
+                destination: dest,
+                reset: true,
+            })
+        );
+        world.run_command(0, mvcmd)?;
+        Ok(())
+    }
+
+    pub fn make_attack_circle(count: usize, dist: f32, mut id_gen: CharacterIDRange, world: &mut World) -> Result<(), WorldError> {
+        let mut ids: Vec<CharacterID> = vec![];
+        for i in 0..count {
+            let id = id_gen.next_id().ok_or(WorldError::InvalidCommand)?;
+            let p: Vector2<f32> = Rotation2::new(i as f32 / count as f32 * 2.0 * PI)
+                .transform_vector(&Vector2::new(dist, 0.0));
+            caster_minion::create(world, &id, Vector3::new(p.x, p.y, 0.0))?;
+            ids.push(id);
+        }
+        for i in 0..count {
+            let curr = ids[i];
+            let next = ids[(i + 1) % count];
+            let rng = id_gen.take_range(1000);
+            let aacmd = WorldCommand::CharacterComponent(
+                curr,
+                ComponentID::AutoAttack,
+                CharacterCommand::AutoAttack(AutoAttackCommand {
+                    projectile_gen_ids: rng,
+                    target: next,
+                })
+            );
+            world.run_command(0, aacmd)?;
+        }
+        Ok(())
     }
 }

@@ -3,6 +3,12 @@ use serde::{Serialize, Deserialize};
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct CharacterID(u64);
 
+impl CharacterID {
+    pub fn get_num(&self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CharacterIDGenerator(u64);
 
@@ -18,6 +24,12 @@ impl CharacterIDRange {
         } else {
             None
         }
+    }
+    pub fn take_range(&mut self, max: u64) -> CharacterIDRange {
+        let mid = std::cmp::min(self.1, self.0 + max);
+        let old_0 = self.0;
+        *self = CharacterIDRange(mid, self.1);
+        CharacterIDRange(old_0, mid)
     }
     pub fn is_empty(&self) -> bool {
         self.0 >= self.1

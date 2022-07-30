@@ -31,8 +31,8 @@ pub struct UpdateCharacter {
 
 impl UpdateCharacter {
     pub fn update_character(mut self, world: &mut World) -> Result<(), WorldError> {
-        let x: Vec<ComponentID> = self.components.keys().copied().collect();
-        println!("Updating character, {:?}", x);
+        // let x: Vec<ComponentID> = self.components.keys().copied().collect();
+        // println!("Updating character, {:?}", x);
         world.characters.insert(self.id);
         for (cid, data) in self.components.drain() {
             world.update_component(&self.id, &cid, data);
@@ -107,6 +107,7 @@ impl GetCommandID for ClearWorld {
 pub struct RunWorldCommand {
     pub command: WorldCommand,
     pub tick: i32,
+    pub ordering: u32,
 }
 
 impl GetCommandID for RunWorldCommand {
