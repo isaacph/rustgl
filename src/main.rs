@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+// #![windows_subsystem = "windows"]
 
 #[cfg(feature = "client")]
 extern crate glfw;
@@ -47,6 +47,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
     match args[1].as_str() {
+        "test" => {
+            test::test();
+        },
         "client" => {
             #[cfg(feature = "client")]
             game::Game::run(Some(auto_addr()));
@@ -91,4 +94,23 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub mod test {
+    use crate::model::{world::{World, character::CharacterIDGenerator}, TICK_RATE};
+
+    pub fn test() {
+        let mut wa = World::new();
+        let mut wb = World::new();
+        let mut id_gen = CharacterIDGenerator::new();
+        for _ in 0..5 {
+            wa.update(1.0 / TICK_RATE);
+            wb.update(1.0 / TICK_RATE);
+            wa.diff(&wb).iter().for_each(|ln| println!("{}", ln));
+        }
+    }
+
+    pub fn make_complex_data(id_gen: &mut CharacterIDGenerator, world: &mut World) {
+        
+    }
 }

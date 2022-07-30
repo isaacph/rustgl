@@ -402,8 +402,78 @@ impl World {
         Ok(())
     }
 
-    pub fn get_components(&self, id: &CharacterID) -> Vec<ComponentID> {
+    pub fn get_components(&self, id: &CharacterID) -> HashSet<ComponentID> {
         ComponentID::iter().filter(|cid| self.has_component(id, cid)).collect()
+    }
+
+    pub fn diff(&self, other: &Self) -> Vec<String> {
+        let mut diff = vec![];
+        diff.extend(
+            other.characters.difference(&self.characters)
+            .map(|cid| format!("Self missing cid {:?}", *cid))
+        );
+        diff.extend(
+            self.characters.difference(&other.characters)
+            .map(|cid| format!("Other missing cid {:?}", *cid))
+        );
+        for cid in self.characters.intersection(&other.characters) {
+            let self_comp = self.get_components(cid);
+            let other_comp = other.get_components(cid);
+            diff.extend(
+                other_comp.difference(&self_comp)
+                .map(|comp_id| format!("Self {:?} missing component {:?}", *cid, *comp_id))
+            );
+            diff.extend(
+                self_comp.difference(&other_comp)
+                .map(|comp_id| format!("Other {:?} missing component {:?}", *cid, *comp_id))
+            );
+            diff.extend(self_comp.intersection(&other_comp).filter_map(|comp_id| {
+                match comp_id {
+                    ComponentID::Base => {
+                        let mut diff = vec![];
+                        let s = self.base.get_component(cid).ok()?;
+                        let o = other.base.get_component(cid).ok()?;
+                        if s.ctype != o.ctype {
+                            diff.push(format!("{:?}.{:?}: Self ctype: {:?}, Other ctype: {:?}", comp_id, cid, s.ctype, o.ctype));
+                        }
+                        let pos_diff = (s.position - o.position).magnitude();
+                        if pos_diff > 0.0 {
+                            diff.push(format!("{:?}.{:?}: Self pos - other pos = {}", comp_id, cid, pos_diff));
+                        }
+                        let center_offset_diff = (s.center_offset - o.center_offset).magnitude();
+                        if center_offset_diff > 0.0 {
+                            diff.push(format!("{:?}.{:?}: Self center_offset - other center_offset = {}", comp_id, cid, center_offset_diff));
+                        }
+                        let speed_diff = s.speed - o.speed;
+                        if speed_diff > 0.0 {
+                            diff.push(format!("{:?}.{:?}: Self speed - other speed = {}", comp_id, cid, speed_diff));
+                        }
+                        let ad_diff = s.attack_damage - o.attack_damage;
+                        if ad_diff > 0.0 {
+                            diff.push(format!("{:?}.{:?}: Self ad - other ad = {}", comp_id, cid, ad_diff));
+                        }
+                        let range_diff = s.range - o.range;
+                        if range_diff > 0.0 {
+                            diff.push(format!("{:?}.{:?}: Self range - other range = {}", comp_id, cid, range_diff));
+                        }
+                        let as_diff = s.attack_speed - o.attack_speed;
+                        if as_diff > 0.0 {
+                            diff.push(format!("{:?}.{:?}: Self as - other as = {}", comp_id, cid, as_diff));
+                        }
+                        if s.flip != o.flip {
+                            diff.push(format!("{:?}.{:?}: Self flip {:?}, other flip {:?}", comp_id, cid, s.flip, o.flip));
+                        }
+                        if s.targetable != o.targetable {
+                            diff.push(format!("{:?}.{:?}: Self targetable {:?}, other targetable {:?}", comp_id, cid, s.targetable, o.targetable));
+                        }
+
+                        Some(diff.into_iter())
+                    },
+                    _ => None,
+                }
+            }).flatten());
+        }
+        diff
     }
 }
 

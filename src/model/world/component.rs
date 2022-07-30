@@ -27,7 +27,7 @@ pub trait GetComponentID {
     const ID: ComponentID;
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CharacterFlip {
     Left, Right
 }
