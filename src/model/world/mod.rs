@@ -10,11 +10,10 @@ use self::{
 //    },
     character::{CharacterID, CharacterType, CharacterIDGenerator},
     component::{
-        CharacterBase,
         ComponentStorage,
         ComponentID,
         CharacterHealth,
-        ComponentStorageContainer
+        ComponentStorageContainer, ComponentUpdateData, ComponentUpdate, ComponentStorageCommon
     },
     commands::{UpdateCharacter, WorldCommand, CharacterCommand},
     system::{
@@ -38,7 +37,7 @@ use self::{
         caster_minion::{
             CasterMinion,
             self, CasterMinionSystem
-        }
+        }, base::{CharacterBase, BaseSystem}
     }
 };
 
@@ -112,11 +111,15 @@ pub struct World {
 }
 
 pub trait WorldSystem {
-    fn get_component_id(&self) -> ComponentID;
     fn init_world_info(&self) -> Result<WorldInfo, WorldError>;
+}
+
+pub trait ComponentSystem: WorldSystem {
+    fn get_component_id(&self) -> ComponentID;
     fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError>;
-    fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError>;
-    fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError>;
+    // fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError>;
+    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<ComponentUpdate>, WorldError>;
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData>;
 }
 
 // immutable info about the world
@@ -126,7 +129,7 @@ pub struct WorldInfo {
     pub health: HashMap<CharacterType, CharacterHealth>,
     pub auto_attack: HashMap<CharacterType, AutoAttackInfo>,
 
-    pub systems: HashMap<ComponentID, Box<dyn WorldSystem>>,
+    pub component_systems: HashMap<ComponentID, Box<dyn ComponentSystem>>,
 }
 
 impl WorldInfo {
@@ -135,17 +138,17 @@ impl WorldInfo {
             base: HashMap::new(),
             health: HashMap::new(),
             auto_attack: HashMap::new(),
-            systems: HashMap::new(),
+            component_systems: HashMap::new(),
         }
     }
-    pub fn combine(infos: Vec<WorldInfo>, systems: HashMap<ComponentID, Box<dyn WorldSystem>>) -> WorldInfo {
+    pub fn combine(infos: Vec<WorldInfo>, systems: HashMap<ComponentID, Box<dyn ComponentSystem>>) -> WorldInfo {
         let mut combo = WorldInfo::new();
         for info in infos {
             combo.base.extend(info.base.into_iter());
             combo.health.extend(info.health.into_iter());
             combo.auto_attack.extend(info.auto_attack.into_iter());
         }
-        combo.systems = systems;
+        combo.component_systems = systems;
         combo
     }
 }
@@ -161,11 +164,12 @@ impl World {
         // init each system
         let mut systems = HashMap::new();
         for system in [
-            Box::new(MovementSystem) as Box<dyn WorldSystem>,
-            Box::new(AutoAttackSystem) as Box<dyn WorldSystem>,
-            Box::new(ProjectileSystem) as Box<dyn WorldSystem>,
-            Box::new(IceWizSystem) as Box<dyn WorldSystem>,
-            Box::new(CasterMinionSystem) as Box<dyn WorldSystem>,
+            Box::new(MovementSystem) as Box<dyn ComponentSystem>,
+            Box::new(AutoAttackSystem) as Box<dyn ComponentSystem>,
+            Box::new(ProjectileSystem) as Box<dyn ComponentSystem>,
+            Box::new(IceWizSystem) as Box<dyn ComponentSystem>,
+            Box::new(CasterMinionSystem) as Box<dyn ComponentSystem>,
+            Box::new(BaseSystem) as Box<dyn ComponentSystem>,
         ] {
             systems.insert(system.get_component_id(), system);
         }
@@ -194,22 +198,62 @@ impl World {
         }
     }
 
-    pub fn update(&mut self, delta_time: f32) {
+    pub fn update(&mut self, commands: &Vec<WorldCommand>, delta_time: f32) {
         let info = self.info.clone();
         let mut sorted: Vec<CharacterID> = self.characters.clone().into_iter().collect();
         sorted.sort_by_key(|id| id.get_num());
-        for cid in sorted {
-            for comp_id in self.get_components(&cid) {
-                match match info.systems.get(&comp_id) {
-                    Some(system) => system.update_character(self, &cid, delta_time),
-                    // None => Err(WorldError::MissingCharacterComponentSystem(*cid, comp_id)),
-                    None => Ok(()) // components don't need to have systems
-                } {
-                    Ok(()) => (),
-                    Err(err) => self.errors.push(err)
-                }
-            }
-        }
+        let update_res: Vec<Result<Vec<ComponentUpdate>, WorldError>> = sorted.iter().flat_map(
+            |cid| self.get_components(cid).iter()
+            .map(|comp_id| match info.component_systems.get(comp_id) {
+                Some(system) => system.update_character(
+                    self,
+                    &commands.clone().into_iter().filter(|cmd| match cmd {
+                        WorldCommand::CharacterComponent(ccid, ccomp_id, cmd) =>
+                            *cid == *ccid && *comp_id == *ccomp_id,
+                        _ => false
+                    }).collect(),
+                    cid,
+                    delta_time
+                ),
+                None => Ok(vec![])
+            })).collect();
+        let updates = update_res.iter().filter_map(|res| res.ok());
+        let update_errors = update_res.iter().filter_map(|res| res.err());
+        let reduced: Vec<ComponentUpdate> = self.info.component_systems.iter()
+            .flat_map(|(comp_id, system)| self.get_characters(comp_id).iter()
+                .flat_map(|cid| system.reduce_changes(cid, self, &updates
+                    .flat_map(|update| update.iter()
+                        .filter(|update| update.data.component_id() == *comp_id)
+                        .map(|update| update.data))
+                    .collect()).iter()
+                    .map(|data| ComponentUpdate {
+                        cid: *cid, data: *data
+                    })))
+            .collect();
+        let mut world = self.clone();
+        world.errors.extend(update_errors);
+        world.errors.extend(ComponentID::iter()
+            .flat_map(|comp_id| world
+                .get_storage(&comp_id)
+                .update(&reduced.into_iter()
+                    .filter(|update| update.data.component_id() == comp_id)
+                    .collect())
+                .err()
+                .map(|errs| errs.iter())
+                .unwrap_or(vec![].iter()))
+            .cloned());
+        // for cid in sorted {
+        //     for comp_id in self.get_components(&cid) {
+        //         match match info.component_systems.get(&comp_id) {
+        //             Some(system) => system.update_character(self, commands, &cid, delta_time),
+        //             // None => Err(WorldError::MissingCharacterComponentSystem(*cid, comp_id)),
+        //             None => Ok(vec![]) // components don't need to have systems
+        //         } {
+        //             Ok(()) => (),
+        //             Err(err) => self.errors.push(err)
+        //         }
+        //     }
+        // }
         // let errors = self.characters.clone().iter()
         //     .flat_map(|cid| info.systems.values()
         //     .map(|system| system.update_character(self, cid, delta_time)))
@@ -221,74 +265,73 @@ impl World {
         self.frame_id += 1;
     }
 
-    pub fn run_command(&mut self, _tick: i32, command: WorldCommand) -> Result<CommandRunResult, WorldError> {
-        let x = format!("{:?}", command);
-        self.errors.push(WorldError::Info(format!("Run cmd: {:?}", x.as_str()[0..std::cmp::min(70, x.len())].to_string())));
-        match command {
-            WorldCommand::CharacterComponent(cid, compid, cmd) => {
-                match self.characters.get(&cid) {
-                    Some(_) => {
-                        match self.info.clone().systems.get(&compid) {
-                            Some(system) => {
-                                if let Err(err) = system.validate_character_command(self, &cid, &cmd) {
-                                    return Ok(CommandRunResult::Invalid(err));
-                                }
-                                if let Err(err) = system.run_character_command(self, &cid, cmd) {
-                                    return Ok(CommandRunResult::ValidError(err));
-                                }
-                                Ok(CommandRunResult::Valid)
-                            },
-                            None => Err(WorldError::MissingCharacterComponentSystem(cid, compid)),
-                        }
-                    },
-                    None => Err(WorldError::MissingCharacter(cid, "Failed to run command for character".to_string())),
-                }
-            },
-            WorldCommand::World(_) => {
-                panic!("Not implemented");
-            },
-            WorldCommand::Update(update_cmd) => {
-                // println!("Update character");
-                update_cmd.update_character(self).map(|_| CommandRunResult::Valid)
-            }
+    // pub fn run_command(&mut self, _tick: i32, command: WorldCommand) -> Result<CommandRunResult, WorldError> {
+    //     let x = format!("{:?}", command);
+    //     self.errors.push(WorldError::Info(format!("Run cmd: {:?}", x.as_str()[0..std::cmp::min(70, x.len())].to_string())));
+    //     match command {
+    //         WorldCommand::CharacterComponent(cid, compid, cmd) => {
+    //             match self.characters.get(&cid) {
+    //                 Some(_) => {
+    //                     match self.info.clone().component_systems.get(&compid) {
+    //                         Some(system) => {
+    //                             if let Err(err) = system.validate_character_command(self, &cid, &cmd) {
+    //                                 return Ok(CommandRunResult::Invalid(err));
+    //                             }
+    //                             if let Err(err) = system.run_character_command(self, &cid, cmd) {
+    //                                 return Ok(CommandRunResult::ValidError(err));
+    //                             }
+    //                             Ok(CommandRunResult::Valid)
+    //                         },
+    //                         None => Err(WorldError::MissingCharacterComponentSystem(cid, compid)),
+    //                     }
+    //                 },
+    //                 None => Err(WorldError::MissingCharacter(cid, "Failed to run command for character".to_string())),
+    //             }
+    //         },
+    //         WorldCommand::World(_) => {
+    //             panic!("Not implemented");
+    //         },
+    //         WorldCommand::Update(update_cmd) => {
+    //             // println!("Update character");
+    //             update_cmd.update_character(self).map(|_| CommandRunResult::Valid)
+    //         }
+    //     }
+    // }
+
+    pub fn get_storage(&self, comp_id: &ComponentID) -> &dyn ComponentStorageCommon {
+        match comp_id {
+            ComponentID::Base => &self.base as &dyn ComponentStorageCommon,
+            ComponentID::Health => &self.health as &dyn ComponentStorageCommon,
+            ComponentID::Movement => &self.movement as &dyn ComponentStorageCommon,
+            ComponentID::IceWiz => &self.icewiz as &dyn ComponentStorageCommon,
+            ComponentID::AutoAttack => &self.auto_attack as &dyn ComponentStorageCommon,
+            ComponentID::Projectile => &self.projectile as &dyn ComponentStorageCommon,
+            ComponentID::CasterMinion => &self.caster_minion as &dyn ComponentStorageCommon,
+        }
+    }
+
+    pub fn get_storage_mut(&mut self, comp_id: &ComponentID) -> &mut dyn ComponentStorageCommon {
+        match comp_id {
+            ComponentID::Base => &mut self.base as &mut dyn ComponentStorageCommon,
+            ComponentID::Health => &mut self.health as &mut dyn ComponentStorageCommon,
+            ComponentID::Movement => &mut self.movement as &mut dyn ComponentStorageCommon,
+            ComponentID::IceWiz => &mut self.icewiz as &mut dyn ComponentStorageCommon,
+            ComponentID::AutoAttack => &mut self.auto_attack as &mut dyn ComponentStorageCommon,
+            ComponentID::Projectile => &mut self.projectile as &mut dyn ComponentStorageCommon,
+            ComponentID::CasterMinion => &mut self.caster_minion as &mut dyn ComponentStorageCommon,
         }
     }
 
     pub fn has_component(&self, id: &CharacterID, cid: &ComponentID) -> bool {
-        fn test<T>(storage: &dyn ComponentStorageContainer<T>, id: &CharacterID) -> bool
-                where T: Sized + Serialize {
-            storage.get_storage().keys().any(|oid| *id == *oid)
-        }
-        match cid {
-            ComponentID::Base => test(&self.base, id),
-            ComponentID::Health => test(&self.health, id),
-            ComponentID::Movement => test(&self.movement, id),
-            ComponentID::IceWiz => test(&self.icewiz, id),
-            ComponentID::AutoAttack => test(&self.auto_attack, id),
-            ComponentID::Projectile => test(&self.projectile, id),
-            ComponentID::CasterMinion => test(&self.caster_minion, id),
-            // _ => panic!("Component id not linked: {}", cid)
-        }
+        self.get_storage(cid).has_character(id)
     }
 
     pub fn serialize_component(&self, id: &CharacterID, cid: &ComponentID) -> Option<Vec<u8>> {
-        fn ser<T>(storage: &dyn ComponentStorageContainer<T>, id: &CharacterID) -> Option<Vec<u8>>
-                where T: Sized + Serialize {
-            storage.get_storage().get(id).map(|c| bincode::serialize(c).unwrap())
-        }
-        match cid {
-            ComponentID::Base => ser(&self.base, id),
-            ComponentID::Health => ser(&self.health, id),
-            ComponentID::Movement => ser(&self.movement, id),
-            ComponentID::IceWiz => ser(&self.icewiz, id),
-            ComponentID::AutoAttack => ser(&self.auto_attack, id),
-            ComponentID::Projectile => ser(&self.projectile, id),
-            ComponentID::CasterMinion => ser(&self.caster_minion, id),
-            // _ => panic!("Serialization not implemented for component id: {}", cid)
-        }
+        self.get_storage(cid).serialize(id)
     }
 
     pub fn update_component(&mut self, id: &CharacterID, cid: &ComponentID, data: Vec<u8>) {
+        // self.get_storage_mut(cid).deserialize_insert(id, data);
         fn insert<T>(storage: &mut dyn ComponentStorageContainer<T>, id: &CharacterID, cid: &ComponentID, data: Vec<u8>)
                 where T: Sized + Serialize + DeserializeOwned {
             let des: T = match bincode::deserialize(data.as_slice()) {
@@ -357,20 +400,11 @@ impl World {
     }
 
     pub fn erase_component(&mut self, cid: &CharacterID, id: &ComponentID) {
-        fn erase<T>(storage: &mut dyn ComponentStorageContainer<T>, id: &CharacterID)
-                where T: Sized + Serialize + DeserializeOwned {
-            storage.get_storage_mut().remove(id);
-        }
-        match id {
-            ComponentID::Base => erase(&mut self.base, cid),
-            ComponentID::Health => erase(&mut self.health, cid),
-            ComponentID::Movement => erase(&mut self.movement, cid),
-            ComponentID::IceWiz => erase(&mut self.icewiz, cid),
-            ComponentID::AutoAttack => erase(&mut self.auto_attack, cid),
-            ComponentID::Projectile => erase(&mut self.projectile, cid),
-            ComponentID::CasterMinion => erase(&mut self.caster_minion, cid),
-            // _ => panic!("Deserialization not implemented for component id: {}", cid)
-        }
+        self.get_storage_mut(id).erase(cid);
+    }
+
+    pub fn get_characters(&mut self, cid: &ComponentID) -> Vec<CharacterID> {
+        self.get_storage(cid).get_characters()
     }
 
     pub fn make_cmd_update_character(&self, id: CharacterID) -> Option<UpdateCharacter> {

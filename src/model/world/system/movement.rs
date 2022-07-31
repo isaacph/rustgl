@@ -1,11 +1,19 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::CharacterCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, WorldSystem, WorldInfo}, commands::GetCommandID};
+use crate::model::{world::{character::CharacterID, commands::CharacterCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component}, WorldSystem, WorldInfo, ComponentSystem}, commands::GetCommandID};
+
+use super::base::CharacterFlip;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Movement {
     pub destination: Option<Vector2<f32>>
+}
+
+impl Component for Movement {
+    fn update(&self, update: &ComponentUpdateData) -> Self {
+        self.clone()
+    }
 }
 
 impl GetComponentID for Movement {
@@ -121,14 +129,15 @@ pub fn walk_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range:
 pub struct MovementSystem;
 
 impl WorldSystem for MovementSystem {
-    fn get_component_id(&self) -> ComponentID {
-        ComponentID::Movement
-    }
-
     fn init_world_info(&self) -> Result<WorldInfo, WorldError> {
         Ok(WorldInfo::new())
     }
+}
 
+impl ComponentSystem for MovementSystem {
+    fn get_component_id(&self) -> ComponentID {
+        ComponentID::Movement
+    }
     fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError> {
         match world.movement.get_component(cid)?.destination.as_ref() {
             Some(dest) => {// currently executing the action
@@ -182,21 +191,24 @@ impl WorldSystem for MovementSystem {
         }
     }
 
-    fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError> {
-        match cmd {
-            CharacterCommand::Movement(cmd) => {
-                let movement = world.movement.get_component_mut(cid)?;
-                movement.destination = Some(cmd.destination);
-                if let Some(auto_attack) = world.auto_attack.components.get_mut(cid) {
-                    auto_attack.targeting = None;
-                }
-                if cmd.reset {
-                    world.auto_attack.get_component_mut(cid)?.execution = None;
-                }
-                Ok(())
-            },
-            _ => Err(WorldError::InvalidCommandMapping)
-        }
+    // fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError> {
+    //     match cmd {
+    //         CharacterCommand::Movement(cmd) => {
+    //             let movement = world.movement.get_component_mut(cid)?;
+    //             movement.destination = Some(cmd.destination);
+    //             if let Some(auto_attack) = world.auto_attack.components.get_mut(cid) {
+    //                 auto_attack.targeting = None;
+    //             }
+    //             if cmd.reset {
+    //                 world.auto_attack.get_component_mut(cid)?.execution = None;
+    //             }
+    //             Ok(())
+    //         },
+    //         _ => Err(WorldError::InvalidCommandMapping)
+    //     }
+    // }
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData> {
+        vec![]
     }
 }
 

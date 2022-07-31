@@ -3,3 +3,4 @@ pub mod icewiz;
 pub mod auto_attack;
 pub mod projectile;
 pub mod caster_minion;
+pub mod base;

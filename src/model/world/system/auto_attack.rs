@@ -1,9 +1,9 @@
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::CharacterCommand, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, CharacterFlip}, WorldInfo, WorldSystem}, commands::GetCommandID};
+use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::{CharacterCommand, WorldCommand}, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldInfo, WorldSystem, ComponentSystem}, commands::GetCommandID};
 use self::fsm::Fsm;
 
-use super::{movement::walk_to, projectile::{self, ProjectileCreationInfo}};
+use super::{movement::walk_to, projectile::{self, ProjectileCreationInfo}, base::CharacterFlip};
 
 pub mod fsm;
 
@@ -26,6 +26,12 @@ pub struct AutoAttack {
     pub timer: f32, // cooldown
     pub execution: Option<AutoAttackExecution>, // currently executing attack
     pub targeting: Option<AutoAttackTargeting>, // currently scheduled string of attacks
+}
+
+impl Component for AutoAttack {
+    fn update(&self, update: &ComponentUpdateData) -> Self {
+        self.clone()
+    }
 }
 
 impl GetComponentID for AutoAttack {
@@ -94,6 +100,13 @@ pub struct AutoAttackCommand {
 pub struct AutoAttackSystem;
 
 impl WorldSystem for AutoAttackSystem {
+
+    fn init_world_info(&self) -> Result<WorldInfo, WorldError> {
+        Ok(WorldInfo::new())
+    }
+}
+
+impl ComponentSystem for AutoAttackSystem {
     fn get_component_id(&self) -> ComponentID {
         ComponentID::AutoAttack
     }
@@ -119,41 +132,37 @@ impl WorldSystem for AutoAttackSystem {
         }
     }
 
-    fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError> {
-        match cmd {
-            CharacterCommand::AutoAttack(cmd) => {
-                // stop moving
-                world.movement.get_component_mut(cid)?.destination = None;
+    // fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError> {
+    //     match cmd {
+    //         CharacterCommand::AutoAttack(cmd) => {
+    //             // stop moving
+    //             world.movement.get_component_mut(cid)?.destination = None;
 
-                // set target (who to attack next even if already doing something else)
-                let auto_attack = world.auto_attack.get_component_mut(cid)?;
-                auto_attack.targeting = Some(AutoAttackTargeting {
-                    target: cmd.target,
-                    ids: cmd.projectile_gen_ids,
-                });
+    //             // set target (who to attack next even if already doing something else)
+    //             let auto_attack = world.auto_attack.get_component_mut(cid)?;
+    //             auto_attack.targeting = Some(AutoAttackTargeting {
+    //                 target: cmd.target,
+    //                 ids: cmd.projectile_gen_ids,
+    //             });
 
-                // check if busy
-                let base = world.base.get_component(cid)?;
-                if auto_attack.is_casting(base.ctype, &world.info) {
-                    return Ok(())
-                }
-                if auto_attack.timer > 0.0 {
-                    return Ok(())
-                }
+    //             // check if busy
+    //             let base = world.base.get_component(cid)?;
+    //             if auto_attack.is_casting(base.ctype, &world.info) {
+    //                 return Ok(())
+    //             }
+    //             if auto_attack.timer > 0.0 {
+    //                 return Ok(())
+    //             }
 
-                // if not busy, start the attack
-                // auto_attack_start(world, &cmd.attacker, &cmd.target, &cmd.projectile_gen_id)?;
-                Ok(())
-            },
-            _ => Err(WorldError::InvalidCommandMapping)
-        }
-    }
+    //             // if not busy, start the attack
+    //             // auto_attack_start(world, &cmd.attacker, &cmd.target, &cmd.projectile_gen_id)?;
+    //             Ok(())
+    //         },
+    //         _ => Err(WorldError::InvalidCommandMapping)
+    //     }
+    // }
 
-    fn init_world_info(&self) -> Result<WorldInfo, WorldError> {
-        Ok(WorldInfo::new())
-    }
-
-    fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError> {
+    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<ComponentUpdate>, WorldError> {
         let (ctype, attack_speed) = {
             let base = world.base.get_component(cid)?;
             (base.ctype, base.attack_speed)
@@ -244,6 +253,10 @@ impl WorldSystem for AutoAttackSystem {
             }
         }
         Ok(())
+    }
+
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData> {
+        vec![]
     }
 }
 

@@ -1,13 +1,19 @@
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{component::{GetComponentID, ComponentID, CharacterBase, CharacterFlip, CharacterHealth}, World, character::{CharacterID, CharacterType}, WorldError, WorldInfo, WorldSystem, commands::CharacterCommand};
+use crate::model::world::{component::{GetComponentID, ComponentID, CharacterHealth, ComponentUpdateData, Component}, World, character::{CharacterID, CharacterType}, WorldError, WorldInfo, WorldSystem, commands::CharacterCommand, ComponentSystem};
 
-use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo}};
+use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo}, base::{CharacterBase, CharacterFlip}};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CasterMinion {
 
+}
+
+impl Component for CasterMinion {
+    fn update(&self, update: &ComponentUpdateData) -> Self {
+        self.clone()
+    }
 }
 
 impl GetComponentID for CasterMinion {
@@ -17,10 +23,6 @@ impl GetComponentID for CasterMinion {
 pub struct CasterMinionSystem;
 
 impl WorldSystem for CasterMinionSystem {
-    fn get_component_id(&self) -> ComponentID {
-        ComponentID::CasterMinion
-    }
-
     fn init_world_info(&self) -> Result<WorldInfo, WorldError> {
         let mut info = WorldInfo::new();
         info.base.insert(CharacterType::CasterMinion, CharacterBase {
@@ -49,15 +51,23 @@ impl WorldSystem for CasterMinionSystem {
         )?);
         Ok(info)
     }
+}
 
-    fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
-        Err(WorldError::InvalidCommandMapping)
+impl ComponentSystem for CasterMinionSystem {
+    fn get_component_id(&self) -> ComponentID {
+        ComponentID::CasterMinion
     }
+    // fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
+    //     Err(WorldError::InvalidCommandMapping)
+    // }
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
     fn update_character(&self, _: &mut World, _: &CharacterID, _: f32) -> Result<(), WorldError> {
         Ok(())
+    }
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData> {
+        vec![]
     }
 }
 
