@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{CharacterHealth, GetComponentID, ComponentID, ComponentUpdateData, Component}, WorldError, WorldInfo, WorldSystem, commands::CharacterCommand, ComponentSystem};
-use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo}, base::{CharacterBase, CharacterFlip}};
+use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update};
+use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo}, base::{CharacterBase, CharacterFlip}, health::CharacterHealth};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IceWiz {
@@ -82,11 +82,11 @@ impl ComponentSystem for IceWizSystem {
     // fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
     //     Err(WorldError::InvalidCommandMapping)
     // }
-    fn update_character(&self, _: &mut World, _: &CharacterID, _: f32) -> Result<(), WorldError> {
-        Ok(())
+    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+        Ok(vec![])
     }
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData> {
-        vec![]
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+        Ok(vec![])
     }
 }
 

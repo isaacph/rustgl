@@ -41,6 +41,13 @@ impl UpdateCharacter {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Priority {
+    Walk,
+    Cast,
+    Stun,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GenerateCharacter(pub CharacterType);
 

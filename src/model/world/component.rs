@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use super::{character::CharacterID, WorldError, system::base::CharacterBaseUpdate, World};
+use super::{character::CharacterID, WorldError, system::base::CharacterBaseUpdate, system::health::CharacterHealthUpdate};
 use strum_macros::EnumIter;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter)]
@@ -19,12 +19,14 @@ pub enum ComponentID {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ComponentUpdateData {
     Base(CharacterBaseUpdate),
+    Health(CharacterHealthUpdate),
 }
 
 impl ComponentUpdateData {
     pub fn component_id(&self) -> ComponentID {
         match *self {
             ComponentUpdateData::Base(_) => ComponentID::Base,
+            ComponentUpdateData::Health(_) => ComponentID::Health,
         }
     }
 }
@@ -49,27 +51,6 @@ pub trait Component: GetComponentID {
     fn update(&self, update: &ComponentUpdateData) -> Self;
 }
 
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub struct CharacterHealth {
-    pub health: f32,
-    pub max_health: f32,
-}
-
-impl Component for CharacterHealth {
-    fn update(&self, update: &ComponentUpdateData) -> Self {
-        self.clone()
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum CharacterHealthUpdate {
-    Change(f32) // todo: add cause
-}
-
-impl GetComponentID for CharacterHealth {
-    const ID: ComponentID = ComponentID::Health;
-}
 
 pub trait ComponentStorageCommon {
     fn get_characters(&self) -> Vec<CharacterID>;

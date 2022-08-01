@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use nalgebra::Vector3;
 use strum::IntoEnumIterator;
 use std::{collections::{HashMap, HashSet}, rc::Rc};
@@ -12,7 +13,6 @@ use self::{
     component::{
         ComponentStorage,
         ComponentID,
-        CharacterHealth,
         ComponentStorageContainer, ComponentUpdateData, ComponentUpdate, ComponentStorageCommon
     },
     commands::{UpdateCharacter, WorldCommand, CharacterCommand},
@@ -37,7 +37,15 @@ use self::{
         caster_minion::{
             CasterMinion,
             self, CasterMinionSystem
-        }, base::{CharacterBase, BaseSystem}
+        },
+        base::{
+            CharacterBase,
+            BaseSystem
+        },
+        health::{
+            CharacterHealth,
+
+        },
     }
 };
 
@@ -75,6 +83,8 @@ pub enum WorldError {
     OnCooldown(CharacterID, ComponentID),
     DesyncError(CharacterID, ComponentID, String),
     Info(String),
+    BadLogic,
+    SimultaneousAddRemoveCharacterID(CharacterID),
 }
 
 pub trait CharacterCreator {
@@ -118,8 +128,31 @@ pub trait ComponentSystem: WorldSystem {
     fn get_component_id(&self) -> ComponentID;
     fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError>;
     // fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError>;
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<ComponentUpdate>, WorldError>;
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData>;
+    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError>;
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError>;
+}
+
+#[derive(Clone, Debug)]
+pub enum Update {
+    Comp(ComponentUpdate),
+    World(WorldUpdate),
+}
+
+#[derive(Clone, Debug)]
+pub enum WorldUpdate {
+    NewCharacterID(CharacterID),
+    RemoveCharacterID(CharacterID),
+}
+
+impl WorldUpdate {
+    pub fn apply_update(&self, world: &mut World) -> Result<(), WorldError> {
+        use WorldUpdate::*;
+        match *self {
+            NewCharacterID(id) => world.characters.insert(id),
+            RemoveCharacterID(id) => world.characters.remove(&id),
+        };
+        Ok(())
+    }
 }
 
 // immutable info about the world
@@ -202,7 +235,7 @@ impl World {
         let info = self.info.clone();
         let mut sorted: Vec<CharacterID> = self.characters.clone().into_iter().collect();
         sorted.sort_by_key(|id| id.get_num());
-        let update_res: Vec<Result<Vec<ComponentUpdate>, WorldError>> = sorted.iter().flat_map(
+        let update_res: Vec<Result<Update, WorldError>> = sorted.iter().flat_map(
             |cid| self.get_components(cid).iter()
             .map(|comp_id| match info.component_systems.get(comp_id) {
                 Some(system) => system.update_character(
@@ -216,53 +249,100 @@ impl World {
                     delta_time
                 ),
                 None => Ok(vec![])
-            })).collect();
-        let updates = update_res.iter().filter_map(|res| res.ok());
+            }))
+            .flat_map(|vec| vec
+                .map_or_else(
+                    |err| vec![Err(err)],
+                    |res| res.into_iter()
+                        .map(|res| Ok(res))
+                        .collect())
+                .into_iter())
+            .collect();
+        let component_updates: Vec<ComponentUpdate> = update_res.iter()
+            .flat_map(|res| res.ok().into_iter()
+                .filter_map(|res| match res {
+                    Update::Comp(c) => Some(c),
+                    _ => None
+                })).collect();
+        let world_updates: Vec<WorldUpdate> = update_res.iter()
+            .flat_map(|res| res.ok().into_iter()
+                .filter_map(|res| match res {
+                    Update::World(c) => Some(c),
+                    _ => None
+                })).collect();
         let update_errors = update_res.iter().filter_map(|res| res.err());
-        let reduced: Vec<ComponentUpdate> = self.info.component_systems.iter()
+        let mut reduce_errors = vec![];
+        let reduced: Vec<Update> = self.info.component_systems.iter()
             .flat_map(|(comp_id, system)| self.get_characters(comp_id).iter()
-                .flat_map(|cid| system.reduce_changes(cid, self, &updates
-                    .flat_map(|update| update.iter()
-                        .filter(|update| update.data.component_id() == *comp_id)
-                        .map(|update| update.data))
-                    .collect()).iter()
-                    .map(|data| ComponentUpdate {
+                .flat_map(|cid| match system.reduce_changes(cid, self, &component_updates.into_iter()
+                    .filter(|update| update.data.component_id() == *comp_id)
+                    .map(|update| update.data).collect()) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            reduce_errors.push(err);
+                            vec![]
+                        }
+                    }.iter()
+                    .map(|data| Update::Comp(ComponentUpdate {
                         cid: *cid, data: *data
-                    })))
+                    }))))
+            .chain(match self.reduce_world_updates(world_updates) {
+                Ok(v) => v.into_iter().filter_map(|update| match update {
+                    Ok(update) => Some(Update::World(update)),
+                    Err(err) => {
+                        reduce_errors.push(err);
+                        None
+                    }
+                }).collect(),
+                Err(err) => {
+                    reduce_errors.push(err);
+                    vec![]
+                }
+            }.into_iter())
             .collect();
         let mut world = self.clone();
         world.errors.extend(update_errors);
+        world.errors.extend(reduce_errors);
+        world.errors.extend(reduced.into_iter()
+            .filter_map(|x| match x { Update::World(x) => Some(x), _ => None })
+            .filter_map(|update| update.apply_update(self).err()));
         world.errors.extend(ComponentID::iter()
             .flat_map(|comp_id| world
                 .get_storage(&comp_id)
                 .update(&reduced.into_iter()
+                    .filter_map(|x| match x { Update::Comp(x) => Some(x), _ => None })
                     .filter(|update| update.data.component_id() == comp_id)
                     .collect())
                 .err()
                 .map(|errs| errs.iter())
                 .unwrap_or(vec![].iter()))
             .cloned());
-        // for cid in sorted {
-        //     for comp_id in self.get_components(&cid) {
-        //         match match info.component_systems.get(&comp_id) {
-        //             Some(system) => system.update_character(self, commands, &cid, delta_time),
-        //             // None => Err(WorldError::MissingCharacterComponentSystem(*cid, comp_id)),
-        //             None => Ok(vec![]) // components don't need to have systems
-        //         } {
-        //             Ok(()) => (),
-        //             Err(err) => self.errors.push(err)
-        //         }
-        //     }
-        // }
-        // let errors = self.characters.clone().iter()
-        //     .flat_map(|cid| info.systems.values()
-        //     .map(|system| system.update_character(self, cid, delta_time)))
-        //     .filter_map(|res| match res {
-        //     Ok(()) => None,
-        //     Err(err) => Some(err),
-        // });
-        // self.errors.extend(errors);
         self.frame_id += 1;
+    }
+
+    pub fn reduce_world_updates(&self, update: Vec<WorldUpdate>) -> Result<Vec<Result<WorldUpdate, WorldError>>, WorldError> {
+        Ok(update.into_iter()
+            .filter_map(|u| match u {
+                WorldUpdate::NewCharacterID(id) | WorldUpdate::RemoveCharacterID(id) => Some((id, u)),
+                _ => None,
+            })
+            .group_by(|(id, _)| id).into_iter()
+            .map(|(id, group)| {
+                let add = group.any(|(_, u)| match u {
+                    WorldUpdate::NewCharacterID(_) => true, _ => false,
+                });
+                let remove = group.any(|(_, u)| match u {
+                    WorldUpdate::RemoveCharacterID(_) => true, _ => false,
+                });
+                if add && remove {
+                    Err(WorldError::SimultaneousAddRemoveCharacterID(*id))
+                } else if add {
+                    Ok(WorldUpdate::NewCharacterID(*id))
+                } else {
+                    Ok(WorldUpdate::RemoveCharacterID(*id))
+                }
+            })
+            .collect())
     }
 
     // pub fn run_command(&mut self, _tick: i32, command: WorldCommand) -> Result<CommandRunResult, WorldError> {

@@ -19,6 +19,7 @@ strum = "0.24.0"
 strum_macros = "0.24.0"
 num_enum = "0.5.7"
 ordered-float = "3.0.0"
+itertools = "0.10.3"
 
 [dependencies.glfw]
 git = "https://github.com/bjz/glfw-rs.git"

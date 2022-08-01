@@ -1,15 +1,18 @@
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component}, World, WorldError, WorldInfo, WorldSystem, commands::CharacterCommand, ComponentSystem};
+use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::CharacterCommand, ComponentSystem, Update};
 
 use super::{movement::fly_to, base::{CharacterBase, CharacterFlip}};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Projectile {
     pub origin: CharacterID,
     pub target: CharacterID,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProjectileUpdate(Projectile);
 
 impl Component for Projectile {
     fn update(&self, update: &ComponentUpdateData) -> Self {
@@ -31,9 +34,10 @@ pub struct ProjectileCreationInfo {
 }
 
 pub fn create(
-    world: &mut World,
+    world: &World,
     info: &ProjectileCreationInfo
-) -> Result<(), WorldError> {
+) -> Result<Vec<Update>, WorldError> {
+    let mut updates = vec![];
     let typ = CharacterType::Projectile;
     world.characters.insert(info.proj_id);
     let position = {
