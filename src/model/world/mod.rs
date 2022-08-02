@@ -45,11 +45,11 @@ use self::{
         health::{
             CharacterHealth,
 
-        },
+        }, status::{Status, StatusSystem},
     }
 };
 
-use super::commands::CommandID;
+use super::{commands::CommandID, Tick};
 
 //pub mod player;
 pub mod character;
@@ -85,6 +85,8 @@ pub enum WorldError {
     Info(String),
     BadLogic,
     SimultaneousAddRemoveCharacterID(CharacterID),
+    InvalidReduceMapping(CharacterID, ComponentID),
+    MultipleNewCommands(CharacterID, ComponentID),
 }
 
 pub trait CharacterCreator {
@@ -113,11 +115,13 @@ pub struct World {
     pub movement: ComponentStorage<Movement>,
     pub auto_attack: ComponentStorage<AutoAttack>,
     pub projectile: ComponentStorage<Projectile>,
+    pub status: ComponentStorage<Status>,
 
     pub icewiz: ComponentStorage<IceWiz>,
     pub caster_minion: ComponentStorage<CasterMinion>,
 
-    pub frame_id: u64,
+    // the tick local to the world, should be 100% in sync between client and server
+    pub tick: Tick,
 }
 
 pub trait WorldSystem {
@@ -203,6 +207,7 @@ impl World {
             Box::new(IceWizSystem) as Box<dyn ComponentSystem>,
             Box::new(CasterMinionSystem) as Box<dyn ComponentSystem>,
             Box::new(BaseSystem) as Box<dyn ComponentSystem>,
+            Box::new(StatusSystem) as Box<dyn ComponentSystem>,
         ] {
             systems.insert(system.get_component_id(), system);
         }
@@ -218,7 +223,7 @@ impl World {
         );
         World {
             errors,
-            frame_id: 0,
+            tick: 0,
             info: Rc::new(WorldInfo::combine(info, systems)),
             characters: HashSet::new(),
             base: ComponentStorage::new(),
@@ -228,6 +233,7 @@ impl World {
             icewiz: ComponentStorage::new(),
             caster_minion: ComponentStorage::new(),
             projectile: ComponentStorage::new(),
+            status: ComponentStorage::new(),
         }
     }
 
@@ -317,7 +323,7 @@ impl World {
                 .map(|errs| errs.iter())
                 .unwrap_or(vec![].iter()))
             .cloned());
-        self.frame_id += 1;
+        self.tick += 1;
     }
 
     pub fn reduce_world_updates(&self, update: Vec<WorldUpdate>) -> Result<Vec<Result<WorldUpdate, WorldError>>, WorldError> {
@@ -387,6 +393,7 @@ impl World {
             ComponentID::AutoAttack => &self.auto_attack as &dyn ComponentStorageCommon,
             ComponentID::Projectile => &self.projectile as &dyn ComponentStorageCommon,
             ComponentID::CasterMinion => &self.caster_minion as &dyn ComponentStorageCommon,
+            ComponentID::Status => &self.status as &dyn ComponentStorageCommon,
         }
     }
 
@@ -399,6 +406,7 @@ impl World {
             ComponentID::AutoAttack => &mut self.auto_attack as &mut dyn ComponentStorageCommon,
             ComponentID::Projectile => &mut self.projectile as &mut dyn ComponentStorageCommon,
             ComponentID::CasterMinion => &mut self.caster_minion as &mut dyn ComponentStorageCommon,
+            ComponentID::Status => &mut self.status as &mut dyn ComponentStorageCommon,
         }
     }
 
@@ -475,6 +483,7 @@ impl World {
             },
             ComponentID::Projectile => insert(&mut self.projectile, id, cid, data),
             ComponentID::CasterMinion => insert(&mut self.caster_minion, id, cid, data),
+            ComponentID::Status => insert(&mut self.status, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }

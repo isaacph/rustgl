@@ -10,6 +10,7 @@ pub mod commands;
 pub const TICK_RATE: f32 = 60.0;
 
 pub type Tick = i32;
+pub type WorldTick = i32;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, EnumString)]
 pub enum Subscription {

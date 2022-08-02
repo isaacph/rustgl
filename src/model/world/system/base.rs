@@ -1,7 +1,7 @@
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterType, CharacterID}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component}, WorldSystem, WorldInfo, WorldError, ComponentSystem, World, commands::{CharacterCommand, WorldCommand, Priority}, Update};
+use crate::model::world::{character::{CharacterType, CharacterID}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, WorldError, ComponentSystem, World, commands::{CharacterCommand, WorldCommand, Priority}, Update};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CharacterFlip {
@@ -103,6 +103,29 @@ pub fn empty_flip() -> CharacterBaseUpdate {
 pub enum CharacterBaseUpdate {
     New(CharacterBase),
     Update(Priority, CharacterBaseUpdateSwitch),
+}
+
+pub fn make_move_update(cid: CharacterID, priority: Priority, mov: Vector3<f32>) -> Update {
+    Update::Comp(
+        ComponentUpdate {
+            cid,
+            data: ComponentUpdateData::Base(
+                CharacterBaseUpdate::Update(
+                    priority,
+                    CharacterBaseUpdateSwitch::PositionUpdate(
+                        CharacterBasePositionUpdate::Move(mov))))
+        })
+}
+
+pub fn make_flip_update(cid: CharacterID, priority: Priority, flip: CharacterFlip) -> Update {
+    Update::Comp(
+        ComponentUpdate {
+            cid,
+            data: ComponentUpdateData::Base(
+                CharacterBaseUpdate::Update(
+                    priority,
+                    CharacterBaseUpdateSwitch::FlipUpdate(flip)))
+        })
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

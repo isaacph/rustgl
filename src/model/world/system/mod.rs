@@ -5,3 +5,4 @@ pub mod projectile;
 pub mod caster_minion;
 pub mod base;
 pub mod health;
+pub mod status;

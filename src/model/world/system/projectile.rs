@@ -1,9 +1,9 @@
-use nalgebra::Vector3;
+use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::CharacterCommand, ComponentSystem, Update};
+use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand, Priority}, ComponentSystem, Update, WorldUpdate};
 
-use super::{movement::fly_to, base::{CharacterBase, CharacterFlip}};
+use super::base::{CharacterBase, CharacterFlip, make_move_update, make_flip_update, CharacterBaseUpdate};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Projectile {
@@ -37,33 +37,43 @@ pub fn create(
     world: &World,
     info: &ProjectileCreationInfo
 ) -> Result<Vec<Update>, WorldError> {
-    let mut updates = vec![];
     let typ = CharacterType::Projectile;
-    world.characters.insert(info.proj_id);
     let position = {
         let base = world.base.get_component(&info.origin)?;
         base.position + Vector3::new(info.starting_offset.x * base.flip.dir(), info.starting_offset.y, info.starting_offset.z)
     };
-    world.base.components.insert(info.proj_id,
-        CharacterBase {
-            ctype: typ,
-            position,
-            center_offset: Vector3::new(0.0, 0.0, 0.0),
-            speed: info.speed,
-            attack_damage: info.damage,
-            range: 0.0,
-            attack_speed: 0.0,
-            flip: CharacterFlip::Right,
-            targetable: false,
-        }
-    );
-    world.projectile.components.insert(info.proj_id,
-        Projectile {
-            origin: info.origin,
-            target: info.target
-        }
-    );
-    Ok(())
+    Ok(vec![
+        Update::World(WorldUpdate::NewCharacterID(info.proj_id)),
+        Update::Comp(ComponentUpdate {
+            cid: info.proj_id,
+            data: ComponentUpdateData::Base(
+                CharacterBaseUpdate::New(
+                    CharacterBase {
+                        ctype: typ,
+                        position,
+                        center_offset: Vector3::new(0.0, 0.0, 0.0),
+                        speed: info.speed,
+                        attack_damage: info.damage,
+                        range: 0.0,
+                        attack_speed: 0.0,
+                        flip: CharacterFlip::Right,
+                        targetable: false,
+                    }
+                )
+            )
+        }),
+        Update::Comp(ComponentUpdate {
+            cid: info.proj_id,
+            data: ComponentUpdateData::Projectile(
+                ProjectileUpdate(
+                    Projectile {
+                        origin: info.origin,
+                        target: info.target
+                    }
+                )
+            )
+        })
+    ])
 }
 
 pub struct ProjectileSystem;
@@ -88,12 +98,48 @@ impl WorldSystem for ProjectileSystem {
     }
 }
 
+// try to start an action on a target at a range. if in range, return Some(0.0), indicating to start the action.
+// if out of range, move towards the target, and if the target ends up in range during the frame,
+// return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
+// time for walking
+pub fn fly_to(world: &World, cid: &CharacterID, dest: &Vector3<f32>, range: f32, delta_time: f32) -> Result<(bool, Vec<Update>), WorldError> {
+    let base = world.base.get_component_mut(cid)?;
+    let speed = base.speed;
+    let max_travel = speed * delta_time;
+    let dir = dest - base.position;
+    if dir.x == 0.0 && dir.y == 0.0 && dir.z == 0.0 {
+        return Ok((true, vec![]))
+    }
+    let dist = dir.magnitude();
+    if speed <= 0.0 {
+        return Ok((dist <= range, vec![]))
+    }
+    let flip = CharacterFlip::from_dir(&Vector2::new(dir.x, dir.y)).unwrap_or(base.flip);
+    if f32::max(dist - max_travel, 0.0) <= range {
+        let travel = f32::max(dist - range, 0.0);
+        let remaining_time = delta_time - travel / speed;
+        let offset = dir / dist * travel;
+        // base.position += offset;
+        Ok((true, vec![
+            make_move_update(*cid, Priority::Walk, offset),
+            make_flip_update(*cid, Priority::Walk, flip)
+        ]))
+    } else {
+        let offset = dir / dist * max_travel;
+        // base.position += offset;
+        Ok((false, vec![
+            make_move_update(*cid, Priority::Walk, offset),
+            make_flip_update(*cid, Priority::Walk, flip)
+        ]))
+    }
+}
+
 impl ComponentSystem for ProjectileSystem {
     fn get_component_id(&self) -> ComponentID {
         ComponentID::Projectile
     }
 
-    fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError> {
+    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         let target = world.projectile.get_component(&cid)?.target;
         if world.characters.get(&target).is_none() {
             world.erase_character(&cid)?;
@@ -103,19 +149,25 @@ impl ComponentSystem for ProjectileSystem {
         let dest = base.position + base.center_offset;
         let range = 0.0;
         let damage = world.base.get_component(&cid)?.attack_damage;
-        match fly_to(world, &cid, &dest, range, delta_time)? {
-            Some(_) => {
-                world.erase_character(&cid)?;
-                // do damage
-                let health = world.health.get_component_mut(&target)?;
-                health.health -= damage;
-                if health.health <= 0.0 {
-                    world.erase_character(&target)?;
-                }
-            },
-            None => (),
+        let (arrived, fly_updates) = fly_to(world, &cid, &dest, range, delta_time)?;
+        if arrived {
+            // world.erase_character(&cid)?;
+            // do damage
+            let health = world.health.get_component(&target)?;
+            // health.health -= damage;
+            // if health.health - damage <= 0.0 {
+            //     world.erase_character(&target)?;
+            // }
+            Ok([
+               Some(Update::World(WorldUpdate::RemoveCharacterID(*cid))),
+               Some(Update::World(WorldUpdate::RemoveCharacterID(*cid))),
+               if health.health - damage <= 0.0 {
+                   Some(Update::World(WorldUpdate::RemoveCharacterID(target)))
+               } else { None }
+            ].into_iter().filter_map(|x| x).collect())
+        } else {
+            Ok(fly_updates)
         }
-        Ok(())
     }
 
     // fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
@@ -126,8 +178,12 @@ impl ComponentSystem for ProjectileSystem {
         Err(WorldError::InvalidCommandMapping)
     }
     
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData> {
-        vec![]
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+        if changes.len() > 1 {
+            Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Projectile))
+        } else {
+            Ok(changes.clone())
+        }
     }
 }
 

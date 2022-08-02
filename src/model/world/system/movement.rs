@@ -1,9 +1,9 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::CharacterCommand, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component}, WorldSystem, WorldInfo, ComponentSystem}, commands::GetCommandID};
+use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, Status, Actively}}, commands::GetCommandID};
 
-use super::base::CharacterFlip;
+use super::base::{CharacterFlip, make_flip_update, make_move_update};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Movement {
@@ -65,64 +65,41 @@ pub struct MoveCharacter {
 //     }
 // }
 
-// try to start an action on a target at a range. if in range, return Some(0.0), indicating to start the action.
-// if out of range, move towards the target, and if the target ends up in range during the frame,
-// return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
-// time for walking
-pub fn fly_to(world: &mut World, cid: &CharacterID, dest: &Vector3<f32>, range: f32, delta_time: f32) -> Result<Option<f32>, WorldError> {
-    let base = world.base.get_component_mut(cid)?;
-    let speed = base.speed;
-    let max_travel = speed * delta_time;
-    let dir = dest - base.position;
-    let dist = dir.magnitude();
-    if dist <= 0.0 {
-        return Ok(Some(0.0))
-    }
-    if speed <= 0.0 {
-        return Ok(None)
-    }
-    base.flip = CharacterFlip::from_dir(&Vector2::new(dir.x, dir.y)).unwrap_or(base.flip);
-    if f32::max(dist - max_travel, 0.0) <= range {
-        let travel = f32::max(dist - range, 0.0);
-        let remaining_time = delta_time - travel / speed;
-        let offset = dir / dist * travel;
-        base.position += offset;
-        Ok(Some(remaining_time))
-    } else {
-        let offset = dir / dist * max_travel;
-        base.position += offset;
-        Ok(None)
-    }
-}
 
 // try to start an action on a target at a range. if in range, return Some(0.0), indicating to start the action.
 // if out of range, move towards the target, and if the target ends up in range during the frame,
 // return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
 // time for walking
-pub fn walk_to(world: &mut World, cid: &CharacterID, dest: &Vector2<f32>, range: f32, delta_time: f32) -> Result<Option<f32>, WorldError> {
+pub fn walk_to(world: &World, cid: &CharacterID, dest: &Vector2<f32>, range: f32, delta_time: f32) -> Result<(bool, Vec<Update>), WorldError> {
     let base = world.base.get_component_mut(cid)?;
     let speed = base.speed;
     let max_travel = speed * delta_time;
     let pos = Vector2::new(base.position.x, base.position.y);
     let dir = dest - pos;
+    if dir.x == 0.0 && dir.y == 0.0 {
+        return Ok((true, vec![]))
+    }
     let dist = dir.magnitude();
-    if dist <= 0.0 {
-        return Ok(Some(0.0))
-    }
     if speed <= 0.0 {
-        return Ok(None)
+        return Ok((dist <= range, vec![]))
     }
-    base.flip = CharacterFlip::from_dir(&(dest - pos)).unwrap_or(base.flip);
+    let flip = CharacterFlip::from_dir(&Vector2::new(dir.x, dir.y)).unwrap_or(base.flip);
     if f32::max(dist - max_travel, 0.0) <= range {
         let travel = f32::max(dist - range, 0.0);
         let remaining_time = delta_time - travel / speed;
         let offset = dir / dist * travel;
-        base.position += Vector3::new(offset.x, offset.y, 0.0);
-        Ok(Some(remaining_time))
+        // base.position += offset;
+        Ok((true, vec![
+            make_move_update(*cid, Priority::Walk, Vector3::new(offset.x, offset.y, 0.0)),
+            make_flip_update(*cid, Priority::Walk, flip)
+        ]))
     } else {
         let offset = dir / dist * max_travel;
-        base.position += Vector3::new(offset.x, offset.y, 0.0);
-        Ok(None)
+        // base.position += offset;
+        Ok((false, vec![
+            make_move_update(*cid, Priority::Walk, Vector3::new(offset.x, offset.y, 0.0)),
+            make_flip_update(*cid, Priority::Walk, flip)
+        ]))
     }
 }
 
@@ -138,32 +115,50 @@ impl ComponentSystem for MovementSystem {
     fn get_component_id(&self) -> ComponentID {
         ComponentID::Movement
     }
-    fn update_character(&self, world: &mut World, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError> {
+
+    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         match world.movement.get_component(cid)?.destination.as_ref() {
             Some(dest) => {// currently executing the action
-                // cancel auto attack
-                let base = world.base.get_component(cid)?;
-                if let Some(auto_attack) = world.auto_attack.components.get_mut(cid) {
-                    auto_attack.targeting = None;
-                    if !auto_attack.is_casting(base.ctype, &world.info) {
-                        auto_attack.execution = None;
-                    } else {
-                        return Ok(());
-                    }
-                }
-
-                // move
-                let dest = *dest;
-                match walk_to(world, cid, &dest, 0.0, delta_time)? {
-                    Some(_) => {
-                        world.movement.get_component_mut(cid)?.destination = None;
-                    },
-                    None => ()
-                }
+                // // cancel auto attack
+                // let base = world.base.get_component(cid)?;
+                // if let Some(auto_attack) = world.auto_attack.components.get_mut(cid) {
+                //     auto_attack.targeting = None;
+                //     if !auto_attack.is_casting(base.ctype, &world.info) {
+                //         auto_attack.execution = None;
+                //     } else {
+                //         return Ok(());
+                //     }
+                // }
+                use ComponentUpdateData::Status as CStatus;
+                use StatusUpdate::{Try, Cancel};
+                let (arrived, updates) = walk_to(world, cid, dest, 0.0, delta_time)?;
+                Ok(updates.into_iter()
+                    .chain([
+                        Some(Update::Comp(ComponentUpdate {
+                            cid: *cid,
+                            data: CStatus(Try(Status {
+                                timeout: 60 * 60 * 10,
+                                actively: Actively::Casting {
+                                    overridable: true,
+                                    caster: ComponentID::Movement,
+                                }
+                            }))
+                        })),
+                        if arrived {
+                            Some(Update::Comp(ComponentUpdate {
+                                cid: *cid,
+                                data: CStatus(Cancel(ComponentID::Movement))
+                            }))
+                        } else {
+                            None
+                        }
+                    ]
+                    .into_iter()
+                    .filter_map(|x| x))
+                .collect())
             }
-            None => (), // waiting to execute the action
+            None => Ok(vec![]),
         }
-        Ok(())
     }
 
     fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {

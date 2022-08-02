@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use super::{character::CharacterID, WorldError, system::base::CharacterBaseUpdate, system::health::CharacterHealthUpdate};
+use super::{character::CharacterID, WorldError, system::{base::CharacterBaseUpdate, projectile::ProjectileUpdate, status::StatusUpdate, movement::Movement}, system::health::CharacterHealthUpdate};
 use strum_macros::EnumIter;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter)]
@@ -14,12 +14,16 @@ pub enum ComponentID {
     CasterMinion,
     AutoAttack,
     Projectile,
+    Status,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ComponentUpdateData {
     Base(CharacterBaseUpdate),
     Health(CharacterHealthUpdate),
+    Projectile(ProjectileUpdate),
+    Status(StatusUpdate),
+    Movement(Movement),
 }
 
 impl ComponentUpdateData {
@@ -27,6 +31,9 @@ impl ComponentUpdateData {
         match *self {
             ComponentUpdateData::Base(_) => ComponentID::Base,
             ComponentUpdateData::Health(_) => ComponentID::Health,
+            ComponentUpdateData::Projectile(_) => ComponentID::Projectile,
+            ComponentUpdateData::Status(_) => ComponentID::Status,
+            ComponentUpdateData::Movement(_) => ComponentID::Movement,
         }
     }
 }
