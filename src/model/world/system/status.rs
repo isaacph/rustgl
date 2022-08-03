@@ -1,55 +1,81 @@
+use std::collections::HashMap;
 
 use crate::model::{world::{ComponentID, ComponentSystem, character::CharacterID, World, WorldError, commands::{CharacterCommand, WorldCommand}, Update, component::{ComponentUpdateData, Component, GetComponentID, ComponentStorageContainer, ComponentUpdate}, WorldSystem, WorldInfo}, WorldTick};
+use itertools::Itertools;
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum Actively {
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StatusID {
     Idle,
-    Casting {
-        overridable: bool,
-        caster: ComponentID,
-    },
+    Walk,
+    AutoAttack,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum StatusPrio {
+    Impossible, // never gets executed
+    Lowest,
+    //AbilityQueued,
+    Ability,
+    AbilityOverride,
+    AbilityPrioritized,
     Stunned,
 }
 
-impl Actively {
-    pub fn priority(&self) -> i32 {
-        use Actively::*;
+impl StatusPrio {
+    pub fn get_prio(self: &StatusPrio) -> i32 {
+        use StatusPrio::*;
         match *self {
+            Impossible => -1,
             Idle => 0,
-            Casting { overridable: true, caster } => match caster {
-                ComponentID::Movement => 10,
-                ComponentID::AutoAttack => 11,
-                _ => 10,
-            },
-            Casting { overridable: false, caster: _ } => 20,
-            Stunned => 30,
+            //AbilityQueued => 1,
+            Ability => 2,
+            AbilityOverride => 3,
+            AbilityPrioritized => 4,
+            Stunned => 5,
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Status {
-    pub actively: Actively,
+    pub prio: StatusPrio,
+    pub id: StatusID,
     pub timeout: WorldTick,
+    pub start: WorldTick, // time when this status was requested
 }
 
-pub fn idle_status() -> Status {
-    use Actively::*;
-    Status { actively: Idle, timeout: i32::MAX }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StatusComponent {
+    pub status: Status,
+    pub runner_up: Status,
 }
 
-impl GetComponentID for Status {
+pub fn idle_status(start: WorldTick) -> Status {
+    Status {
+        id: StatusID::Idle,
+        prio: StatusPrio::Lowest,
+        timeout: WorldTick::MAX,
+        start,
+    }
+}
+
+impl GetComponentID for StatusComponent {
     const ID: ComponentID = ComponentID::Status;
 }
 
-impl Component for Status {
+impl Component for StatusComponent {
     fn update(&self, update: &ComponentUpdateData) -> Self {
         use ComponentUpdateData::Status;
         use StatusUpdate::*;
         match *update {
-            Status(New(rewrite)) => rewrite,
-            Status(Try(switch)) => switch,
+            Status(RunnerUp(runner_up)) => Self {
+                status: self.status,
+                runner_up,
+            },
+            // only one of these two should arrive
+            Status(New(status)) => Self { status, runner_up: self.runner_up },
+            Status(Try(status)) => Self { status, runner_up: self.runner_up },
             _ => self.clone()
         }
     }
@@ -57,9 +83,14 @@ impl Component for Status {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum StatusUpdate {
-    New(Status),
+    New(Status), // should only be used for initializing statuses of new characters
+                 // note that if two New statuses are passed for the same character,
+                 // status will fail to change and an error will be thrown
     Try(Status),
-    Cancel(ComponentID),
+    Cancel(StatusID),
+    RunnerUp(Status), // reserved for reduce stage output, will be discarded if it comes as input
+    Reevaluate,
+    ChangePrio(StatusID, StatusPrio),
 }
 
 pub struct StatusSystem;
@@ -80,13 +111,13 @@ impl ComponentSystem for StatusSystem {
 
     fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         // check if we need an update for timeout
-        let status = world.status.get_component(cid)?;
-        if status.timeout <= world.tick {
+        let StatusComponent { status, runner_up } = world.status.get_component(cid)?;
+        if status.timeout <= world.tick || runner_up.timeout <= world.tick {
             use ComponentUpdateData::Status as CStatus;
             use StatusUpdate::*;
             Ok(vec![Update::Comp(ComponentUpdate {
                 cid: *cid,
-                data: CStatus(Try(idle_status()))
+                data: CStatus(Reevaluate)
             })])
         } else {
             Ok(vec![])
@@ -99,48 +130,79 @@ impl ComponentSystem for StatusSystem {
         let cancel = changes.into_iter().filter_map(|data| match *data {
             CStatus(Cancel(cancel)) => Some(cancel),
             _ => None,
-        });
-        match changes.into_iter()
-            .map(|c| match *c {
-                CStatus(New(_)) => 1,
-                _ => 0,
-            }).sum() {
-            1 => // replace with the singular New command
-                Ok(changes.into_iter()
-                .find(|x| match *x {
-                    CStatus(New(_)) => true,
-                    _ => false
-                }).cloned().into_iter().collect()),
-            0 =>  // reduce most prioritized state
-                Ok(changes.into_iter()
-                   // add current state
-                   .chain(std::iter::once(&CStatus(Try(world.status.get_component(cid)?.clone()))))
-                   .map(|update| match *update {
-                       CStatus(Try(Status { actively, timeout })) =>
-                        // check timeout
-                       if timeout <= world.tick {
-                           (update, -1) // makes this result impossible
-                       } else {
-                           // check canceled
-                           match actively {
-                               Actively::Casting { overridable, caster } => {
-                                   if cancel.any(|c| c == caster) {
-                                       (update, -1) // makes this result impossible
-                                   } else {
-                                       (update, actively.priority())
-                                   }
-                               },
-                               _ => (update, actively.priority())
-                           }
-                       },
-                       _ => (update, -2) // please be more impossible
-                   })
-                   // choose highest priority
-                   .max_by_key(|(update, prio)| prio)
-                   // collect result
-                   .map(|(update, _)| update.clone())
+        })
+        .filter(|id| *id != StatusID::Idle);
+
+        // get prio changes
+        let prio_changes: HashMap<StatusID, StatusPrio> = changes.into_iter().filter_map(|x| match *x {
+            CStatus(ChangePrio(id, new)) => Some((id, new)),
+            _ => None
+        })
+        // deduplicate prio changes
+        .group_by(|change| change.0)
+        .into_iter()
+        .flat_map(|(id, group)| group
+            .max_by_key(|(_, prio)| prio.get_prio())
+            .into_iter())
+        .collect();
+
+        // get status resets (called New)
+        let new_changes = changes.into_iter().filter_map(|new| match *new {
+            CStatus(New(new)) => Some(new),
+            _ => None,
+        })
+        // remove canceled statuses
+        .filter(|status| cancel.any(|id| status.id == id));
+
+        match new_changes.count() {
+            1 => // prioritize New over other status types
+                Ok(new_changes.map(|new| CStatus(New(new))).collect()),
+            0 =>  {// reduce most prioritized state
+                // get status change requests (called Try)
+                let mut iter = changes.into_iter()
+                    .filter_map(|change| match *change {
+                        CStatus(Try(change)) => Some(change),
+                        _ => None
+                    })
+                    // add current state
+                    .chain([
+                        // add runner_up state
+                        world.status.get_component(cid)?.clone().status,
+                        // add minimum (idle) state
+                        world.status.get_component(cid)?.clone().runner_up]
+                        // carry out prio changes
+                        .into_iter()
+                        .map(|status| match prio_changes.get(&status.id) {
+                            Some(prio) => Status {
+                                id: status.id,
+                                prio: *prio,
+                                timeout: status.timeout,
+                                start: status.start
+                            },
+                            None => status
+                        }))
+                    // remove canceled statuses
+                    .filter(|status| !cancel.any(|id| status.id == id))
+                    // deduplicate by id
+                    .group_by(|status| status.id)
+                    .into_iter()
+                    .flat_map(|(_, group)| group
+                        .max_by_key(|status| (status.start, status.timeout))
+                        .into_iter())
+                    // sort by prio then id
+                    .sorted_unstable_by_key(|status| std::cmp::Reverse(
+                        (status.prio.get_prio(), status.id)
+                    ))
+                    .take(2);
+                let (status, runner_up) = (iter.next(), iter.next());
+                Ok(status
                    .into_iter()
-                   .collect()),
+                   .map(|status| CStatus(Try(status)))
+                   .chain(runner_up
+                       .into_iter()
+                       .map(|status| CStatus(RunnerUp(status))))
+                   .collect())
+            },
             _ => // there are multiple New commands
                 Err(WorldError::MultipleNewCommands(*cid, ComponentID::Status))
         }

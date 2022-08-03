@@ -45,11 +45,11 @@ use self::{
         health::{
             CharacterHealth,
 
-        }, status::{Status, StatusSystem},
+        }, status::{StatusSystem, StatusComponent},
     }
 };
 
-use super::{commands::CommandID, Tick};
+use super::{commands::CommandID, WorldTick};
 
 //pub mod player;
 pub mod character;
@@ -68,7 +68,7 @@ pub mod client;
 pub enum WorldError {
     MissingCharacter(CharacterID, String),
     MissingCharacterComponent(CharacterID, ComponentID),
-    MissingCharacterComponentSystem(CharacterID, ComponentID),
+    MissingCharacterComponentSystem(ComponentID),
     MissingCharacterCreator(CharacterType),
     InvalidCommandReplacement(CharacterID, CommandID),
     InvalidCommand,
@@ -115,13 +115,13 @@ pub struct World {
     pub movement: ComponentStorage<Movement>,
     pub auto_attack: ComponentStorage<AutoAttack>,
     pub projectile: ComponentStorage<Projectile>,
-    pub status: ComponentStorage<Status>,
+    pub status: ComponentStorage<StatusComponent>,
 
     pub icewiz: ComponentStorage<IceWiz>,
     pub caster_minion: ComponentStorage<CasterMinion>,
 
     // the tick local to the world, should be 100% in sync between client and server
-    pub tick: Tick,
+    pub tick: WorldTick,
 }
 
 pub trait WorldSystem {
@@ -278,20 +278,32 @@ impl World {
                 })).collect();
         let update_errors = update_res.iter().filter_map(|res| res.err());
         let mut reduce_errors = vec![];
-        let reduced: Vec<Update> = self.info.component_systems.iter()
-            .flat_map(|(comp_id, system)| self.get_characters(comp_id).iter()
-                .flat_map(|cid| match system.reduce_changes(cid, self, &component_updates.into_iter()
-                    .filter(|update| update.data.component_id() == *comp_id)
-                    .map(|update| update.data).collect()) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            reduce_errors.push(err);
-                            vec![]
+        let reduced: Vec<Update> = component_updates
+            .into_iter()
+            .group_by(|update| update.data.component_id())
+            .into_iter()
+            .flat_map(|(comp_id, updates)| match self.info.component_systems.get(&comp_id) {
+                None => {
+                    reduce_errors.push(WorldError::MissingCharacterComponentSystem(comp_id));
+                    vec![].into_iter()
+                },
+                Some(system) => updates
+                    .into_iter()
+                    .group_by(|update| update.cid)
+                    .into_iter()
+                    .flat_map(|(cid, updates)|
+                        match system.reduce_changes(&cid, self, &updates.map(|update| update.data).collect()) {
+                            Err(err) => {
+                                reduce_errors.push(err);
+                                vec![]
+                            },
+                            Ok(updates) => updates
                         }
-                    }.iter()
-                    .map(|data| Update::Comp(ComponentUpdate {
-                        cid: *cid, data: *data
-                    }))))
+                        .into_iter()
+                        .map(|data| Update::Comp(ComponentUpdate { cid, data })))
+                    .collect::<Vec<Update>>()
+                    .into_iter()
+            })
             .chain(match self.reduce_world_updates(world_updates) {
                 Ok(v) => v.into_iter().filter_map(|update| match update {
                     Ok(update) => Some(Update::World(update)),
@@ -306,6 +318,34 @@ impl World {
                 }
             }.into_iter())
             .collect();
+        // let reduced: Vec<Update> = self.info.component_systems.iter()
+        //     .flat_map(|(comp_id, system)| self.get_characters(comp_id).iter()
+        //         .flat_map(|cid| match system.reduce_changes(cid, self, &component_updates.into_iter()
+        //             .filter(|update| update.data.component_id() == *comp_id)
+        //             .map(|update| update.data).collect()) {
+        //                 Ok(v) => v,
+        //                 Err(err) => {
+        //                     reduce_errors.push(err);
+        //                     vec![]
+        //                 }
+        //             }.iter()
+        //             .map(|data| Update::Comp(ComponentUpdate {
+        //                 cid: *cid, data: *data
+        //             }))))
+        //     .chain(match self.reduce_world_updates(world_updates) {
+        //         Ok(v) => v.into_iter().filter_map(|update| match update {
+        //             Ok(update) => Some(Update::World(update)),
+        //             Err(err) => {
+        //                 reduce_errors.push(err);
+        //                 None
+        //             }
+        //         }).collect(),
+        //         Err(err) => {
+        //             reduce_errors.push(err);
+        //             vec![]
+        //         }
+        //     }.into_iter())
+        //     .collect();
         let mut world = self.clone();
         world.errors.extend(update_errors);
         world.errors.extend(reduce_errors);

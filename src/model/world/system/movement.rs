@@ -1,7 +1,7 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, Status, Actively}}, commands::GetCommandID};
+use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, Status, StatusPrio, StatusID, StatusComponent}}, commands::GetCommandID, WorldTick};
 
 use super::base::{CharacterFlip, make_flip_update, make_move_update};
 
@@ -18,6 +18,17 @@ impl Component for Movement {
 
 impl GetComponentID for Movement {
     const ID: ComponentID = ComponentID::Movement;
+}
+
+pub fn make_movement_component_update(cid: CharacterID, dest: Option<Vector2<f32>>) -> Update {
+    Update::Comp(ComponentUpdate {
+        cid,
+        data: ComponentUpdateData::Movement(
+            Movement {
+                destination: dest
+            }
+        )
+    })
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -130,32 +141,38 @@ impl ComponentSystem for MovementSystem {
                 //     }
                 // }
                 use ComponentUpdateData::Status as CStatus;
-                use StatusUpdate::{Try, Cancel};
-                let (arrived, updates) = walk_to(world, cid, dest, 0.0, delta_time)?;
-                Ok(updates.into_iter()
-                    .chain([
-                        Some(Update::Comp(ComponentUpdate {
-                            cid: *cid,
-                            data: CStatus(Try(Status {
-                                timeout: 60 * 60 * 10,
-                                actively: Actively::Casting {
-                                    overridable: true,
-                                    caster: ComponentID::Movement,
+                use StatusUpdate::{Cancel, ChangePrio};
+                let StatusComponent {status, runner_up} = world.status.get_component(&cid)?;
+                match (status.id, runner_up.id) {
+                    (StatusID::Walk, _) => {
+                        let (arrived, updates) = walk_to(world, cid, dest, 0.0, delta_time)?;
+                        Ok(updates.into_iter()
+                            .chain([
+                                match status.prio {
+                                    StatusPrio::Ability => None,
+                                    _ => Some(Update::Comp(ComponentUpdate {
+                                        cid: *cid,
+                                        data: CStatus(ChangePrio(StatusID::Walk, StatusPrio::Ability))
+                                    })),
+                                },
+                                if arrived {
+                                    Some(Update::Comp(ComponentUpdate {
+                                        cid: *cid,
+                                        data: CStatus(Cancel(StatusID::Walk))
+                                    }))
+                                } else {
+                                    None
                                 }
-                            }))
-                        })),
-                        if arrived {
-                            Some(Update::Comp(ComponentUpdate {
-                                cid: *cid,
-                                data: CStatus(Cancel(ComponentID::Movement))
-                            }))
-                        } else {
-                            None
-                        }
-                    ]
-                    .into_iter()
-                    .filter_map(|x| x))
-                .collect())
+                            ]
+                            .into_iter()
+                            .flatten())
+                        .collect())
+                    },
+                    (_, StatusID::Walk) => Ok(vec![]), // we are waiting, no op
+                    _ => { // action is no longer queued, forget destination
+                        Ok(vec![make_movement_component_update(*cid, None)])
+                    }
+                }
             }
             None => Ok(vec![]),
         }
@@ -172,14 +189,14 @@ impl ComponentSystem for MovementSystem {
                         *cid,
                         "Cannot move nonexistent character".to_string()))
                 }
-                let base = world.base.get_component(cid)?;
-                if cmd.reset {
-                    if let Some(auto_attack) = world.auto_attack.components.get(cid) {
-                        if auto_attack.is_casting(base.ctype, &world.info) {
-                            return Err(WorldError::IllegalInterrupt(*cid));
-                        }
-                    }
-                }
+                // let base = world.base.get_component(cid)?;
+                // if cmd.reset {
+                //     if let Some(auto_attack) = world.auto_attack.components.get(cid) {
+                //         if auto_attack.is_casting(base.ctype, &world.info) {
+                //             return Err(WorldError::IllegalInterrupt(*cid));
+                //         }
+                //     }
+                // }
                 Ok(())
             },
             _ => Err(WorldError::InvalidCommandMapping)
@@ -202,8 +219,56 @@ impl ComponentSystem for MovementSystem {
     //         _ => Err(WorldError::InvalidCommandMapping)
     //     }
     // }
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Vec<ComponentUpdateData> {
-        vec![]
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+        use ComponentUpdateData::Movement as CUD_M;
+        let cur_dest = world.movement.get_component(cid)?.destination;
+        let pos = {
+            let pos3 = world.base.get_component(cid)?.position;
+            Vector2::new(pos3.x, pos3.y)
+        };
+        // if a None is passed in, return None
+        // else if a dest is passed in, return the closest
+        // else return nothing
+        if changes.into_iter().any(|change| match *change {
+            CUD_M(Movement { destination: None }) => true,
+            _ => false,
+        }) {
+            return Ok(vec![CUD_M(Movement { destination: None })]);
+        }
+        Ok(changes
+            .into_iter()
+            .filter_map(|change| match change {
+                CUD_M(Movement { destination: Some(dest) }) => Some(dest),
+                _ => None,
+            })
+            // choose a destination deterministically
+            .fold((None, f32::MAX), |(cur, cur_dist), next_dest| {
+                let dir = next_dest - pos;
+                let dist = if dir.x == 0.0 && dir.y == 0.0 {
+                    0.0
+                } else {
+                    dir.magnitude()
+                };
+                if dist < cur_dist {
+                    (Some(next_dest), dist)
+                } else if dist == cur_dist {
+                    match cur {
+                        Some(curd) => {
+                            if next_dest.x < curd.x || next_dest.x == curd.x && next_dest.y < curd.y {
+                                (Some(next_dest), dist)
+                            } else {
+                                (cur, cur_dist)
+                            }
+                        },
+                        None => (Some(next_dest), dist),
+                    }
+                } else {
+                    (cur, cur_dist)
+                }
+            }).0
+            .into_iter()
+            .map(|dest| CUD_M(Movement { destination: Some(*dest) }))
+            .collect())
     }
 }
 
