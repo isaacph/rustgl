@@ -7,7 +7,8 @@ use super::{World, character::{CharacterID, CharacterType}, component::Component
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum WorldCommand {
-    CharacterComponent(CharacterID, ComponentID, CharacterCommand),
+    CharacterComponent(CharacterID, ComponentID, CharacterCommand), // these are for user input
+                                                                    // commands actually
     World(GlobalCommand),
     Update(UpdateCharacter),
 }

@@ -11,7 +11,7 @@ pub enum StatusID {
     AutoAttack,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StatusPrio {
     Impossible, // never gets executed
     Lowest,
@@ -48,7 +48,29 @@ pub struct Status {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StatusComponent {
     pub status: Status,
-    pub runner_up: Status,
+    pub runner_up: Vec<Status>,
+}
+
+impl StatusComponent {
+    pub fn status_queued(&self, id: StatusID) -> bool {
+        self.status.id == id || self.runner_up.into_iter().any(|r| r.id == id)
+    }
+    pub fn statuses_ahead<'a>(&'a self, id: StatusID) -> Vec<&'a Status> {
+        if id == self.status.id {
+            vec![]
+        } else if let Some(p) = self.runner_up.iter().rev().position(|s| s.id == id) {
+            (&self.runner_up).iter().skip(p).collect()
+        } else {
+            vec![]
+        }
+    }
+    pub fn get_status<'a>(&'a self, id: StatusID) -> Option<&'a Status> {
+        if id == self.status.id {
+            Some(&self.status)
+        } else {
+            self.runner_up.iter().find(|s| s.id == id)
+        }
+    }
 }
 
 pub fn idle_status(start: WorldTick) -> Status {
@@ -88,7 +110,7 @@ pub enum StatusUpdate {
                  // status will fail to change and an error will be thrown
     Try(Status),
     Cancel(StatusID),
-    RunnerUp(Status), // reserved for reduce stage output, will be discarded if it comes as input
+    RunnerUp(Vec<Status>), // reserved for reduce stage output, will be discarded if it comes as input
     Reevaluate,
     ChangePrio(StatusID, StatusPrio),
 }
@@ -112,7 +134,7 @@ impl ComponentSystem for StatusSystem {
     fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         // check if we need an update for timeout
         let StatusComponent { status, runner_up } = world.status.get_component(cid)?;
-        if status.timeout <= world.tick || runner_up.timeout <= world.tick {
+        if status.timeout <= world.tick || runner_up.iter().any(|r| r.timeout <= world.tick) {
             use ComponentUpdateData::Status as CStatus;
             use StatusUpdate::*;
             Ok(vec![Update::Comp(ComponentUpdate {
@@ -165,11 +187,11 @@ impl ComponentSystem for StatusSystem {
                         _ => None
                     })
                     // add current state
-                    .chain([
+                    .chain(
+                        // add previous state
+                        [world.status.get_component(cid)?.clone().status].into_iter()
                         // add runner_up state
-                        world.status.get_component(cid)?.clone().status,
-                        // add minimum (idle) state
-                        world.status.get_component(cid)?.clone().runner_up]
+                        .chain(world.status.get_component(cid)?.clone().runner_up.into_iter())
                         // carry out prio changes
                         .into_iter()
                         .map(|status| match prio_changes.get(&status.id) {
@@ -181,6 +203,8 @@ impl ComponentSystem for StatusSystem {
                             },
                             None => status
                         }))
+                    // add minimum (idle) state
+                    .chain([idle_status(world.tick)].into_iter())
                     // remove canceled statuses
                     .filter(|status| !cancel.any(|id| status.id == id))
                     // deduplicate by id
@@ -192,15 +216,12 @@ impl ComponentSystem for StatusSystem {
                     // sort by prio then id
                     .sorted_unstable_by_key(|status| std::cmp::Reverse(
                         (status.prio.get_prio(), status.id)
-                    ))
-                    .take(2);
-                let (status, runner_up) = (iter.next(), iter.next());
+                    ));
+                let (status, runner_up): (Option<Status>, Vec<Status>) = (iter.next(), iter.collect());
                 Ok(status
                    .into_iter()
                    .map(|status| CStatus(Try(status)))
-                   .chain(runner_up
-                       .into_iter()
-                       .map(|status| CStatus(RunnerUp(status))))
+                   .chain(std::iter::once(CStatus(RunnerUp(runner_up))))
                    .collect())
             },
             _ => // there are multiple New commands

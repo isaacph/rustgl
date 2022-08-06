@@ -6,6 +6,7 @@ use strum_macros::EnumString;
 pub mod player;
 pub mod world;
 pub mod commands;
+pub mod util;
 
 pub const TICK_RATE: f32 = 60.0;
 

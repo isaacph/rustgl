@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct CharacterID(u64);
 
 impl CharacterID {
@@ -9,13 +9,17 @@ impl CharacterID {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CharacterIDGenerator(u64);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CharacterIDRange(u64, u64);
 
 impl CharacterIDRange {
+    pub fn split_id(&self) -> (Option<CharacterID>, Self) {
+        let mut split = self.clone();
+        (self.next_id(), split)
+    }
     pub fn next_id(&mut self) -> Option<CharacterID> {
         if self.0 < self.1 {
             let id = self.0;
