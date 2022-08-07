@@ -1,7 +1,7 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, StatusPrio, StatusID, StatusComponent, Status}}, commands::GetCommandID, util::{ItClosest, GroundPos, ItClosestRef}};
+use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, StatusPrio, StatusID, Status}}, commands::GetCommandID, util::{ItClosest, GroundPos, ItClosestRef}};
 
 use super::base::{CharacterFlip, make_flip_update, make_move_update};
 
@@ -12,12 +12,21 @@ pub struct Movement {
 
 impl Component for Movement {
     fn update(&self, update: &ComponentUpdateData) -> Self {
-        self.clone()
+        match update.clone() {
+            ComponentUpdateData::Movement(m) => m,
+            _ => self.clone()
+        }
     }
 }
 
 impl GetComponentID for Movement {
     const ID: ComponentID = ComponentID::Movement;
+}
+
+impl Default for Movement {
+    fn default() -> Self {
+        Self { destination: None }
+    }
 }
 
 pub fn make_movement_component_update(cid: CharacterID, dest: Option<Vector2<f32>>) -> Update {
@@ -81,7 +90,7 @@ pub struct MoveCharacter {
 // return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
 // time for walking
 pub fn walk_to(world: &World, cid: &CharacterID, dest: &Vector2<f32>, range: f32, delta_time: f32) -> Result<(bool, Vec<Update>), WorldError> {
-    let base = world.base.get_component_mut(cid)?;
+    let base = world.base.get_component(cid)?;
     let speed = base.speed;
     let max_travel = speed * delta_time;
     let pos = Vector2::new(base.position.x, base.position.y);
@@ -96,7 +105,7 @@ pub fn walk_to(world: &World, cid: &CharacterID, dest: &Vector2<f32>, range: f32
     let flip = CharacterFlip::from_dir(&Vector2::new(dir.x, dir.y)).unwrap_or(base.flip);
     if f32::max(dist - max_travel, 0.0) <= range {
         let travel = f32::max(dist - range, 0.0);
-        let remaining_time = delta_time - travel / speed;
+        let _remaining_time = delta_time - travel / speed;
         let offset = dir / dist * travel;
         // base.position += offset;
         Ok((true, vec![
@@ -167,7 +176,7 @@ impl ComponentSystem for MovementSystem {
         let pos = world.base.get_component(cid)?.position;
         let dest = world.movement.get_component(&cid)?.destination;
         let statuses = world.status.get_component(&cid)?;
-        let status = statuses.status;
+        let status = &statuses.status;
         let walk_status = statuses.get_status(StatusID::Walk);
         let (arrived, position_updates) = match (status.id, dest) {
             (StatusID::Walk, Some(dest)) => {
@@ -191,7 +200,7 @@ impl ComponentSystem for MovementSystem {
         } else {
             vec![]
         };
-        let status_updates = if let Some(command) = movement_command {
+        let status_updates = if movement_command.is_some() {
             vec![Update::Comp(ComponentUpdate {
                 cid: *cid,
                 data: CStatus(Try(Status {
@@ -283,7 +292,20 @@ impl ComponentSystem for MovementSystem {
     // }
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
         use ComponentUpdateData::Movement as CUD_M;
-        let cur_dest = world.movement.get_component(cid)?.destination;
+        if !world.characters.contains(cid) {
+            // get status resets (called New)
+            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
+                CUD_M(_) => true,
+                _ => false,
+            }).cloned().collect();
+            if new_changes.len() == 0 {
+                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Movement))
+            } else if new_changes.len() > 1 {
+                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::Movement))
+            } else {
+                return Ok(new_changes)
+            }
+        }
         let pos = {
             let pos3 = world.base.get_component(cid)?.position;
             Vector2::new(pos3.x, pos3.y)

@@ -1,21 +1,20 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
-use crate::model::commands::GetCommandID;
+use crate::model::{commands::GetCommandID, WorldTick};
 
 use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, system::{movement::MoveCharacter, auto_attack::AutoAttackCommand}, WorldError};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum WorldCommand {
     CharacterComponent(CharacterID, ComponentID, CharacterCommand), // these are for user input
-                                                                    // commands actually
     World(GlobalCommand),
-    Update(UpdateCharacter),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum GlobalCommand {
-    Clear
+    Clear,
+    CreateCharacter(CharacterID, CharacterType),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -42,7 +41,20 @@ impl UpdateCharacter {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FixWorld {
+    pub update: UpdateCharacter,
+    pub ordering: u32,
+    pub tick: WorldTick,
+}
+
+impl GetCommandID for FixWorld {
+    fn command_id(&self) -> crate::model::commands::CommandID {
+        crate::model::commands::CommandID::FixWorld
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Copy)]
 pub enum Priority {
     Walk,
     Cast,

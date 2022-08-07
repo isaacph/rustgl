@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::{model::{player::{server::PlayerCommand, model::{PlayerID, PlayerDataView}, commands::ChatMessage}, Subscription, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
-use super::{commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, RunWorldCommand, WorldCommand}, character::CharacterType, World};
+use super::{commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, GlobalCommand}, character::CharacterType, World};
 
 impl<'a> PlayerCommand<'a> for UpdateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
@@ -16,26 +16,28 @@ impl<'a> PlayerCommand<'a> for UpdateCharacter {
 impl<'a> PlayerCommand<'a> for GenerateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
 
-    fn run(self, tcp_addr: &std::net::SocketAddr, player_id: &PlayerID, server: &mut Server) {
-        let id = match server.world.create_character(&mut server.character_id_gen, self.0) {
-            Ok(id) => {
-                server.connection.send(
-                    Protocol::TCP,
-                    tcp_addr,
-                    &ChatMessage(format!("Character generated, ID: {:?}", id))
-                ).print();
-                id
-            },
-            Err(err) => return server.connection.send(
-                Protocol::TCP,
-                tcp_addr,
-                &ChatMessage(format!("Failed to generate character: {:?}", err))
-            ).print()
-        };
-        match server.player_manager.get_player_mut(player_id) {
-            Some(player) => player.selected_char = Some(id),
-            None => ()
-        }
+    fn run(self, tcp_addr: &std::net::SocketAddr, _: &PlayerID, server: &mut Server) {
+        let command = WorldCommand::World(GlobalCommand::CreateCharacter(server.character_id_gen.generate(), self.0));
+        server.run_world_command(Some(tcp_addr), command);
+        // let id = match server.world.create_character(&mut server.character_id_gen, self.0) {
+        //     Ok(id) => {
+        //         server.connection.send(
+        //             Protocol::TCP,
+        //             tcp_addr,
+        //             &ChatMessage(format!("Character generated, ID: {:?}", id))
+        //         ).print();
+        //         id
+        //     },
+        //     Err(err) => return server.connection.send(
+        //         Protocol::TCP,
+        //         tcp_addr,
+        //         &ChatMessage(format!("Failed to generate character: {:?}", err))
+        //     ).print()
+        // };
+        // match server.player_manager.get_player_mut(player_id) {
+        //     Some(player) => player.selected_char = Some(id),
+        //     None => ()
+        // }
         // if let Some(command) = server.world.make_cmd_update_character(id) {
         //     server.broadcast(
         //         Subscription::World,

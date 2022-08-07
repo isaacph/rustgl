@@ -30,6 +30,7 @@ pub enum CommandID {
     // commands to run on client
     SendAddress,
     PlayerDataPayload,
+    FixWorld,
 
     // commands to run on both
     EchoMessage,

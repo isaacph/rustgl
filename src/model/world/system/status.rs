@@ -4,14 +4,14 @@ use crate::model::{world::{ComponentID, ComponentSystem, character::CharacterID,
 use itertools::Itertools;
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy)]
 pub enum StatusID {
     Idle,
     Walk,
     AutoAttack,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy)]
 pub enum StatusPrio {
     Impossible, // never gets executed
     Lowest,
@@ -27,7 +27,7 @@ impl StatusPrio {
         use StatusPrio::*;
         match *self {
             Impossible => -1,
-            Idle => 0,
+            Lowest => 0,
             //AbilityQueued => 1,
             Ability => 2,
             AbilityOverride => 3,
@@ -45,6 +45,12 @@ pub struct Status {
     pub start: WorldTick, // time when this status was requested
 }
 
+impl Default for StatusComponent {
+    fn default() -> Self {
+        Self { status: idle_status(WorldTick::MIN), runner_up: vec![] }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StatusComponent {
     pub status: Status,
@@ -53,7 +59,7 @@ pub struct StatusComponent {
 
 impl StatusComponent {
     pub fn status_queued(&self, id: StatusID) -> bool {
-        self.status.id == id || self.runner_up.into_iter().any(|r| r.id == id)
+        self.status.id == id || self.runner_up.iter().any(|r| r.id == id)
     }
     pub fn statuses_ahead<'a>(&'a self, id: StatusID) -> Vec<&'a Status> {
         if id == self.status.id {
@@ -90,14 +96,14 @@ impl Component for StatusComponent {
     fn update(&self, update: &ComponentUpdateData) -> Self {
         use ComponentUpdateData::Status;
         use StatusUpdate::*;
-        match *update {
+        match update.clone() {
             Status(RunnerUp(runner_up)) => Self {
-                status: self.status,
+                status: self.status.clone(),
                 runner_up,
             },
             // only one of these two should arrive
-            Status(New(status)) => Self { status, runner_up: self.runner_up },
-            Status(Try(status)) => Self { status, runner_up: self.runner_up },
+            Status(New(status)) => Self { status, runner_up: self.runner_up.clone() },
+            Status(Try(status)) => Self { status, runner_up: self.runner_up.clone() },
             _ => self.clone()
         }
     }
@@ -127,11 +133,11 @@ impl ComponentSystem for StatusSystem {
     fn get_component_id(&self) -> ComponentID {
         ComponentID::Status
     }
-    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
 
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, world: &World, _: &Vec<WorldCommand>, cid: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
         // check if we need an update for timeout
         let StatusComponent { status, runner_up } = world.status.get_component(cid)?;
         if status.timeout <= world.tick || runner_up.iter().any(|r| r.timeout <= world.tick) {
@@ -147,6 +153,20 @@ impl ComponentSystem for StatusSystem {
     }
 
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+        if !world.characters.contains(cid) {
+            // get status resets (called New)
+            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
+                CStatus(New(_)) => true,
+                _ => false,
+            }).cloned().collect();
+            if new_changes.len() == 0 {
+                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Status))
+            } else if new_changes.len() > 1 {
+                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::Status))
+            } else {
+                return Ok(new_changes)
+            }
+        }
         use ComponentUpdateData::Status as CStatus;
         use StatusUpdate::*;
         let cancel = changes.into_iter().filter_map(|data| match *data {
@@ -163,69 +183,53 @@ impl ComponentSystem for StatusSystem {
         // deduplicate prio changes
         .group_by(|change| change.0)
         .into_iter()
-        .flat_map(|(id, group)| group
+        .flat_map(|(_, group)| group
             .max_by_key(|(_, prio)| prio.get_prio())
             .into_iter())
         .collect();
 
-        // get status resets (called New)
-        let new_changes = changes.into_iter().filter_map(|new| match *new {
-            CStatus(New(new)) => Some(new),
-            _ => None,
-        })
-        // remove canceled statuses
-        .filter(|status| cancel.any(|id| status.id == id));
-
-        match new_changes.count() {
-            1 => // prioritize New over other status types
-                Ok(new_changes.map(|new| CStatus(New(new))).collect()),
-            0 =>  {// reduce most prioritized state
-                // get status change requests (called Try)
-                let mut iter = changes.into_iter()
-                    .filter_map(|change| match *change {
-                        CStatus(Try(change)) => Some(change),
-                        _ => None
-                    })
-                    // add current state
-                    .chain(
-                        // add previous state
-                        [world.status.get_component(cid)?.clone().status].into_iter()
-                        // add runner_up state
-                        .chain(world.status.get_component(cid)?.clone().runner_up.into_iter())
-                        // carry out prio changes
-                        .into_iter()
-                        .map(|status| match prio_changes.get(&status.id) {
-                            Some(prio) => Status {
-                                id: status.id,
-                                prio: *prio,
-                                timeout: status.timeout,
-                                start: status.start
-                            },
-                            None => status
-                        }))
-                    // add minimum (idle) state
-                    .chain([idle_status(world.tick)].into_iter())
-                    // remove canceled statuses
-                    .filter(|status| !cancel.any(|id| status.id == id))
-                    // deduplicate by id
-                    .group_by(|status| status.id)
-                    .into_iter()
-                    .flat_map(|(_, group)| group
-                        .max_by_key(|status| (status.start, status.timeout))
-                        .into_iter())
-                    // sort by prio then id
-                    .sorted_unstable_by_key(|status| std::cmp::Reverse(
-                        (status.prio.get_prio(), status.id)
-                    ));
-                let (status, runner_up): (Option<Status>, Vec<Status>) = (iter.next(), iter.collect());
-                Ok(status
-                   .into_iter()
-                   .map(|status| CStatus(Try(status)))
-                   .chain(std::iter::once(CStatus(RunnerUp(runner_up))))
-                   .collect())
-            },
-            _ => // there are multiple New commands
-                Err(WorldError::MultipleNewCommands(*cid, ComponentID::Status))
-        }
+        // get status change requests (called Try)
+        let mut iter = changes.into_iter()
+            .filter_map(|change| match change.clone() {
+                CStatus(Try(change)) => Some(change),
+                _ => None
+            })
+            // add current state
+            .chain(
+                // add previous state
+                [world.status.get_component(cid)?.clone().status].into_iter()
+                // add runner_up state
+                .chain(world.status.get_component(cid)?.clone().runner_up.into_iter())
+                // carry out prio changes
+                .into_iter()
+                .map(|status| match prio_changes.get(&status.id) {
+                    Some(prio) => Status {
+                        id: status.id,
+                        prio: *prio,
+                        timeout: status.timeout,
+                        start: status.start
+                    },
+                    None => status
+                }))
+            // add minimum (idle) state
+            .chain([idle_status(world.tick)].into_iter())
+            // remove canceled statuses
+            .filter(|status| !cancel.clone().any(|id| status.id == id))
+            // deduplicate by id
+            .group_by(|status| status.id)
+            .into_iter()
+            .flat_map(|(_, group)| group
+                .max_by_key(|status| (status.start, status.timeout))
+                .into_iter())
+            // sort by prio then id
+            .sorted_unstable_by_key(|status| std::cmp::Reverse(
+                (status.prio.get_prio(), status.id)
+            ));
+        let (status, runner_up): (Option<Status>, Vec<Status>) = (iter.next(), iter.collect());
+        Ok(status
+           .into_iter()
+           .map(|status| CStatus(Try(status)))
+           .chain(std::iter::once(CStatus(RunnerUp(runner_up))))
+           .collect())
     }
 }

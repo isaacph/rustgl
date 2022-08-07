@@ -48,7 +48,7 @@ fn main() -> Result<()> {
     }
     match args[1].as_str() {
         "test" => {
-            test::test();
+            // test::test();
         },
         "client" => {
             #[cfg(feature = "client")]
@@ -96,63 +96,63 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-pub mod test {
-    use std::f32::consts::PI;
-
-    use nalgebra::{Rotation2, Vector2, Vector3};
-
-    use crate::model::{world::{World, character::{CharacterIDGenerator, CharacterID, CharacterIDRange}, system::{caster_minion, auto_attack::AutoAttackCommand, movement::MoveCharacter}, WorldError, commands::{WorldCommand, CharacterCommand}, component::ComponentID}, TICK_RATE};
-
-    pub fn test() {
-        let mut wa = World::new();
-        let mut wb = World::new();
-        let mut id_gen = CharacterIDGenerator::new();
-        for _ in 0..5 {
-            wa.update(1.0 / TICK_RATE);
-            wb.update(1.0 / TICK_RATE);
-            wa.diff(&wb).iter().for_each(|ln| println!("{}", ln));
-        }
-    }
-
-    pub fn make_mover(id: CharacterID, world: &mut World) -> Result<(), WorldError> {
-        let p = Vector2::new(-10.0, -10.0);
-        let dest = Vector2::new(10.0, 10.0);
-        caster_minion::create(world, &id, Vector3::new(p.x, p.y, 0.0))?;
-        let mvcmd = WorldCommand::CharacterComponent(
-            id,
-            ComponentID::Movement,
-            CharacterCommand::Movement(MoveCharacter {
-                destination: dest,
-                reset: true,
-            })
-        );
-        world.run_command(0, mvcmd)?;
-        Ok(())
-    }
-
-    pub fn make_attack_circle(count: usize, dist: f32, mut id_gen: CharacterIDRange, world: &mut World) -> Result<(), WorldError> {
-        let mut ids: Vec<CharacterID> = vec![];
-        for i in 0..count {
-            let id = id_gen.next_id().ok_or(WorldError::InvalidCommand)?;
-            let p: Vector2<f32> = Rotation2::new(i as f32 / count as f32 * 2.0 * PI)
-                .transform_vector(&Vector2::new(dist, 0.0));
-            caster_minion::create(world, &id, Vector3::new(p.x, p.y, 0.0))?;
-            ids.push(id);
-        }
-        for i in 0..count {
-            let curr = ids[i];
-            let next = ids[(i + 1) % count];
-            let rng = id_gen.take_range(1000);
-            let aacmd = WorldCommand::CharacterComponent(
-                curr,
-                ComponentID::AutoAttack,
-                CharacterCommand::AutoAttack(AutoAttackCommand {
-                    projectile_gen_ids: rng,
-                    target: next,
-                })
-            );
-            world.run_command(0, aacmd)?;
-        }
-        Ok(())
-    }
-}
+// pub mod test {
+//     use std::f32::consts::PI;
+// 
+//     use nalgebra::{Rotation2, Vector2, Vector3};
+// 
+//     use crate::model::{world::{World, character::{CharacterIDGenerator, CharacterID, CharacterIDRange}, system::{caster_minion, auto_attack::AutoAttackCommand, movement::MoveCharacter}, WorldError, commands::{WorldCommand, CharacterCommand}, component::ComponentID}, TICK_RATE};
+// 
+//     pub fn test() {
+//         let mut wa = World::new();
+//         let mut wb = World::new();
+//         let mut id_gen = CharacterIDGenerator::new();
+//         for _ in 0..5 {
+//             wa.update(1.0 / TICK_RATE);
+//             wb.update(1.0 / TICK_RATE);
+//             wa.diff(&wb).iter().for_each(|ln| println!("{}", ln));
+//         }
+//     }
+// 
+//     pub fn make_mover(id: CharacterID, world: &mut World) -> Result<(), WorldError> {
+//         let p = Vector2::new(-10.0, -10.0);
+//         let dest = Vector2::new(10.0, 10.0);
+//         caster_minion::create(world, &id, Vector3::new(p.x, p.y, 0.0))?;
+//         let mvcmd = WorldCommand::CharacterComponent(
+//             id,
+//             ComponentID::Movement,
+//             CharacterCommand::Movement(MoveCharacter {
+//                 destination: dest,
+//                 reset: true,
+//             })
+//         );
+//         world.run_command(0, mvcmd)?;
+//         Ok(())
+//     }
+// 
+//     pub fn make_attack_circle(count: usize, dist: f32, mut id_gen: CharacterIDRange, world: &mut World) -> Result<(), WorldError> {
+//         let mut ids: Vec<CharacterID> = vec![];
+//         for i in 0..count {
+//             let id = id_gen.next_id().ok_or(WorldError::InvalidCommand)?;
+//             let p: Vector2<f32> = Rotation2::new(i as f32 / count as f32 * 2.0 * PI)
+//                 .transform_vector(&Vector2::new(dist, 0.0));
+//             caster_minion::create(world, &id, Vector3::new(p.x, p.y, 0.0))?;
+//             ids.push(id);
+//         }
+//         for i in 0..count {
+//             let curr = ids[i];
+//             let next = ids[(i + 1) % count];
+//             let rng = id_gen.take_range(1000);
+//             let aacmd = WorldCommand::CharacterComponent(
+//                 curr,
+//                 ComponentID::AutoAttack,
+//                 CharacterCommand::AutoAttack(AutoAttackCommand {
+//                     projectile_gen_ids: rng,
+//                     target: next,
+//                 })
+//             );
+//             world.run_command(0, aacmd)?;
+//         }
+//         Ok(())
+//     }
+// }

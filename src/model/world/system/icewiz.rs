@@ -1,14 +1,14 @@
-use nalgebra::Vector3;
+use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update};
-use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo}, base::{CharacterBase, CharacterFlip}, health::CharacterHealth};
+use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate};
+use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IceWiz {
 }
 
 impl Component for IceWiz {
-    fn update(&self, update: &ComponentUpdateData) -> Self {
+    fn update(&self, _update: &ComponentUpdateData) -> Self {
         self.clone()
     }
 }
@@ -17,26 +17,38 @@ impl GetComponentID for IceWiz {
     const ID: ComponentID = ComponentID::IceWiz;
 }
 
-pub fn create(world: &mut World, id: &CharacterID, position: Vector3<f32>) -> Result<(), WorldError> {
+impl Default for IceWiz {
+    fn default() -> Self {
+        Self {  }
+    }
+}
+
+pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result<Vec<Update>, WorldError> {
     let typ = CharacterType::IceWiz;
     let id = *id;
-    world.characters.insert(id);
     // start these two at base stats
     let mut base = *world.info.base.get(&typ)
-        .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Base))?;
-    base.position = position;
-    world.base.components.insert(id, base);
-    world.health.components.insert(id,
-        *world.info.health.get(&typ)
-            .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Health))?
-    );
-    // start the rest at empty states
-    world.movement.components.insert(id, Movement {
-        destination: None
-    });
-    world.icewiz.components.insert(id, IceWiz {});
-    world.auto_attack.components.insert(id, AutoAttack::new());
-    Ok(())
+    .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Base))?;
+    base.position = Vector3::new(position.x, position.y, 0.0);
+    Ok([
+        ComponentUpdateData::Base(CharacterBaseUpdate::New(base)),
+        ComponentUpdateData::Health(CharacterHealthUpdate::New(
+            world.info.health.get(&typ)
+                .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Health))?
+                .health
+        )),
+        ComponentUpdateData::Movement(Movement {
+            destination: None,
+        }),
+        ComponentUpdateData::AutoAttack(AutoAttackUpdate(AutoAttack::new())),
+        ComponentUpdateData::IceWiz,
+    ].into_iter()
+    .map(|cud| Update::Comp(ComponentUpdate {
+        cid: id,
+        data: cud,
+    }))
+    .chain(Some(Update::World(WorldUpdate::NewCharacterID(id))).into_iter())
+    .collect())
 }
 
 pub struct IceWizSystem;
@@ -82,11 +94,11 @@ impl ComponentSystem for IceWizSystem {
     // fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
     //     Err(WorldError::InvalidCommandMapping)
     // }
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
         Ok(vec![])
     }
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
-        Ok(vec![])
+    fn reduce_changes(&self, _: &CharacterID, _: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+        Ok(changes.clone())
     }
 }
 

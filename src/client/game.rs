@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError, CommandRunResult,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, FixWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError, CommandRunResult,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerData, PlayerDataView}}, TICK_RATE, Tick}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -25,6 +25,11 @@ pub enum State {
 }
 
 pub type TickDiff = Tick;
+
+pub enum TickCommand {
+    WorldCommand(WorldCommand),
+    FixWorld(FixWorld),
+}
 
 pub struct Game<'a> {
     pub window_size: Vector2<i32>,
@@ -47,7 +52,7 @@ pub struct Game<'a> {
     pub clicked_hovered: bool,
     pub tick_current: Tick,
     pub tick_base: Tick,
-    pub tick_commands: HashMap<Tick, Vec<(u32, WorldCommand)>>,
+    pub tick_commands: HashMap<Tick, Vec<(u32, TickCommand)>>,
     pub tick_count: HashMap<Tick, HashMap<TickDiff, u32>>,
     pub players: PlayerData,
 }

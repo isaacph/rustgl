@@ -1,21 +1,20 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 use crate::model::world::commands::{WorldCommand, RunWorldCommand};
-use crate::model::{Subscription, PrintError, TICK_RATE, Tick};
+use crate::model::{Subscription, PrintError, TICK_RATE};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
-use crate::model::world::{World, WorldError, CommandRunResult};
+use crate::model::world::{World, WorldError};
 use crate::model::world::character::CharacterIDGenerator;
 use crate::networking::Protocol;
 use crate::networking::server::{Server as Connection, ServerUpdate};
 use crate::server::commands::{SendCommands, execute_server_command};
-use crate::test;
 use self::update_loop::UpdateLoop;
 
 pub mod update_loop {
     use std::time::{Duration, Instant};
-    use crate::model::{world::{World, commands::{RunWorldCommand, WorldCommand}}, commands::MakeBytes, TICK_RATE};
+    use crate::model::{world::{World, commands::FixWorld}, commands::MakeBytes, TICK_RATE, WorldTick};
 
     pub struct UpdateLoop {
         last_update: Option<Instant>,
@@ -32,7 +31,7 @@ pub mod update_loop {
             }
         }
 
-        pub fn send_next_update(&mut self, world: &World, now: Instant, tick: i32, tick_ordering: &mut u32) -> Vec<Box<[u8]>> {
+        pub fn send_next_update(&mut self, world: &World, now: Instant, tick: WorldTick, tick_ordering: &mut u32) -> Vec<Box<[u8]>> {
             let should_update = match self.last_update {
                 None => true,
                 Some(time) => now - time > self.update_interval
@@ -44,15 +43,24 @@ pub mod update_loop {
                     world.characters.iter()
                         .filter_map(|cid| world.make_cmd_update_character(*cid))
                         .filter_map(|cmd| match
-                                    (&RunWorldCommand {
-                                        command: WorldCommand::Update(cmd),
+                                    (&FixWorld {
+                                        update: cmd,
                                         tick,
                                         ordering: {
                                             let x = *tick_ordering;
                                             *tick_ordering += 1;
                                             x
-                                        }
+                                        },
                                     })
+                                    // (&RunWorldCommand {
+                                    //     command: WorldCommand::Update(cmd),
+                                    //     tick,
+                                    //     ordering: {
+                                    //         let x = *tick_ordering;
+                                    //         *tick_ordering += 1;
+                                    //         x
+                                    //     }
+                                    // })
                         .make_bytes() {
                             Ok(bytes) => Some(bytes),
                             Err(err) => {
@@ -74,8 +82,8 @@ pub struct Server {
     pub character_id_gen: CharacterIDGenerator,
     pub player_manager: PlayerManager,
     pub connection: Connection,
-    pub tick: Tick,
     pub tick_ordering: u32,
+    pub world_commands: Vec<WorldCommand>,
 }
 
 
@@ -89,20 +97,20 @@ impl Server {
                 character_id_gen: CharacterIDGenerator::new(),
                 player_manager: PlayerManager::new(),
                 connection: Connection::init(ports)?,
-                tick: 0,
                 tick_ordering: 0,
+                world_commands: vec![],
             }
         };
         let mut update_loop = UpdateLoop::init(&server.world);
 
-        match test::make_attack_circle(10, 10.0, server.character_id_gen.generate_range(100000), &mut server.world) {
-            Ok(()) => (),
-            Err(err) => println!("??????? {:?}", err)
-        }
-        match test::make_mover(server.character_id_gen.generate(), &mut server.world) {
-            Ok(()) => (),
-            Err(err) => println!("??????? {:?}", err)
-        }
+        // match test::make_attack_circle(10, 10.0, server.character_id_gen.generate_range(100000), &mut server.world) {
+        //     Ok(()) => (),
+        //     Err(err) => println!("??????? {:?}", err)
+        // }
+        // match test::make_mover(server.character_id_gen.generate(), &mut server.world) {
+        //     Ok(()) => (),
+        //     Err(err) => println!("??????? {:?}", err)
+        // }
 
         let mut tick_timer = 0.0;
         let mut last_time = std::time::Instant::now();
@@ -164,7 +172,7 @@ impl Server {
                 let delta_time = 1.0 / TICK_RATE;
                 tick_timer -= delta_time;
 
-                let update_data = update_loop.send_next_update(&server.world, current_time, server.tick, &mut server.tick_ordering);
+                let update_data = update_loop.send_next_update(&server.world, current_time, server.world.tick, &mut server.tick_ordering);
                 server.broadcast_data(Subscription::World, Protocol::UDP, &update_data);
 
                 for (protocol, addr, message) in messages.drain(0..messages.len()) {
@@ -178,15 +186,28 @@ impl Server {
                     }
                 }
 
-                server.world.update(delta_time);
+                let mut t_o = server.tick_ordering;
+                for command in server.world_commands.clone() {
+                    server.broadcast(Subscription::World, Protocol::UDP, &RunWorldCommand {
+                        command: command.clone(),
+                        tick: server.world.tick,
+                        ordering: {
+                            let ordering = t_o;
+                            t_o += 1;
+                            ordering
+                        },
+                    });
+                }
+                server.tick_ordering = t_o;
+                server.world.update(&server.world_commands, delta_time);
+                server.world_commands.clear();
                 for error in server.world.errors.drain(0..server.world.errors.len()) {
                     match error {
-                        WorldError::Info(st) => println!("Tick {}, {}", server.tick, st),
+                        WorldError::Info(st) => println!("Tick {}, {}", server.world.tick, st),
                         _ => println!("Server world error: {:?}", error),
                     }
                 }
 
-                server.tick += 1;
                 server.tick_ordering = 0;
             }
 
@@ -226,32 +247,40 @@ impl Server {
     }
 
     pub fn run_world_command(&mut self, addr: Option<&SocketAddr>, command: WorldCommand) {
-        let order = self.tick_ordering;
-        self.tick_ordering += 1;
-        match match self.world.run_command(self.tick, command.clone()) {
-            Ok(status) => match status {
-                CommandRunResult::Valid | CommandRunResult::ValidError(_) => {
-                    if let CommandRunResult::ValidError(err) = status {
-                        self.world.errors.push(err);
-                    }
-                    self.broadcast(Subscription::World, Protocol::UDP, &RunWorldCommand {
-                        tick: self.tick,
-                        command,
-                        ordering: order
-                    });
-                    Ok(())
-                },
-                CommandRunResult::Invalid(err) => Err(err),
-            },
-            Err(err) => Err(err)
-        } {
-            Ok(()) => (),
-            Err(WorldError::NoopCommand) => (), // the command did nothing
-            // Err(WorldError::IllegalInterrupt(_)) => (), // we are ignoring interrupts
-            Err(err) => match addr {
-                Some(addr) => return self.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Error running world command: {:?}", err))).print(),
-                None => println!("Error running anonymous world command: {:?}", err),
+        let res = self.world.validate_command(&command);
+        if res.is_ok() {
+            self.world_commands.push(command);
+        } else {
+            match addr {
+                Some(addr) =>
+                    self.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Error running wcmd: {:?}", res))).print(),
+                None => println!("Error running wcmd locally: {:?}", res)
             }
         }
+        // match match self.world.run_command(self.tick, command.clone()) {
+        //     Ok(status) => match status {
+        //         CommandRunResult::Valid | CommandRunResult::ValidError(_) => {
+        //             if let CommandRunResult::ValidError(err) = status {
+        //                 self.world.errors.push(err);
+        //             }
+        //             self.broadcast(Subscription::World, Protocol::UDP, &RunWorldCommand {
+        //                 tick: self.tick,
+        //                 command,
+        //                 ordering: order
+        //             });
+        //             Ok(())
+        //         },
+        //         CommandRunResult::Invalid(err) => Err(err),
+        //     },
+        //     Err(err) => Err(err)
+        // } {
+        //     Ok(()) => (),
+        //     Err(WorldError::NoopCommand) => (), // the command did nothing
+        //     // Err(WorldError::IllegalInterrupt(_)) => (), // we are ignoring interrupts
+        //     Err(err) => match addr {
+        //         Some(addr) => return self.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Error running world command: {:?}", err))).print(),
+        //         None => println!("Error running anonymous world command: {:?}", err),
+        //     }
+        // }
     }
 }

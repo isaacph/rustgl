@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
+use itertools::Itertools;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
 use super::{character::CharacterID, WorldError, system::{base::CharacterBaseUpdate, projectile::ProjectileUpdate, status::StatusUpdate, movement::Movement, auto_attack::AutoAttackUpdate}, system::health::CharacterHealthUpdate};
@@ -25,6 +26,8 @@ pub enum ComponentUpdateData {
     Status(StatusUpdate),
     Movement(Movement),
     AutoAttack(AutoAttackUpdate),
+    CasterMinion,
+    IceWiz,
 }
 
 impl ComponentUpdateData {
@@ -36,6 +39,8 @@ impl ComponentUpdateData {
             ComponentUpdateData::Status(_) => ComponentID::Status,
             ComponentUpdateData::Movement(_) => ComponentID::Movement,
             ComponentUpdateData::AutoAttack(_) => ComponentID::AutoAttack,
+            ComponentUpdateData::CasterMinion => ComponentID::CasterMinion,
+            ComponentUpdateData::IceWiz => ComponentID::IceWiz,
         }
     }
 }
@@ -56,7 +61,7 @@ pub trait GetComponentID {
     const ID: ComponentID;
 }
 
-pub trait Component: GetComponentID {
+pub trait Component: GetComponentID + Default {
     fn update(&self, update: &ComponentUpdateData) -> Self;
 }
 
@@ -130,11 +135,13 @@ impl<T: Serialize + GetComponentID + DeserializeOwned + Component> ComponentStor
         let err: Vec<WorldError> = updates.iter()
         .filter_map(|comp| self.get_component(&comp.cid).err())
         .collect();
-        self.components.extend(
-            updates.iter()
-            .filter_map(|update| self.components
+        let updates = updates.iter()
+            .map(|update| (update.cid, self.components
                 .get(&update.cid)
-                .map(|comp| (update.cid, comp.update(&update.data)))));
+                .unwrap_or(&Default::default())
+                .update(&update.data))
+            ).collect_vec();
+        self.components.extend(updates.into_iter());
         if err.len() > 0 {
             Err(err)
         } else {
@@ -164,5 +171,4 @@ impl<T> ComponentStorageContainer<T> for ComponentStorage<T>
         }
     }
 }
-
 

@@ -25,6 +25,16 @@ impl CharacterFlip {
             Self::Right => 1.0
         }
     }
+
+    pub fn combine(&self, other: &CharacterFlip) -> CharacterFlip {
+        use CharacterFlip::*;
+        match (*self, *other) {
+            (Left, Left) => Left,
+            (Right, Right) => Right,
+            (Right, Left) => Right,
+            (Left, Right) => Right
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -43,7 +53,7 @@ pub struct CharacterBase {
 impl Component for CharacterBase {
     fn update(&self, change: &ComponentUpdateData) -> Self {
         let mut next = self.clone();
-        match *change {
+        match change.clone() {
             ComponentUpdateData::Base(change) => match change {
                 CharacterBaseUpdate::New(component) => next = component,
                 CharacterBaseUpdate::Update(_, update) => match update {
@@ -57,6 +67,22 @@ impl Component for CharacterBase {
             _ => (),
         }
         next
+    }
+}
+
+impl Default for CharacterBase {
+    fn default() -> Self {
+        Self {
+            ctype: CharacterType::Unknown,
+            position: Vector3::default(),
+            center_offset: Vector3::default(),
+            speed: 0.0,
+            attack_damage: 0.0,
+            range: 0.0,
+            attack_speed: 0.0,
+            flip: CharacterFlip::Right,
+            targetable: true,
+        }
     }
 }
 
@@ -141,6 +167,12 @@ impl CharacterBaseUpdateSwitch {
             _ => None,
         }
     }
+    pub fn flip(self) -> Option<CharacterFlip> {
+        match self {
+            CharacterBaseUpdateSwitch::FlipUpdate(f) => Some(f),
+            _ => None,
+        }
+    }
 }
 
 impl GetComponentID for CharacterBase {
@@ -164,17 +196,31 @@ impl ComponentSystem for BaseSystem {
     //     Err(WorldError::InvalidCommandMapping)
     // }
 
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
+        Ok(vec![])
+    }
+
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
 
-    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {
-        Ok(())
-    }
-
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
-        let changes = changes.into_iter()
-        .filter_map(|update| match *update { // only allow base type updates
+        if !world.characters.contains(cid) {
+            // get status resets (called New)
+            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
+                ComponentUpdateData::Base(CharacterBaseUpdate::New(_)) => true,
+                _ => false,
+            }).cloned().collect();
+            if new_changes.len() == 0 {
+                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::AutoAttack))
+            } else if new_changes.len() > 1 {
+                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack))
+            } else {
+                return Ok(new_changes)
+            }
+        }
+        let mut changes = changes.into_iter()
+        .filter_map(|update| match update.clone() { // only allow base type updates
             ComponentUpdateData::Base(update) => Some(update),
             _ => None,
         });
@@ -188,16 +234,24 @@ impl ComponentSystem for BaseSystem {
                     CharacterBaseUpdate::Update(prio, sw) => Some((prio, sw)),
                     _ => None,
                 })
-                .fold([None, None], |[flip, mv]: [Option<(Priority, CharacterBaseUpdateSwitch)>; 2], (prio, sw)| match sw {
+                .fold([None, None], |[flip, mv]: [Option<(Priority, CharacterBaseUpdateSwitch)>; 2], (prio, sw)| match sw.clone() {
                 // this actually reduces updates (besides the type that overrides the component)
-                    CharacterBaseUpdateSwitch::FlipUpdate(update) => flip.map_or([Some((prio, sw)), mv],
+                    CharacterBaseUpdateSwitch::FlipUpdate(update) => flip.clone().map_or([Some((prio, sw.clone())), mv.clone()],
                     // flip updates take highest or equal priority, and override each other
-                    |(flip_prio, flip_sw)| if prio >= flip_prio {
+                    |(flip_prio, flip_sw)| if prio > flip_prio {
                         [Some((prio, sw)), mv]
+                    } else if prio == flip_prio {
+                        [Some((
+                            prio,
+                            CharacterBaseUpdateSwitch::FlipUpdate(
+                                flip_sw.flip()
+                                .unwrap_or(CharacterFlip::Right)
+                                .combine(&update)))),
+                        mv]
                     } else {
                         [flip, mv]
                     }),
-                    CharacterBaseUpdateSwitch::PositionUpdate(update) => mv.map_or([flip, Some((prio, sw))],
+                    CharacterBaseUpdateSwitch::PositionUpdate(_update) => mv.clone().map_or([flip.clone(), Some((prio, sw.clone()))],
                     // move updates take highest priority, or if equal priority then combine
                     |(mv_prio, mv_sw)| if prio > mv_prio {
                         [flip, Some((prio, sw))]
@@ -205,8 +259,8 @@ impl ComponentSystem for BaseSystem {
                         [flip, Some((
                             prio,
                             // combine call
-                            sw.pos().zip(mv_sw.pos())
-                            .map_or(mv_sw, |(pos, mv_pos)| CharacterBaseUpdateSwitch::PositionUpdate(pos.combine(mv_pos)))))]
+                            sw.pos().zip(mv_sw.clone().pos())
+                            .map_or(mv_sw.clone(), |(pos, mv_pos)| CharacterBaseUpdateSwitch::PositionUpdate(pos.combine(mv_pos)))))]
                     } else {
                         [flip, mv]
                     }),

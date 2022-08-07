@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{networking::Protocol, client::{game::Game, commands::ClientCommand}, model::world::commands::WorldCommand};
+use crate::{networking::Protocol, client::{game::{Game, TickCommand}, commands::ClientCommand}, model::world::commands::WorldCommand};
 
 use super::{commands::{ClearWorld, RunWorldCommand}, World};
 
@@ -26,24 +26,24 @@ impl<'a> ClientCommand<'a> for RunWorldCommand {
 
         // sum up relative ticks to find which is most popular
         let offset = match self.command {
-            WorldCommand::Update(_) => 1,
             _ => 0,
         };
         let server_tick_slot = game.tick_count.entry(game.tick_base + offset).or_insert_with(HashMap::new);
         *server_tick_slot.entry(self.tick - game.tick_base + offset).or_insert(0) += 1;
 
         // add command to its correct tick
+        let command = TickCommand::WorldCommand(self.command);
         match game.tick_commands.get_mut(&self.tick) {
             Some(commands) => {
                 commands.insert(
                     commands.iter()
                         .position(|(other_ord, _)| self.ordering < *other_ord)
                         .unwrap_or(commands.len()),
-                    (self.ordering, self.command)
+                    (self.ordering, command)
                 );
             },
             None => {
-                game.tick_commands.insert(self.tick, vec![(self.ordering, self.command)]);
+                game.tick_commands.insert(self.tick, vec![(self.ordering, command)]);
             },
         }
     }

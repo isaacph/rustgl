@@ -7,6 +7,10 @@ impl CharacterID {
     pub fn get_num(&self) -> u64 {
         self.0
     }
+
+    pub fn error() -> Self {
+        Self(u64::MIN)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -18,7 +22,7 @@ pub struct CharacterIDRange(u64, u64);
 impl CharacterIDRange {
     pub fn split_id(&self) -> (Option<CharacterID>, Self) {
         let mut split = self.clone();
-        (self.next_id(), split)
+        (split.next_id(), split)
     }
     pub fn next_id(&mut self) -> Option<CharacterID> {
         if self.0 < self.1 {
@@ -63,6 +67,7 @@ impl Default for CharacterIDGenerator {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum CharacterType {
+    Unknown,
     IceWiz,
     CasterMinion,
     Projectile,

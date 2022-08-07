@@ -16,12 +16,21 @@ pub struct ProjectileUpdate(Projectile);
 
 impl Component for Projectile {
     fn update(&self, update: &ComponentUpdateData) -> Self {
-        self.clone()
+        match update.clone() {
+            ComponentUpdateData::Projectile(ProjectileUpdate(p)) => p,
+            _ => self.clone(),
+        }
     }
 }
 
 impl GetComponentID for Projectile {
     const ID: ComponentID = ComponentID::Projectile;
+}
+
+impl Default for Projectile {
+    fn default() -> Self {
+        Self { origin: CharacterID::error(), target: CharacterID::error() }
+    }
 }
 
 pub struct ProjectileCreationInfo {
@@ -103,7 +112,7 @@ impl WorldSystem for ProjectileSystem {
 // return Some(x) where x is the remaining time to spend on the attack, after consuming necessary
 // time for walking
 pub fn fly_to(world: &World, cid: &CharacterID, dest: &Vector3<f32>, range: f32, delta_time: f32) -> Result<(bool, Vec<Update>), WorldError> {
-    let base = world.base.get_component_mut(cid)?;
+    let base = world.base.get_component(cid)?;
     let speed = base.speed;
     let max_travel = speed * delta_time;
     let dir = dest - base.position;
@@ -117,7 +126,7 @@ pub fn fly_to(world: &World, cid: &CharacterID, dest: &Vector3<f32>, range: f32,
     let flip = CharacterFlip::from_dir(&Vector2::new(dir.x, dir.y)).unwrap_or(base.flip);
     if f32::max(dist - max_travel, 0.0) <= range {
         let travel = f32::max(dist - range, 0.0);
-        let remaining_time = delta_time - travel / speed;
+        let _remaining_time = delta_time - travel / speed;
         let offset = dir / dist * travel;
         // base.position += offset;
         Ok((true, vec![
@@ -139,11 +148,11 @@ impl ComponentSystem for ProjectileSystem {
         ComponentID::Projectile
     }
 
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, world: &World, _commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         let target = world.projectile.get_component(&cid)?.target;
         if world.characters.get(&target).is_none() {
-            world.erase_character(&cid)?;
-            return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
+            return Ok(vec![Update::World(WorldUpdate::RemoveCharacterID(*cid))]);
+            // return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
         }
         let base = world.base.get_component(&target)?;
         let dest = base.position + base.center_offset;
@@ -159,7 +168,6 @@ impl ComponentSystem for ProjectileSystem {
             //     world.erase_character(&target)?;
             // }
             Ok([
-               Some(Update::World(WorldUpdate::RemoveCharacterID(*cid))),
                Some(Update::World(WorldUpdate::RemoveCharacterID(*cid))),
                if health.health - damage <= 0.0 {
                    Some(Update::World(WorldUpdate::RemoveCharacterID(target)))
@@ -179,6 +187,20 @@ impl ComponentSystem for ProjectileSystem {
     }
     
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+        if !world.characters.contains(cid) {
+            // get status resets (called New)
+            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
+                ComponentUpdateData::Projectile(ProjectileUpdate(_)) => true,
+                _ => false,
+            }).cloned().collect();
+            if new_changes.len() == 0 {
+                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Status))
+            } else if new_changes.len() > 1 {
+                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::Status))
+            } else {
+                return Ok(new_changes)
+            }
+        }
         if changes.len() > 1 {
             Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Projectile))
         } else {
