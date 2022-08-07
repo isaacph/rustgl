@@ -16,8 +16,9 @@ impl<'a> PlayerCommand<'a> for UpdateCharacter {
 impl<'a> PlayerCommand<'a> for GenerateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
 
-    fn run(self, tcp_addr: &std::net::SocketAddr, _: &PlayerID, server: &mut Server) {
-        let command = WorldCommand::World(GlobalCommand::CreateCharacter(server.character_id_gen.generate(), self.0));
+    fn run(self, tcp_addr: &std::net::SocketAddr, id: &PlayerID, server: &mut Server) {
+        let cid = server.character_id_gen.generate();
+        let command = WorldCommand::World(GlobalCommand::CreateCharacter(cid, self.0));
         server.run_world_command(Some(tcp_addr), command);
         // let id = match server.world.create_character(&mut server.character_id_gen, self.0) {
         //     Ok(id) => {
@@ -34,10 +35,10 @@ impl<'a> PlayerCommand<'a> for GenerateCharacter {
         //         &ChatMessage(format!("Failed to generate character: {:?}", err))
         //     ).print()
         // };
-        // match server.player_manager.get_player_mut(player_id) {
-        //     Some(player) => player.selected_char = Some(id),
-        //     None => ()
-        // }
+        match server.player_manager.get_player_mut(id) {
+            Some(player) => player.selected_char = Some(cid),
+            None => ()
+        }
         // if let Some(command) = server.world.make_cmd_update_character(id) {
         //     server.broadcast(
         //         Subscription::World,

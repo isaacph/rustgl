@@ -42,7 +42,7 @@ use self::{
             CharacterBase,
             BaseSystem
         },
-        health::CharacterHealth,
+        health::{CharacterHealth, HealthSystem},
         status::{StatusSystem, StatusComponent},
     }
 };
@@ -210,6 +210,7 @@ impl World {
             Box::new(CasterMinionSystem) as Box<dyn ComponentSystem>,
             Box::new(BaseSystem) as Box<dyn ComponentSystem>,
             Box::new(StatusSystem) as Box<dyn ComponentSystem>,
+            Box::new(HealthSystem) as Box<dyn ComponentSystem>,
         ] {
             systems.insert(system.get_component_id(), system);
         }
@@ -239,7 +240,8 @@ impl World {
         }
     }
 
-    pub fn update(&mut self, commands: &Vec<WorldCommand>, delta_time: f32) {
+    pub fn update(&self, commands: &Vec<WorldCommand>, delta_time: f32) -> Self {
+        println!("Update world tick {}", self.tick);
         let commands = commands.clone();
         let info = self.info.clone();
         let mut sorted: Vec<CharacterID> = self.characters.clone().into_iter().collect();
@@ -263,7 +265,7 @@ impl World {
                 .map_or_else(
                     |err| vec![Err(err)],
                     |res| res.into_iter()
-                        .map(|res| Ok(res))
+                        .map(Ok)
                         .collect())
                 .into_iter())
             .chain(self.run_world_commands(commands.iter()
@@ -273,23 +275,22 @@ impl World {
                 }).collect())
                 .map_or_else(|err| vec![Err(err)], |res| res))
             .collect();
-        let component_updates: Vec<ComponentUpdate> = update_res.iter()
-            .flat_map(|res| res.clone().ok().into_iter()
-                .filter_map(|res| match res {
-                    Update::Comp(c) => Some(c),
-                    _ => None
-                })).collect();
+        
         let world_updates: Vec<WorldUpdate> = update_res.iter()
             .flat_map(|res| res.clone().ok().into_iter()
                 .filter_map(|res| match res {
                     Update::World(c) => Some(c),
                     _ => None
                 })).collect();
-        let update_errors = update_res.into_iter().filter_map(|res| res.clone().err());
+        let update_errors = update_res.iter().filter_map(|res| res.clone().err());
         let mut reduce_errors = vec![];
         let mut reduce_errors_2 = vec![];
-        let reduced: Vec<Update> = component_updates
-            .into_iter()
+        let reduced: Vec<Update> = update_res.iter()
+            .flat_map(|res| res.clone().ok().into_iter()
+                .filter_map(|res| match res {
+                    Update::Comp(c) => Some(c),
+                    _ => None
+                }))
             .group_by(|update| update.data.component_id())
             .into_iter()
             .flat_map(|(comp_id, updates)| match self.info.component_systems.get(&comp_id) {
@@ -328,6 +329,7 @@ impl World {
                 }
             }.into_iter())
             .collect();
+        // println!("Reduced: {:?}", reduced);
         reduce_errors.extend(reduce_errors_2);
         // let reduced: Vec<Update> = self.info.component_systems.iter()
         //     .flat_map(|(comp_id, system)| self.get_characters(comp_id).iter()
@@ -360,9 +362,10 @@ impl World {
         let mut world = self.clone();
         world.errors.extend(update_errors);
         world.errors.extend(reduce_errors);
-        world.errors.extend(reduced.iter()
+        let world_update_errors = reduced.iter()
             .filter_map(|x| match x { Update::World(x) => Some(x), _ => None })
-            .filter_map(|update| update.apply_update(self).err()));
+            .filter_map(|update| update.apply_update(&mut world).err()).collect_vec();
+        world.errors.extend(world_update_errors);
         let change_errors = ComponentID::iter()
             .flat_map(|comp_id| world
                 .get_storage_mut(&comp_id)
@@ -372,23 +375,24 @@ impl World {
                     .cloned()
                     .collect())
                 .err()
-                .unwrap_or(vec![])).collect_vec();
+                .unwrap_or_default()).collect_vec();
         world.errors.extend(change_errors);
-        self.tick += 1;
+        world.tick += 1;
+        world
     }
 
     pub fn validate_command(&self, command: &WorldCommand) -> Result<(), WorldError> {
         match command {
             WorldCommand::World(GlobalCommand::CreateCharacter(cid, typ)) => {
-                match (self.characters.contains(&cid), typ) {
+                match (self.characters.contains(cid), typ) {
                     (true, _) => Err(WorldError::CharacterIDAlreadyExists(*cid)),
                     (false, CharacterType::IceWiz) | (false, CharacterType::CasterMinion) => Ok(()),
                     _ => Err(WorldError::NotImplemented),
                 }
             },
-            WorldCommand::CharacterComponent(cid, comp_id, command) => match self.info.component_systems.get(&comp_id) {
+            WorldCommand::CharacterComponent(cid, comp_id, command) => match self.info.component_systems.get(comp_id) {
                 None => Err(WorldError::InvalidCommandMapping),
-                Some(system) => system.validate_character_command(self, &cid, &command)
+                Some(system) => system.validate_character_command(self, cid, command)
             },
             WorldCommand::World(GlobalCommand::Clear) => Err(WorldError::NotImplemented),
         }
@@ -404,27 +408,24 @@ impl World {
                     CharacterType::IceWiz => icewiz::create(self, &id, Vector2::default()),
                     CharacterType::CasterMinion => caster_minion::create(self, &id, Vector2::default()),
                 }
-                .map_or_else(|err| vec![Err(err)], |updates| updates.into_iter().map(|u| Ok(u)).collect())
+                .map_or_else(|err| vec![Err(err)], |updates| updates.into_iter().map(Ok).collect())
             })
         }
+        // println!("World commands: {:?}", updates);
         Ok(updates)
     }
 
     pub fn reduce_world_updates(&self, update: Vec<WorldUpdate>) -> Result<Vec<Result<WorldUpdate, WorldError>>, WorldError> {
         Ok(update.into_iter()
-            .filter_map(|u| match u {
-                WorldUpdate::NewCharacterID(id) | WorldUpdate::RemoveCharacterID(id) => Some((id, u)),
+            .map(|u| match u {
+                WorldUpdate::NewCharacterID(id) | WorldUpdate::RemoveCharacterID(id) => (id, u),
                 // _ => None,
             })
-            .group_by(|(id, _)| id.clone()).into_iter()
+            .group_by(|(id, _)| *id).into_iter()
             .flat_map(|(id, group)| {
                 let group = group.collect_vec();
-                let add = group.iter().any(|(_, u)| match u {
-                    WorldUpdate::NewCharacterID(_) => true, _ => false,
-                });
-                let remove = group.iter().any(|(_, u)| match u {
-                    WorldUpdate::RemoveCharacterID(_) => true, _ => false,
-                });
+                let add = group.iter().any(|(_, u)| matches!(u, WorldUpdate::NewCharacterID(_)));
+                let remove = group.iter().any(|(_, u)| matches!(u, WorldUpdate::RemoveCharacterID(_)));
                 if add && remove {
                     vec![Err(WorldError::SimultaneousAddRemoveCharacterID(id))]
                 } else if add {

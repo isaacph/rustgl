@@ -30,11 +30,11 @@ pub struct UpdateCharacter {
 }
 
 impl UpdateCharacter {
-    pub fn update_character(mut self, world: &mut World) -> Result<(), WorldError> {
+    pub fn update_character(&self, world: &mut World) -> Result<(), WorldError> {
         // let x: Vec<ComponentID> = self.components.keys().copied().collect();
         // println!("Updating character, {:?}", x);
         world.characters.insert(self.id);
-        for (cid, data) in self.components.drain() {
+        for (cid, data) in self.components.clone().drain() {
             world.update_component(&self.id, &cid, data);
         }
         Ok(())

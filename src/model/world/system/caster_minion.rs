@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::model::world::{component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, World, character::{CharacterID, CharacterType}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate};
 
-use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}};
+use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}, status::{StatusUpdate, idle_status}};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CasterMinion {
@@ -95,7 +95,8 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
             destination: None,
         }),
         ComponentUpdateData::AutoAttack(AutoAttackUpdate(AutoAttack::new())),
-        ComponentUpdateData::CasterMinion
+        ComponentUpdateData::CasterMinion,
+        ComponentUpdateData::Status(StatusUpdate::New(idle_status(world.tick)))
     ].into_iter()
     .map(|cud| Update::Comp(ComponentUpdate {
         cid: id,

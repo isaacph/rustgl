@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::{Display, Debug}};
 
 use itertools::Itertools;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
@@ -83,15 +83,15 @@ pub trait ComponentStorageContainer<T: Sized + Serialize>: ComponentStorageCommo
 }
 
 #[derive(Debug, Clone)]
-pub struct ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component {
+pub struct ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component + Debug {
     pub components: HashMap<CharacterID, T>
 }
 
-impl<T> GetComponentID for ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component {
+impl<T> GetComponentID for ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component + Debug {
     const ID: ComponentID = T::ID;
 }
 
-impl<T> ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component {
+impl<T> ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component + Debug {
     pub fn new() -> ComponentStorage<T> {
         ComponentStorage { components: HashMap::new() }
     }
@@ -101,14 +101,14 @@ impl<T> ComponentStorage<T> where T: Sized + Serialize + DeserializeOwned + GetC
 }
 
 impl<T> Default for ComponentStorage<T>
-where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component
+where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component + Debug
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Serialize + GetComponentID + DeserializeOwned + Component> ComponentStorageCommon for ComponentStorage<T> {
+impl<T: Serialize + GetComponentID + DeserializeOwned + Component + Debug> ComponentStorageCommon for ComponentStorage<T> {
     fn get_characters(&self) -> Vec<CharacterID> {
         self.components.keys().copied().collect()
     }
@@ -132,26 +132,30 @@ impl<T: Serialize + GetComponentID + DeserializeOwned + Component> ComponentStor
         self.components.remove(cid);
     }
     fn update(&mut self, updates: &Vec<ComponentUpdate>) -> Result<(), Vec<WorldError>> {
-        let err: Vec<WorldError> = updates.iter()
-        .filter_map(|comp| self.get_component(&comp.cid).err())
-        .collect();
+        // let err: Vec<WorldError> = updates.iter()
+        // .filter_map(|comp| self.get_component(&comp.cid).err())
+        // .collect();
         let updates = updates.iter()
             .map(|update| (update.cid, self.components
                 .get(&update.cid)
                 .unwrap_or(&Default::default())
                 .update(&update.data))
             ).collect_vec();
-        self.components.extend(updates.into_iter());
-        if err.len() > 0 {
-            Err(err)
-        } else {
-            Ok(())
+        if !updates.is_empty() {
+            println!("Updating component: {:?}", updates);
         }
+        self.components.extend(updates.into_iter());
+        // if !err.is_empty() {
+        //     Err(err)
+        // } else {
+        //     Ok(())
+        // }
+        Ok(())
     }
 }
 
 impl<T> ComponentStorageContainer<T> for ComponentStorage<T>
-        where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component {
+        where T: Sized + Serialize + DeserializeOwned + GetComponentID + Component + Debug {
     fn get_storage(&self) -> &HashMap<CharacterID, T> {
         &self.components
     }

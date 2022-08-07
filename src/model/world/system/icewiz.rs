@@ -1,9 +1,9 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate};
+use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, system::status::{StatusUpdate, Status, idle_status}};
 use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct IceWiz {
 }
 
@@ -17,12 +17,6 @@ impl GetComponentID for IceWiz {
     const ID: ComponentID = ComponentID::IceWiz;
 }
 
-impl Default for IceWiz {
-    fn default() -> Self {
-        Self {  }
-    }
-}
-
 pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result<Vec<Update>, WorldError> {
     let typ = CharacterType::IceWiz;
     let id = *id;
@@ -30,6 +24,7 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
     let mut base = *world.info.base.get(&typ)
     .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Base))?;
     base.position = Vector3::new(position.x, position.y, 0.0);
+    println!("Running create for cid {:?}", id);
     Ok([
         ComponentUpdateData::Base(CharacterBaseUpdate::New(base)),
         ComponentUpdateData::Health(CharacterHealthUpdate::New(
@@ -42,6 +37,7 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
         }),
         ComponentUpdateData::AutoAttack(AutoAttackUpdate(AutoAttack::new())),
         ComponentUpdateData::IceWiz,
+        ComponentUpdateData::Status(StatusUpdate::New(idle_status(world.tick)))
     ].into_iter()
     .map(|cud| Update::Comp(ComponentUpdate {
         cid: id,

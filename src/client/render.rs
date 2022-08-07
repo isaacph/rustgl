@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound::{Included, Unbounded};
 use nalgebra::{Vector2, Vector4, Similarity3, Vector3, Rotation2};
+use crate::model::TICK_RATE;
 use crate::model::player::model::PlayerDataView;
 use crate::model::world::character::CharacterType;
-use crate::model::world::component::CharacterFlip;
 use crate::model::world::system::auto_attack::AutoAttackFireEvent;
+use crate::model::world::system::base::CharacterFlip;
 use crate::{model::world::character::CharacterID, graphics::{self, TextureOptions}};
 use super::camera::CameraMatrix;
 use super::game::Game;
@@ -256,7 +257,7 @@ impl Render {
                         info.projectile_offset.y,
                         info.projectile_offset.z) +
                     Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0);
-                let timer = execution.timer;
+                let timer = (game.world.tick - execution.time_start) as f32 / TICK_RATE;
                 let fire_time = info.fsm.get_event_time(execution.starting_attack_speed, AutoAttackFireEvent)?;
                 let start_time = fire_time - animation_length;
 
@@ -322,6 +323,7 @@ impl Render {
                     let cid = &cid;
                     if let Some(base) = game.world.base.components.get(cid) {
                         match base.ctype {
+                            CharacterType::Unknown => (),
                             CharacterType::IceWiz | CharacterType::CasterMinion => {
                                 (|| -> Option<()> {
                                     let Animation { timer: animation_time } = match self.animation_data.get_mut(cid) {

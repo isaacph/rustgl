@@ -5,7 +5,7 @@ use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, 
 
 use super::base::{CharacterFlip, make_flip_update, make_move_update};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Movement {
     pub destination: Option<Vector2<f32>>
 }
@@ -21,12 +21,6 @@ impl Component for Movement {
 
 impl GetComponentID for Movement {
     const ID: ComponentID = ComponentID::Movement;
-}
-
-impl Default for Movement {
-    fn default() -> Self {
-        Self { destination: None }
-    }
 }
 
 pub fn make_movement_component_update(cid: CharacterID, dest: Option<Vector2<f32>>) -> Update {
@@ -244,9 +238,13 @@ impl ComponentSystem for MovementSystem {
         } else {
             vec![]
         };
-        Ok(position_updates.into_iter().chain(
+        let x: Vec<Update> = position_updates.into_iter().chain(
            movement_updates.into_iter().chain(
-           status_updates.into_iter())).collect())
+           status_updates.into_iter())).collect();
+        if !x.is_empty() {
+            println!("Movement update: {:?}", x);
+        }
+        Ok(x)
     }
 
     fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {
@@ -395,6 +393,7 @@ pub mod server {
         const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::UDP);
         fn run(self, addr: &SocketAddr, pid: &PlayerID, server: &mut Server) {
             // check if character can move the character at self.id
+            println!("I received your command!");
             if server.player_manager.can_use_character(pid, &self.id) {
                 // // determine if attack should reset character state
                 // let reset = if let Some(auto_attack) = server.world.auto_attack.components.get(&self.id) {
@@ -405,6 +404,7 @@ pub mod server {
                 let command = WorldCommand::CharacterComponent(self.id, ComponentID::Movement, CharacterCommand::Movement(MoveCharacter {
                     destination: self.dest,
                 }));
+                println!("Run world command: {:?}", command);
                 server.run_world_command(Some(addr), command);
             } else {
                 server.connection.send(Protocol::TCP, addr, &ChatMessage("Error: missing permissions".to_string())).print()

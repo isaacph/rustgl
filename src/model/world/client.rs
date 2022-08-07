@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::{networking::Protocol, client::{game::{Game, TickCommand}, commands::ClientCommand}, model::world::commands::WorldCommand};
+use crate::{networking::Protocol, client::{game::{Game, TickCommand}, commands::ClientCommand}};
 
-use super::{commands::{ClearWorld, RunWorldCommand}, World};
+use super::{commands::{ClearWorld, RunWorldCommand, FixWorld}, World};
 
 // impl<'a> ClientCommand<'a> for UpdateCharacter {
 //     fn run(self, (_, game): (Protocol, &mut Game)) {
@@ -19,32 +19,43 @@ impl<'a> ClientCommand<'a> for ClearWorld {
     }
 }
 
+impl<'a> ClientCommand<'a> for FixWorld {
+    fn run(self, (_, game): (Protocol, &mut Game)) {
+        let command = TickCommand::FixWorld(self);
+        add_tick_command(command, game);
+    }
+}
+
 impl<'a> ClientCommand<'a> for RunWorldCommand {
     fn run(self, (_, game): (Protocol, &mut Game)) {
-        // todo: discard old ticks
         // println!("Add new command {:?} to tick {}", self.command, self.tick);
+        let command = TickCommand::WorldCommand(self.tick, self.ordering, self.command);
+        add_tick_command(command, game);
+    }
+}
 
-        // sum up relative ticks to find which is most popular
-        let offset = match self.command {
-            _ => 0,
-        };
-        let server_tick_slot = game.tick_count.entry(game.tick_base + offset).or_insert_with(HashMap::new);
-        *server_tick_slot.entry(self.tick - game.tick_base + offset).or_insert(0) += 1;
+pub fn add_tick_command(command: TickCommand, game: &mut Game) {
+    // todo: discard old ticks
+    let offset = 0;
+    let (tick, ordering) = match &command {
+        TickCommand::WorldCommand(tick, ordering, _wc) => (tick, ordering),
+        TickCommand::FixWorld(FixWorld { update: _, ordering, tick }) => (tick, ordering),
+    };
+    let server_tick_slot = game.tick_count.entry(game.tick_base + offset).or_insert_with(HashMap::new);
+    *server_tick_slot.entry(tick - game.tick_base + offset).or_insert(0) += 1;
 
-        // add command to its correct tick
-        let command = TickCommand::WorldCommand(self.command);
-        match game.tick_commands.get_mut(&self.tick) {
-            Some(commands) => {
-                commands.insert(
-                    commands.iter()
-                        .position(|(other_ord, _)| self.ordering < *other_ord)
-                        .unwrap_or(commands.len()),
-                    (self.ordering, command)
-                );
-            },
-            None => {
-                game.tick_commands.insert(self.tick, vec![(self.ordering, command)]);
-            },
-        }
+    // add command to its correct tick in the sorted position according to "ordering"
+    match game.tick_commands.get_mut(tick) {
+        Some(commands) => {
+            commands.insert(
+                commands.iter()
+                    .position(|(other_ord, _)| ordering < other_ord)
+                    .unwrap_or(commands.len()),
+                (*ordering, command)
+            );
+        },
+        None => {
+            game.tick_commands.insert(*tick, vec![(*ordering, command)]);
+        },
     }
 }

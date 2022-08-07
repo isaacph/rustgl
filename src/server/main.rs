@@ -14,7 +14,7 @@ use self::update_loop::UpdateLoop;
 
 pub mod update_loop {
     use std::time::{Duration, Instant};
-    use crate::model::{world::{World, commands::FixWorld}, commands::MakeBytes, TICK_RATE, WorldTick};
+    use crate::model::{world::{World, commands::{FixWorld, UpdateCharacter}}, commands::MakeBytes, WorldTick};
 
     pub struct UpdateLoop {
         last_update: Option<Instant>,
@@ -26,7 +26,7 @@ pub mod update_loop {
         pub fn init(_world: &World) -> UpdateLoop {
             UpdateLoop {
                 last_update: Some(Instant::now()),
-                update_interval: Duration::new(0, 1000 * 1000 * 1000 / TICK_RATE as u32),
+                update_interval: Duration::new(0, 1000 * 1000 * 1000),
                 errors: vec![],
             }
         }
@@ -40,8 +40,11 @@ pub mod update_loop {
                 false => vec![],
                 true => {
                     self.last_update = Some(now);
-                    world.characters.iter()
+                    let x: Vec<UpdateCharacter> = world.characters.iter()
                         .filter_map(|cid| world.make_cmd_update_character(*cid))
+                        .collect();
+                    //println!("Sending out FixWorld for tick {}, len: {:?}", tick, x);
+                    let x: Vec<Box<[u8]>> = x.into_iter()
                         .filter_map(|cmd| match
                                     (&FixWorld {
                                         update: cmd,
@@ -68,7 +71,8 @@ pub mod update_loop {
                                 None
                             }
                         })
-                        .collect()
+                        .collect();
+                    x
                 }
             }
         }
@@ -167,6 +171,13 @@ impl Server {
                 }
             }
 
+            for (protocol, addr, message) in messages.drain(0..messages.len()) {
+                match execute_server_command(&message, ((protocol, &addr), &mut server)) {
+                    Ok(()) => (),// println!("Ran command"),
+                    Err(err) => println!("Error running command: {}", err)
+                }
+            }
+
             tick_timer += delta_time;
             while tick_timer >= 1.0 / TICK_RATE {
                 let delta_time = 1.0 / TICK_RATE;
@@ -174,17 +185,6 @@ impl Server {
 
                 let update_data = update_loop.send_next_update(&server.world, current_time, server.world.tick, &mut server.tick_ordering);
                 server.broadcast_data(Subscription::World, Protocol::UDP, &update_data);
-
-                for (protocol, addr, message) in messages.drain(0..messages.len()) {
-                    // println!("Message from {} over {}", addr, match protocol {
-                    //     Protocol::TCP => "TCP",
-                    //     Protocol::UDP => "UDP"
-                    // });
-                    match execute_server_command(&message, ((protocol, &addr), &mut server)) {
-                        Ok(()) => (),// println!("Ran command"),
-                        Err(err) => println!("Error running command: {}", err)
-                    }
-                }
 
                 let mut t_o = server.tick_ordering;
                 for command in server.world_commands.clone() {
@@ -199,7 +199,7 @@ impl Server {
                     });
                 }
                 server.tick_ordering = t_o;
-                server.world.update(&server.world_commands, delta_time);
+                server.world = server.world.update(&server.world_commands, delta_time);
                 server.world_commands.clear();
                 for error in server.world.errors.drain(0..server.world.errors.len()) {
                     match error {

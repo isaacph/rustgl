@@ -53,6 +53,7 @@ pub fn execute_client_command(command: &[u8], context: (Protocol, &mut Game)) ->
             // tick matters
             ClearWorld => drun::<crate::model::world::commands::ClearWorld>(data, context),
             RunWorldCommand => drun::<crate::model::world::commands::RunWorldCommand>(data, context),
+            FixWorld => drun::<crate::model::world::commands::FixWorld>(data, context),
             _ => {
                 println!("Command ID not implemented on client: {:?}", id);
                 Ok(())
