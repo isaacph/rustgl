@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
 
@@ -52,9 +53,9 @@ pub struct CharacterBase {
 
 impl Component for CharacterBase {
     fn update(&self, change: &ComponentUpdateData) -> Self {
-        let mut next = self.clone();
-        match change.clone() {
-            ComponentUpdateData::Base(change) => match change {
+        let mut next = *self;
+        if let ComponentUpdateData::Base(change) = change.clone() {
+            match change {
                 CharacterBaseUpdate::New(component) => next = component,
                 CharacterBaseUpdate::Update(_, update) => match update {
                     CharacterBaseUpdateSwitch::FlipUpdate(flip) => next.flip = flip,
@@ -63,8 +64,7 @@ impl Component for CharacterBase {
                         CharacterBasePositionUpdate::Override(pos) =>  next.position = pos,
                     }
                 }
-            },
-            _ => (),
+            }
         }
         next
     }
@@ -207,11 +207,12 @@ impl ComponentSystem for BaseSystem {
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
-            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
-                ComponentUpdateData::Base(CharacterBaseUpdate::New(_)) => true,
-                _ => false,
-            }).cloned().collect();
-            if new_changes.len() == 0 {
+            let new_changes: Vec<ComponentUpdateData> = changes
+                .iter()
+                .filter(|new| matches!(*new, ComponentUpdateData::Base(CharacterBaseUpdate::New(_))))
+                .cloned()
+                .collect();
+            if new_changes.is_empty() {
                 return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::AutoAttack))
             } else if new_changes.len() > 1 {
                 return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack))
@@ -219,16 +220,13 @@ impl ComponentSystem for BaseSystem {
                 return Ok(new_changes)
             }
         }
-        let mut changes = changes.into_iter()
+        let changes = changes.iter()
         .filter_map(|update| match update.clone() { // only allow base type updates
             ComponentUpdateData::Base(update) => Some(update),
             _ => None,
         });
-        Ok(changes
-            .find(|change| match *change { // check if we create a new component
-                 CharacterBaseUpdate::New(_) => true,
-                 _ => false,
-            })
+        Ok(changes.clone()
+            .find(|change| matches!(*change, CharacterBaseUpdate::New(_)))
             .map_or(changes // if we don't create a new component
                 .filter_map(|change| match change { // only look at updates
                     CharacterBaseUpdate::Update(prio, sw) => Some((prio, sw)),
@@ -251,19 +249,19 @@ impl ComponentSystem for BaseSystem {
                     } else {
                         [flip, mv]
                     }),
-                    CharacterBaseUpdateSwitch::PositionUpdate(_update) => mv.clone().map_or([flip.clone(), Some((prio, sw.clone()))],
+                    CharacterBaseUpdateSwitch::PositionUpdate(_update) => [flip, mv.clone().map_or(Some((prio, sw.clone())),
                     // move updates take highest priority, or if equal priority then combine
                     |(mv_prio, mv_sw)| if prio > mv_prio {
-                        [flip, Some((prio, sw))]
+                        Some((prio, sw))
                     } else if prio == mv_prio {
-                        [flip, Some((
+                        Some((
                             prio,
                             // combine call
                             sw.pos().zip(mv_sw.clone().pos())
-                            .map_or(mv_sw.clone(), |(pos, mv_pos)| CharacterBaseUpdateSwitch::PositionUpdate(pos.combine(mv_pos)))))]
+                            .map_or(mv_sw.clone(), |(pos, mv_pos)| CharacterBaseUpdateSwitch::PositionUpdate(pos.combine(mv_pos)))))
                     } else {
-                        [flip, mv]
-                    }),
+                        mv
+                    })],
                 })
                .into_iter()
                .flat_map(|change| change.into_iter() // combine reduced updates

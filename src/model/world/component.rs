@@ -135,14 +135,29 @@ impl<T: Serialize + GetComponentID + DeserializeOwned + Component + Debug> Compo
         // let err: Vec<WorldError> = updates.iter()
         // .filter_map(|comp| self.get_component(&comp.cid).err())
         // .collect();
-        let updates = updates.iter()
-            .map(|update| (update.cid, self.components
-                .get(&update.cid)
-                .unwrap_or(&Default::default())
-                .update(&update.data))
-            ).collect_vec();
         if !updates.is_empty() {
-            println!("Updating component: {:?}", updates);
+            // println!("Requested updates to component: {:?}", updates);
+        }
+        // chain updates together for updates with same character ID
+        let updates = updates.iter()
+            .map(|update| (update.cid, update))
+            .into_group_map()
+            .into_iter()
+            .filter_map(|(cid, update)| {
+                let def = Default::default();
+                let start = self.components.get(&cid)
+                    .unwrap_or(&def);
+                update
+                .into_iter()
+                .fold(None, |current, update| match current {
+                    None => Some(start.update(&update.data)),
+                    Some(current) => Some(current.update(&update.data)),
+                })
+                .map(|update| (cid, update))
+            })
+            .collect_vec();
+        if !updates.is_empty() {
+            // println!("Updating component: {:?}", updates);
         }
         self.components.extend(updates.into_iter());
         // if !err.is_empty() {

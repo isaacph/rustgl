@@ -168,8 +168,8 @@ impl ComponentSystem for MovementSystem {
         use ComponentUpdateData::Status as CStatus;
         use StatusUpdate::{Cancel, ChangePrio, Try};
         let pos = world.base.get_component(cid)?.position;
-        let dest = world.movement.get_component(&cid)?.destination;
-        let statuses = world.status.get_component(&cid)?;
+        let dest = world.movement.get_component(cid)?.destination;
+        let statuses = world.status.get_component(cid)?;
         let status = &statuses.status;
         let walk_status = statuses.get_status(StatusID::Walk);
         let (arrived, position_updates) = match (status.id, dest) {
@@ -178,7 +178,7 @@ impl ComponentSystem for MovementSystem {
             },
             _ => (false, vec![])
         };
-        let movement_command = commands.into_iter()
+        let movement_command = commands.iter()
             .filter_map(|cmd| match *cmd {
                 WorldCommand::CharacterComponent(cmd_cid, cmd_comp_id, CharacterCommand::Movement(MoveCharacter { destination })) =>
                     if *cid == cmd_cid && cmd_comp_id == ComponentID::Movement {
@@ -217,13 +217,14 @@ impl ComponentSystem for MovementSystem {
                 })]
             } else { vec![] }
         } else if dest.is_some() {
-            if let Some(ws) = walk_status {
-                if ws.prio != StatusPrio::Ability  {
-                    vec![Update::Comp(ComponentUpdate {
-                        cid: *cid,
-                        data: CStatus(ChangePrio(StatusID::Walk, StatusPrio::Ability))
-                    })]
-                } else { vec![] }
+            if walk_status.is_some() {
+                vec![]
+                // if ws.prio != StatusPrio::Ability  {
+                //     vec![Update::Comp(ComponentUpdate {
+                //         cid: *cid,
+                //         data: CStatus(ChangePrio(StatusID::Walk, StatusPrio::Ability))
+                //     })]
+                // } else { vec![] }
             } else { 
                 vec![Update::Comp(ComponentUpdate {
                     cid: *cid,
@@ -238,13 +239,9 @@ impl ComponentSystem for MovementSystem {
         } else {
             vec![]
         };
-        let x: Vec<Update> = position_updates.into_iter().chain(
+        Ok(position_updates.into_iter().chain(
            movement_updates.into_iter().chain(
-           status_updates.into_iter())).collect();
-        if !x.is_empty() {
-            println!("Movement update: {:?}", x);
-        }
-        Ok(x)
+           status_updates.into_iter())).collect())
     }
 
     fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {
@@ -393,7 +390,6 @@ pub mod server {
         const PROTOCOL: ProtocolSpec = ProtocolSpec::One(Protocol::UDP);
         fn run(self, addr: &SocketAddr, pid: &PlayerID, server: &mut Server) {
             // check if character can move the character at self.id
-            println!("I received your command!");
             if server.player_manager.can_use_character(pid, &self.id) {
                 // // determine if attack should reset character state
                 // let reset = if let Some(auto_attack) = server.world.auto_attack.components.get(&self.id) {
@@ -404,7 +400,6 @@ pub mod server {
                 let command = WorldCommand::CharacterComponent(self.id, ComponentID::Movement, CharacterCommand::Movement(MoveCharacter {
                     destination: self.dest,
                 }));
-                println!("Run world command: {:?}", command);
                 server.run_world_command(Some(addr), command);
             } else {
                 server.connection.send(Protocol::TCP, addr, &ChatMessage("Error: missing permissions".to_string())).print()

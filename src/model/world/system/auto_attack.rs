@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
 use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::{CharacterCommand, WorldCommand}, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldInfo, WorldSystem, ComponentSystem, Update}, commands::GetCommandID, WorldTick, TICK_RATE};
@@ -40,7 +41,6 @@ impl Component for AutoAttack {
 impl GetComponentID for AutoAttack {
     const ID: ComponentID = ComponentID::AutoAttack;
 }
-
 pub fn combine_updates(
     prev_aa: Option<AutoAttack>,
     cooldown_timeout: Option<WorldTick>,
@@ -228,10 +228,7 @@ impl ComponentSystem for AutoAttackSystem {
     //       queue AbilityPrioritized status prio
     //   else if command and target is new
     //     queue AA status with ability override
-    //   else if (executing or arrived) and AA is status and not casting
-    //     if prio != Ability
-    //       queue Ability status prio
-    //   else if targeting and AA is in status queue
+    //   else if (executing or arrived or targeting) and AA is status and not casting
     //     if prio != Ability
     //       queue Ability status prio
     //   else if executing and AA is not status
@@ -240,7 +237,7 @@ impl ComponentSystem for AutoAttackSystem {
     //     queue cancel status
     // projectile update
     fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
-        let statuses = world.status.get_component(&cid)?;
+        let statuses = world.status.get_component(cid)?;
         let status_in_queue = statuses.get_status(StatusID::AutoAttack);
         let is_status = statuses.status.id == StatusID::AutoAttack;
         let (ctype, attack_speed, range) = {
@@ -250,9 +247,10 @@ impl ComponentSystem for AutoAttackSystem {
         let attack_info = world.info.auto_attack.get(&ctype)
             .ok_or(WorldError::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack))?.clone();
         let auto_attack = world.auto_attack.get_component(cid)?;
-        let (executing, casting, fire_attack_updates) = {
+        let (executing, casting, fire_attack_updates, cooldown_updates) = {
             let executing;
             let (mut casting, mut fire_attack_updates) = (false, vec![]);
+            let mut cooldown_updates = None;
             if let Some(execution) = &auto_attack.execution {
                 let timer = (world.tick - execution.time_start) as f32 * 1.0 / TICK_RATE;
                 let (changes, _changed) = attack_info.fsm.get_state_changes(
@@ -262,6 +260,12 @@ impl ComponentSystem for AutoAttackSystem {
                 changes.iter().fold(Ok(()), |status, change| match (status?, change) {
                     ((), fsm::Changes::Event(_time_since, AutoAttackFireEvent)) => {
                         fire_attack_updates = auto_attack_fire(world, cid)?;
+                        cooldown_updates = Some(
+                            world.tick +
+                            f32::ceil(
+                                (attack_speed - (world.tick - execution.time_start) as f32 / TICK_RATE)
+                                * TICK_RATE)
+                            as WorldTick);
                         Ok(())
                     },
                     _ => Ok(()),
@@ -273,11 +277,11 @@ impl ComponentSystem for AutoAttackSystem {
                 executing = false;
             }
 
-            (executing, casting, fire_attack_updates)
+            (executing, casting, fire_attack_updates, cooldown_updates)
         };
         let targeting = auto_attack.targeting.is_some();
-        let on_cooldown = auto_attack.cooldown_timeout <= world.tick;
-        let command = commands.into_iter()
+        let on_cooldown = auto_attack.cooldown_timeout > world.tick;
+        let command = commands.iter()
             .filter_map(|cmd| match cmd.clone() {
                 WorldCommand::CharacterComponent(
                     cmdcid,
@@ -294,14 +298,14 @@ impl ComponentSystem for AutoAttackSystem {
         // movement
         let (arrived, movement_updates) = if !executing && is_status && auto_attack.targeting.is_some() {
             let AutoAttackTargeting { target, ids: _ } = auto_attack.targeting.as_ref().ok_or(WorldError::BadLogic)?;
-            let target_pos = world.base.get_component(&target)?.position;
+            let target_pos = world.base.get_component(target)?.position;
             let target_pos = Vector2::new(target_pos.x, target_pos.y);
             walk_to(world, cid, &target_pos, range, delta_time)?
         } else { (false, vec![]) };
 
         // execution
-        let (stop_targeting, execution_update, new_proj_ids, new_cooldown_timeout) = if executing && !is_status {
-            (false, Some(None), None, None)
+        let (stop_targeting, execution_update, new_proj_ids) = if executing && !is_status {
+            (false, Some(None), None)
         } else if !executing && is_status && arrived && !on_cooldown && auto_attack.targeting.is_some() {
             let targeting = auto_attack.targeting.as_ref().ok_or(WorldError::BadLogic)?;
             if let (Some(proj_id), new_range) = targeting.ids.split_id() {
@@ -311,13 +315,15 @@ impl ComponentSystem for AutoAttackSystem {
                     starting_attack_speed: attack_speed,
                     time_start: world.tick,
                     target: targeting.target
-                })), Some(new_range), Some(world.tick + f32::ceil(attack_speed * TICK_RATE) as WorldTick))
+                })), Some(new_range))
             } else {
                 // stop targeting
-                (true, None, None, None)
+                (true, None, None)
             }
+        } else if !executing && auto_attack.execution.is_some() {
+            (false, Some(None), None)
         } else {
-            (false, None, None, None)
+            (false, None, None)
         };
 
         // targeting
@@ -327,7 +333,7 @@ impl ComponentSystem for AutoAttackSystem {
                 target: cmd.target,
                 ids: cmd.projectile_gen_ids.clone()
             }))
-        } else if !status_in_queue.is_none() && targeting || stop_targeting {
+        } else if status_in_queue.is_none() && targeting || stop_targeting {
             Some(None)
         } else if let Some(new_ids) = new_proj_ids {
             let mut update_targeting = auto_attack.targeting.clone().ok_or(WorldError::BadLogic)?;
@@ -356,10 +362,10 @@ impl ComponentSystem for AutoAttackSystem {
                 timeout: world.tick + 6000,
                 start: world.tick,
             }))
-        } else if (arrived || executing) && is_status && !casting || targeting && status_in_queue.is_some() {
+        } else if (arrived || executing || targeting) && is_status && !casting {
             // maintain regular status priority
             let status = status_in_queue.ok_or(WorldError::BadLogic)?;
-            if status.prio != StatusPrio::AbilityPrioritized {
+            if status.prio != StatusPrio::Ability {
                 Some(StatusUpdate::ChangePrio(StatusID::AutoAttack, StatusPrio::Ability))
             } else {
                 None
@@ -373,7 +379,7 @@ impl ComponentSystem for AutoAttackSystem {
         // map updates to Update type
         let combined_exec_targeting_updates = combine_updates(
             Some(auto_attack.clone()),
-            new_cooldown_timeout,
+            cooldown_updates,
             execution_update,
             targeting_update)
             .into_iter()
@@ -388,11 +394,15 @@ impl ComponentSystem for AutoAttackSystem {
             }));
 
         // return collected updates
-        Ok(movement_updates.into_iter()
+        let collected_updates = movement_updates.into_iter()
            .chain(combined_exec_targeting_updates)
            .chain(update_status_updates)
            .chain(fire_attack_updates.into_iter())
-           .collect())
+           .collect_vec();
+        if !collected_updates.is_empty() {
+            // println!("AA Updates: {:?}", collected_updates);
+        }
+        Ok(collected_updates)
     }
 
     // fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<ComponentUpdate>, WorldError> {

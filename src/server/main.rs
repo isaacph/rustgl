@@ -1,6 +1,8 @@
+use std::fs::File;
 use std::net::SocketAddr;
 use std::time::Duration;
 use crate::model::world::commands::{WorldCommand, RunWorldCommand};
+use crate::model::world::logging::Logger;
 use crate::model::{Subscription, PrintError, TICK_RATE};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
@@ -116,6 +118,8 @@ impl Server {
         //     Err(err) => println!("??????? {:?}", err)
         // }
 
+        let mut logger = Logger::init("server.log").unwrap();
+
         let mut tick_timer = 0.0;
         let mut last_time = std::time::Instant::now();
         while !server.stop {
@@ -201,6 +205,7 @@ impl Server {
                 server.tick_ordering = t_o;
                 server.world = server.world.update(&server.world_commands, delta_time);
                 server.world_commands.clear();
+                logger.log(&server.world);
                 for error in server.world.errors.drain(0..server.world.errors.len()) {
                     match error {
                         WorldError::Info(st) => println!("Tick {}, {}", server.world.tick, st),

@@ -216,19 +216,21 @@ impl ComponentSystem for StatusSystem {
             // remove canceled statuses
             .filter(|status| !cancel.clone().any(|id| status.id == id))
             // deduplicate by id
-            .group_by(|status| status.id)
+            .map(|status| (status.id, status))
+            .into_group_map()
             .into_iter()
-            .flat_map(|(_, group)| group
+            .flat_map(|(_, group)| group.into_iter()
                 .max_by_key(|status| (status.start, status.timeout))
                 .into_iter())
             // sort by prio then id
-            .sorted_unstable_by_key(|status| std::cmp::Reverse(
-                (status.prio.get_prio(), status.id)
-            ));
+            .sorted_unstable_by(|a, b| a.prio.get_prio().cmp(&b.prio.get_prio()).reverse()
+                                .then(a.start.cmp(&b.start)
+                                .then(a.id.cmp(&b.id))));
         let (status, runner_up): (Option<Status>, Vec<Status>) = (iter.next(), iter.collect());
+        println!("Tick: {}, {:?}, status component reduce", world.tick, cid);
         Ok(status
            .into_iter()
-           .map(|status| CStatus(Try(status)))
+           .map(|status| CStatus(New(status))) // New indicates this is supposed to be the only one
            .chain(std::iter::once(CStatus(RunnerUp(runner_up))))
            .collect())
     }

@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, FixWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, FixWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError, logging::Logger,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerData, PlayerDataView}}, TICK_RATE, Tick}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -192,6 +192,8 @@ impl Game<'_> {
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         }
 
+        let mut logger = Logger::init("client.log").unwrap();
+
         let mut fpsc: i32 = 0;
         let mut fps: i32 = 0;
         let mut last_fps_time = glfw.get_time();
@@ -321,6 +323,7 @@ impl Game<'_> {
                         }
                     }
                     *world = world.update(&world_commands, 1.0 / TICK_RATE);
+                    logger.log(world);
                     for error in world.errors.drain(0..world.errors.len()) {
                         // client side errors usually will be a result of lag
                         match error {

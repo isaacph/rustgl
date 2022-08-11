@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use nalgebra::Vector2;
 use strum::IntoEnumIterator;
-use std::{collections::{HashMap, HashSet}, rc::Rc};
+use std::{collections::{HashMap, HashSet}, rc::Rc, fmt::Display};
 use serde::{Serialize, de::DeserializeOwned};
 
 use self::{
@@ -54,6 +54,7 @@ pub mod character;
 pub mod component;
 pub mod system;
 pub mod commands;
+pub mod logging;
 
 #[cfg(feature = "server")]
 pub mod server;
@@ -142,6 +143,15 @@ pub trait ComponentSystem: WorldSystem {
 pub enum Update {
     Comp(ComponentUpdate),
     World(WorldUpdate),
+}
+
+pub fn dbg_updates_sorted(updates: &Vec<Update>) -> String {
+    let mut out = vec![];
+    for update in updates {
+        out.push(format!("{:?}", update));
+    }
+    out.sort();
+    format!("dbg_updates:\n{}", out.into_iter().map(|u| format!("{:?}", u)).join("\n"))
 }
 
 #[derive(Clone, Debug)]
@@ -241,7 +251,10 @@ impl World {
     }
 
     pub fn update(&self, commands: &Vec<WorldCommand>, delta_time: f32) -> Self {
-        println!("Update world tick {}", self.tick);
+        // println!("Update world tick {}", self.tick);
+        // if !commands.is_empty() {
+        //     println!("World commands: {:?}", commands);
+        // }
         let commands = commands.clone();
         let info = self.info.clone();
         let mut sorted: Vec<CharacterID> = self.characters.clone().into_iter().collect();
@@ -275,6 +288,9 @@ impl World {
                 }).collect())
                 .map_or_else(|err| vec![Err(err)], |res| res))
             .collect();
+        if update_res.len() > 0 {
+            // println!("Updates: {:?}", update_res);
+        }
         
         let world_updates: Vec<WorldUpdate> = update_res.iter()
             .flat_map(|res| res.clone().ok().into_iter()
@@ -284,14 +300,19 @@ impl World {
                 })).collect();
         let update_errors = update_res.iter().filter_map(|res| res.clone().err());
         let mut reduce_errors = vec![];
+        if !commands.is_empty() {
+            reduce_errors.push(WorldError::Info(format!("World commands: {:?}", commands)));
+        }
         let mut reduce_errors_2 = vec![];
+        let mut reduce_errors_3 = vec![];
         let reduced: Vec<Update> = update_res.iter()
             .flat_map(|res| res.clone().ok().into_iter()
                 .filter_map(|res| match res {
                     Update::Comp(c) => Some(c),
                     _ => None
                 }))
-            .group_by(|update| update.data.component_id())
+            .map(|update| (update.data.component_id(), update))
+            .into_group_map()
             .into_iter()
             .flat_map(|(comp_id, updates)| match self.info.component_systems.get(&comp_id) {
                 None => {
@@ -300,12 +321,13 @@ impl World {
                 },
                 Some(system) => updates
                     .into_iter()
-                    .group_by(|update| update.cid)
+                    .map(|update| (update.cid, update))
+                    .into_group_map()
                     .into_iter()
                     .flat_map(|(cid, updates)|
-                        match system.reduce_changes(&cid, self, &updates.map(|update| update.data).collect()) {
+                        match system.reduce_changes(&cid, self, &updates.into_iter().map(|update| update.data).collect()) {
                             Err(err) => {
-                                reduce_errors.push(err);
+                                reduce_errors_3.push(err);
                                 vec![]
                             },
                             Ok(updates) => updates
@@ -329,8 +351,9 @@ impl World {
                 }
             }.into_iter())
             .collect();
-        // println!("Reduced: {:?}", reduced);
+        reduce_errors.push(WorldError::Info(format!("Reduced: {}", dbg_updates_sorted(&reduced))));
         reduce_errors.extend(reduce_errors_2);
+        reduce_errors.extend(reduce_errors_3);
         // let reduced: Vec<Update> = self.info.component_systems.iter()
         //     .flat_map(|(comp_id, system)| self.get_characters(comp_id).iter()
         //         .flat_map(|cid| match system.reduce_changes(cid, self, &component_updates.into_iter()

@@ -14,17 +14,18 @@ impl<'a, T> ItClosestRef<'a> for T
     where T: Iterator<Item = &'a Vector2<f32>> {
     fn closest_to(self, to: &Vector2<f32>) -> Option<&'a Vector2<f32>> {
         self.fold((None, f32::MAX), |(closest, closest_dist): (Option<&Vector2<f32>>, f32), next| {
+            let dir = next - to;
+            if dir.x == 0.0 && dir.y == 0.0 {
+                return (closest, closest_dist)
+            }
+            let dist = dir.magnitude();
             if let Some(closest) = closest {
-                let dir = next - to;
-                if dir.x != 0.0 || dir.y != 0.0 {
-                    let dist = dir.magnitude();
-                    if dist < closest_dist || dist == closest_dist &&
-                            (next.x < closest.x || next.x == closest.x && next.y < closest.y) {
-                        return (Some(next), dist)
-                    }
+                if dist < closest_dist || dist == closest_dist &&
+                        (next.x < closest.x || next.x == closest.x && next.y < closest.y) {
+                    return (Some(next), dist)
                 }
-                return (Some(closest), closest_dist)
-            } else { (closest, closest_dist) }
+                (Some(closest), closest_dist)
+            } else { (Some(next), dist) }
         }).0
     }
 }
@@ -33,17 +34,18 @@ impl<T> ItClosest for T
     where T: Iterator<Item = Vector2<f32>> {
     fn closest_to(self, to: &Vector2<f32>) -> Option<Vector2<f32>> {
         self.fold((None, f32::MAX), |(closest, closest_dist): (Option<Vector2<f32>>, f32), next| {
+            let dir = next - to;
+            if dir.x == 0.0 && dir.y == 0.0 {
+                return (closest, closest_dist)
+            }
+            let dist = dir.magnitude();
             if let Some(closest) = closest {
-                let dir = next - to;
-                if dir.x != 0.0 || dir.y != 0.0 {
-                    let dist = dir.magnitude();
-                    if dist < closest_dist || dist == closest_dist &&
-                            (next.x < closest.x || next.x == closest.x && next.y < closest.y) {
-                        return (Some(next), dist)
-                    }
+                if dist < closest_dist || dist == closest_dist &&
+                        (next.x < closest.x || next.x == closest.x && next.y < closest.y) {
+                    return (Some(next), dist)
                 }
-                return (Some(closest), closest_dist)
-            } else { (closest, closest_dist) }
+                (Some(closest), closest_dist)
+            } else { (Some(next), dist) }
         }).0
     }
 }
