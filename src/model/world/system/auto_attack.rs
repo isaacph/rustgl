@@ -237,9 +237,8 @@ impl ComponentSystem for AutoAttackSystem {
     //     queue cancel status
     // projectile update
     fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
-        let statuses = world.status.get_component(cid)?;
-        let status_in_queue = statuses.get_status(StatusID::AutoAttack);
-        let is_status = statuses.status.id == StatusID::AutoAttack;
+        let status = &world.status.get_component(cid)?.current;
+        let is_status = status.id == StatusID::AutoAttack;
         let (ctype, attack_speed, range) = {
             let base = world.base.get_component(cid)?;
             (base.ctype, base.attack_speed, base.range)
@@ -333,7 +332,7 @@ impl ComponentSystem for AutoAttackSystem {
                 target: cmd.target,
                 ids: cmd.projectile_gen_ids.clone()
             }))
-        } else if status_in_queue.is_none() && targeting || stop_targeting {
+        } else if !is_status && targeting || stop_targeting {
             Some(None)
         } else if let Some(new_ids) = new_proj_ids {
             let mut update_targeting = auto_attack.targeting.clone().ok_or(WorldError::BadLogic)?;
@@ -348,7 +347,6 @@ impl ComponentSystem for AutoAttackSystem {
         // status
         let status_update = if (arrived || executing) && is_status && casting {
             // maintain prioritized status priority
-            let status = status_in_queue.ok_or(WorldError::BadLogic)?;
             if status.prio != StatusPrio::AbilityPrioritized {
                 Some(StatusUpdate::ChangePrio(StatusID::AutoAttack, StatusPrio::AbilityPrioritized))
             } else {
@@ -356,21 +354,18 @@ impl ComponentSystem for AutoAttackSystem {
             }
         } else if command.is_some() {
             // new override status priority
-            Some(StatusUpdate::Try(Status {
+            Some(StatusUpdate::Try(StatusPrio::AbilityOverride, Status {
                 id: StatusID::AutoAttack,
-                prio: StatusPrio::AbilityOverride,
-                timeout: world.tick + 6000,
-                start: world.tick,
+                prio: StatusPrio::Ability,
             }))
         } else if (arrived || executing || targeting) && is_status && !casting {
             // maintain regular status priority
-            let status = status_in_queue.ok_or(WorldError::BadLogic)?;
             if status.prio != StatusPrio::Ability {
                 Some(StatusUpdate::ChangePrio(StatusID::AutoAttack, StatusPrio::Ability))
             } else {
                 None
             }
-        } else if executing && !is_status || (!executing && !targeting && status_in_queue.is_some()) {
+        } else if is_status && !executing && !targeting {
             Some(StatusUpdate::Cancel(StatusID::AutoAttack))
         } else {
             None

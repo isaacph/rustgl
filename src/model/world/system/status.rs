@@ -41,50 +41,23 @@ impl StatusPrio {
 pub struct Status {
     pub prio: StatusPrio,
     pub id: StatusID,
-    pub timeout: WorldTick,
-    pub start: WorldTick, // time when this status was requested
 }
 
 impl Default for StatusComponent {
     fn default() -> Self {
-        Self { status: idle_status(WorldTick::MIN), runner_up: vec![] }
+        Self { current: idle_status() }
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StatusComponent {
-    pub status: Status,
-    pub runner_up: Vec<Status>,
+    pub current: Status,
 }
 
-impl StatusComponent {
-    pub fn status_queued(&self, id: StatusID) -> bool {
-        self.status.id == id || self.runner_up.iter().any(|r| r.id == id)
-    }
-    pub fn statuses_ahead<'a>(&'a self, id: StatusID) -> Vec<&'a Status> {
-        if id == self.status.id {
-            vec![]
-        } else if let Some(p) = self.runner_up.iter().rev().position(|s| s.id == id) {
-            (&self.runner_up).iter().skip(p).collect()
-        } else {
-            vec![]
-        }
-    }
-    pub fn get_status<'a>(&'a self, id: StatusID) -> Option<&'a Status> {
-        if id == self.status.id {
-            Some(&self.status)
-        } else {
-            self.runner_up.iter().find(|s| s.id == id)
-        }
-    }
-}
-
-pub fn idle_status(start: WorldTick) -> Status {
+pub fn idle_status() -> Status {
     Status {
         id: StatusID::Idle,
         prio: StatusPrio::Lowest,
-        timeout: WorldTick::MAX,
-        start,
     }
 }
 
@@ -97,13 +70,7 @@ impl Component for StatusComponent {
         use ComponentUpdateData::Status;
         use StatusUpdate::*;
         match update.clone() {
-            Status(RunnerUp(runner_up)) => Self {
-                status: self.status.clone(),
-                runner_up,
-            },
-            // only one of these two should arrive
-            Status(New(status)) => Self { status, runner_up: self.runner_up.clone() },
-            Status(Try(status)) => Self { status, runner_up: self.runner_up.clone() },
+            Status(New(status)) => Self { current: status },
             _ => self.clone()
         }
     }
@@ -114,10 +81,8 @@ pub enum StatusUpdate {
     New(Status), // should only be used for initializing statuses of new characters
                  // note that if two New statuses are passed for the same character,
                  // status will fail to change and an error will be thrown
-    Try(Status),
+    Try(StatusPrio, Status), // the first param is the queueing/overriding priority
     Cancel(StatusID),
-    RunnerUp(Vec<Status>), // reserved for reduce stage output, will be discarded if it comes as input
-    Reevaluate,
     ChangePrio(StatusID, StatusPrio),
 }
 
@@ -138,18 +103,7 @@ impl ComponentSystem for StatusSystem {
     }
 
     fn update_character(&self, world: &World, _: &Vec<WorldCommand>, cid: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
-        // check if we need an update for timeout
-        let StatusComponent { status, runner_up } = world.status.get_component(cid)?;
-        if status.timeout <= world.tick || runner_up.iter().any(|r| r.timeout <= world.tick) {
-            use ComponentUpdateData::Status as CStatus;
-            use StatusUpdate::*;
-            Ok(vec![Update::Comp(ComponentUpdate {
-                cid: *cid,
-                data: CStatus(Reevaluate)
-            })])
-        } else {
-            Ok(vec![])
-        }
+        Ok(vec![])
     }
 
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
@@ -191,47 +145,40 @@ impl ComponentSystem for StatusSystem {
         // get status change requests (called Try)
         let mut iter = changes.into_iter()
             .filter_map(|change| match change.clone() {
-                CStatus(Try(change)) => Some(change),
+                CStatus(Try(prio, change)) => Some((prio, change)),
                 _ => None
             })
             // add current state
             .chain(
                 // add previous state
-                [world.status.get_component(cid)?.clone().status].into_iter()
-                // add runner_up state
-                .chain(world.status.get_component(cid)?.clone().runner_up.into_iter())
+                [world.status.get_component(cid)?.clone().current].into_iter()
                 // carry out prio changes
                 .into_iter()
                 .map(|status| match prio_changes.get(&status.id) {
-                    Some(prio) => Status {
+                    Some(prio) => (*prio, Status {
                         id: status.id,
                         prio: *prio,
-                        timeout: status.timeout,
-                        start: status.start
-                    },
-                    None => status
+                    }),
+                    None => (status.prio, status)
                 }))
             // add minimum (idle) state
-            .chain([idle_status(world.tick)].into_iter())
+            .chain([idle_status()].into_iter().map(|s| (s.prio, s)))
             // remove canceled statuses
-            .filter(|status| !cancel.clone().any(|id| status.id == id))
+            .filter(|(_prio, status)| !cancel.clone().any(|id| status.id == id))
             // deduplicate by id
-            .map(|status| (status.id, status))
+            .map(|(prio, status)| (status.id, (prio, status)))
             .into_group_map()
             .into_iter()
             .flat_map(|(_, group)| group.into_iter()
-                .max_by_key(|status| (status.start, status.timeout))
+                .max_by_key(|(prio, status)| prio.get_prio())
                 .into_iter())
             // sort by prio then id
-            .sorted_unstable_by(|a, b| a.prio.get_prio().cmp(&b.prio.get_prio()).reverse()
-                                .then(a.start.cmp(&b.start)
-                                .then(a.id.cmp(&b.id))));
-        let (status, runner_up): (Option<Status>, Vec<Status>) = (iter.next(), iter.collect());
-        println!("Tick: {}, {:?}, status component reduce", world.tick, cid);
+            .sorted_unstable_by(|(a_prio, a), (b_prio, b)| a_prio.get_prio().cmp(&b_prio.get_prio()).reverse()
+                                .then(a.id.cmp(&b.id)));
+        let status: Option<Status> = iter.next().map(|(_, status)| status);
         Ok(status
            .into_iter()
            .map(|status| CStatus(New(status))) // New indicates this is supposed to be the only one
-           .chain(std::iter::once(CStatus(RunnerUp(runner_up))))
            .collect())
     }
 }

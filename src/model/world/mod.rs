@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use nalgebra::Vector2;
 use strum::IntoEnumIterator;
-use std::{collections::{HashMap, HashSet}, rc::Rc, fmt::Display};
+use std::{collections::{HashMap, HashSet}, rc::Rc};
 use serde::{Serialize, de::DeserializeOwned};
 
 use self::{
@@ -288,9 +288,6 @@ impl World {
                 }).collect())
                 .map_or_else(|err| vec![Err(err)], |res| res))
             .collect();
-        if update_res.len() > 0 {
-            // println!("Updates: {:?}", update_res);
-        }
         
         let world_updates: Vec<WorldUpdate> = update_res.iter()
             .flat_map(|res| res.clone().ok().into_iter()
@@ -298,7 +295,10 @@ impl World {
                     Update::World(c) => Some(c),
                     _ => None
                 })).collect();
-        let update_errors = update_res.iter().filter_map(|res| res.clone().err());
+        let mut update_errors = update_res.iter().filter_map(|res| res.clone().err()).collect_vec();
+        if update_res.len() > 0 {
+            update_errors.push(WorldError::Info(format!("Updates: {:?}", update_res)));
+        }
         let mut reduce_errors = vec![];
         if !commands.is_empty() {
             reduce_errors.push(WorldError::Info(format!("World commands: {:?}", commands)));

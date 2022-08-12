@@ -166,12 +166,10 @@ impl ComponentSystem for MovementSystem {
     //     do nothing
     fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         use ComponentUpdateData::Status as CStatus;
-        use StatusUpdate::{Cancel, ChangePrio, Try};
+        use StatusUpdate::{Cancel, Try};
         let pos = world.base.get_component(cid)?.position;
         let dest = world.movement.get_component(cid)?.destination;
-        let statuses = world.status.get_component(cid)?;
-        let status = &statuses.status;
-        let walk_status = statuses.get_status(StatusID::Walk);
+        let status = &world.status.get_component(cid)?.current;
         let (arrived, position_updates) = match (status.id, dest) {
             (StatusID::Walk, Some(dest)) => {
                 walk_to(world, cid, &dest, 0.0, delta_time)?
@@ -189,7 +187,7 @@ impl ComponentSystem for MovementSystem {
             .closest_to(&pos.ground_pos());
         let movement_updates = if let Some(dest) = movement_command {
             vec![make_movement_component_update(*cid, Some(dest))]
-        } else if dest.is_some() && (arrived || !statuses.status_queued(StatusID::Walk)) {
+        } else if dest.is_some() && (arrived || status.id != StatusID::Walk) {
             vec![make_movement_component_update(*cid, None)]
         } else {
             vec![]
@@ -197,11 +195,9 @@ impl ComponentSystem for MovementSystem {
         let status_updates = if movement_command.is_some() {
             vec![Update::Comp(ComponentUpdate {
                 cid: *cid,
-                data: CStatus(Try(Status {
-                    prio: StatusPrio::AbilityOverride,
+                data: CStatus(Try(StatusPrio::AbilityOverride, Status {
+                    prio: StatusPrio::Ability,
                     id: StatusID::Walk,
-                    timeout: world.tick + 6000,
-                    start: world.tick
                 }))
             })]
         } else if dest.is_some() && status.id == StatusID::Walk {
@@ -210,28 +206,8 @@ impl ComponentSystem for MovementSystem {
                     cid: *cid,
                     data: CStatus(Cancel(StatusID::Walk))
                 })]
-            } else if status.prio != StatusPrio::Ability {
-                vec![Update::Comp(ComponentUpdate {
-                    cid: *cid,
-                    data: CStatus(ChangePrio(StatusID::Walk, StatusPrio::Ability))
-                })]
             } else { vec![] }
-        } else if dest.is_some() {
-            if walk_status.is_some() {
-                vec![]
-                // if ws.prio != StatusPrio::Ability  {
-                //     vec![Update::Comp(ComponentUpdate {
-                //         cid: *cid,
-                //         data: CStatus(ChangePrio(StatusID::Walk, StatusPrio::Ability))
-                //     })]
-                // } else { vec![] }
-            } else { 
-                vec![Update::Comp(ComponentUpdate {
-                    cid: *cid,
-                    data: CStatus(Cancel(StatusID::Walk))
-                })]
-            }
-        } else if dest.is_none() && statuses.status_queued(StatusID::Walk) {
+        } else if dest.is_none() && status.id == StatusID::Walk {
             vec![Update::Comp(ComponentUpdate {
                 cid: *cid,
                 data: CStatus(Cancel(StatusID::Walk))

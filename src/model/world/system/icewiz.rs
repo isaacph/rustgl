@@ -1,6 +1,6 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, system::status::{StatusUpdate, Status, idle_status}};
+use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, system::status::{StatusUpdate, idle_status}};
 use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -37,7 +37,7 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
         }),
         ComponentUpdateData::AutoAttack(AutoAttackUpdate(AutoAttack::new())),
         ComponentUpdateData::IceWiz,
-        ComponentUpdateData::Status(StatusUpdate::New(idle_status(world.tick)))
+        ComponentUpdateData::Status(StatusUpdate::New(idle_status()))
     ].into_iter()
     .map(|cud| Update::Comp(ComponentUpdate {
         cid: id,

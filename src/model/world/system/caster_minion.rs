@@ -96,7 +96,7 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
         }),
         ComponentUpdateData::AutoAttack(AutoAttackUpdate(AutoAttack::new())),
         ComponentUpdateData::CasterMinion,
-        ComponentUpdateData::Status(StatusUpdate::New(idle_status(world.tick)))
+        ComponentUpdateData::Status(StatusUpdate::New(idle_status()))
     ].into_iter()
     .map(|cud| Update::Comp(ComponentUpdate {
         cid: id,
