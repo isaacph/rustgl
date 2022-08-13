@@ -36,7 +36,7 @@ impl WorldSystem for CasterMinionSystem {
             position: Vector3::new(0.0, 0.0, 0.0),
             center_offset: Vector3::new(0.0, 0.0, -0.2),
             speed: 1.0,
-            attack_damage: 1.0,
+            attack_damage: 5.0,
             range: 1.0,
             attack_speed: 2.0,
             flip: CharacterFlip::Right,

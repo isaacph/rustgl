@@ -82,6 +82,7 @@ pub struct Render {
     animation_data: HashMap<CharacterID, Animation>,
     animation_fps: f32,
     click_animation_timer: f32,
+    click_prev_dest: Option<Vector2<f32>>,
     standalone_animations: HashMap<CharacterID, Vec<StandaloneAnimation>>
 }
 
@@ -158,6 +159,7 @@ impl Render {
             animation_data,
             animation_fps,
             click_animation_timer,
+            click_prev_dest: None,
             standalone_animations: HashMap::new()
         }
     }
@@ -212,45 +214,37 @@ impl Render {
         let mut renderables = vec![];
         renderables.extend(game.world.characters.iter().map(|cid| Renderable::Character(*cid)));
         let render_click = || -> Option<Vector2<f32>> {
-            if let Some(dest) = game.destination {
-                if let Some(cid) = selected_char {
-                    if let Some(movement) = game.world.movement.components.get(&cid) {
-                        if let Some(dest2) = movement.destination {
-                            if (dest - dest2).magnitude() < 0.001 {
-                                game.destination = None;
-                            }
-                        }
-                    }
-                }
-                return Some(dest)
+            if game.destination != self.click_prev_dest {
+                self.click_prev_dest = game.destination;
+                self.click_animation_timer = 0.0;
             }
-            if let Some(cid) = selected_char {
-                if let Some(movement) = game.world.movement.components.get(&cid) {
-                    return movement.destination
-                }
+            if let Some(dest) = game.destination {
+                return Some(dest)
             }
             None
         }();
         let render_click_frame = if let Some(destination) = render_click {
             self.click_animation_timer += delta_time;
-            let frame = regulate_extract_frame(&mut self.click_animation_timer, self.animation_fps, 0, self.click_animation_textures.len());
-            renderables.push(Renderable::Click(Vector3::new(destination.x, destination.y, 0.0), frame));
-            let scale = 0.5;
-            let matrix = graphics::make_matrix(
-                destination + Vector2::new(0.0, -0.18),
-                Vector2::new(scale, scale),
-                0.0
-            );
-            self.texture_render.render(
-                &(proj_view * matrix),
-                &Vector4::new(0.5, 0.5, 0.5, 0.5),
-                &self.click_animation_textures[frame],
-                graphics::VertexRange::Full
-            );
-            frame
+            if let Some(frame) = extract_frame(self.click_animation_timer, self.animation_fps * 2.0, 0, self.click_animation_textures.len()) {
+                renderables.push(Renderable::Click(Vector3::new(destination.x, destination.y, 0.0), frame));
+                let scale = 0.5;
+                let matrix = graphics::make_matrix(
+                    destination + Vector2::new(0.0, -0.18),
+                    Vector2::new(scale, scale),
+                    0.0
+                );
+                self.texture_render.render(
+                    &(proj_view * matrix),
+                    &Vector4::new(0.5, 0.5, 0.5, 0.5),
+                    &self.click_animation_textures[frame],
+                    graphics::VertexRange::Full
+                );
+                Some(frame)
+            } else {
+                None
+            }
         } else {
-            self.click_animation_timer = 0.0;
-            0
+            None
         };
         for (cid, auto_attack) in &game.world.auto_attack.components {
             || -> Option<()> {
@@ -277,8 +271,8 @@ impl Render {
                     return None;
                 }
                 let animation_length = base.attack_speed / 2.0;
-                let start_time = fire_time - animation_length * 0.75;
-                let end_time = fire_time + animation_length * 0.25;
+                let start_time = fire_time - animation_length * 0.6;
+                let end_time = fire_time + animation_length * 0.4;
                 if start_time <= timer && timer < end_time {
                     // start the particles
                     self.standalone_animations.insert(*cid, vec![StandaloneAnimation {
@@ -372,7 +366,6 @@ impl Render {
                                                 (game.world.tick - execution.time_start) as f32 / TICK_RATE,
                                                 12.0 / execution.starting_attack_speed, 13, 12)
                                                 .unwrap_or(13);
-                                            println!("{} frame", frame);
                                         } else {
                                             *animation_time = 0.0;
                                             frame = 0;
@@ -560,18 +553,20 @@ impl Render {
         }
 
         if let Some(destination) = render_click {
-            let scale = 0.5;
-            let matrix = graphics::make_matrix(
-                destination + Vector2::new(0.0, -0.18),
-                Vector2::new(scale, scale),
-                0.0
-            );
-            self.texture_render.render(
-                &(proj_view * matrix),
-                &Vector4::new(0.5, 0.5, 0.5, 0.5),
-                &self.click_animation_textures[render_click_frame],
-                graphics::VertexRange::Full
-            );
+            if let Some(rcf) = render_click_frame {
+                let scale = 0.5;
+                let matrix = graphics::make_matrix(
+                    destination + Vector2::new(0.0, -0.18),
+                    Vector2::new(scale, scale),
+                    0.0
+                );
+                self.texture_render.render(
+                    &(proj_view * matrix),
+                    &Vector4::new(0.5, 0.5, 0.5, 0.5),
+                    &self.click_animation_textures[rcf],
+                    graphics::VertexRange::Full
+                );
+            }
         }
     }
 }

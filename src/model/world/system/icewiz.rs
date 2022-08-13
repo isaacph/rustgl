@@ -57,15 +57,15 @@ impl WorldSystem for IceWizSystem {
             position: Vector3::new(0.0, 0.0, 0.0),
             center_offset: Vector3::new(0.0, 0.0, -0.4),
             speed: 1.0,
-            attack_damage: 1.0,
+            attack_damage: 10.0,
             range: 1.0,
             attack_speed: 2.0,
             flip: CharacterFlip::Right,
             targetable: true,
         });
         info.health.insert(CharacterType::IceWiz, CharacterHealth {
-            health: 1000.0,
-            max_health: 1000.0,
+            health: 100.0,
+            max_health: 100.0,
         });
         info.auto_attack.insert(CharacterType::IceWiz, AutoAttackInfo::init(
             CharacterType::IceWiz,

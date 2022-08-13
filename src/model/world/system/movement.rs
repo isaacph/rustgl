@@ -231,17 +231,14 @@ impl ComponentSystem for MovementSystem {
                 if cmd.destination.x.is_nan() || cmd.destination.y.is_nan() {
                     return Err(WorldError::InvalidCommand);
                 }
-                println!("chrs: {:?}", world.characters);
                 if !world.characters.contains(cid) {
                     return Err(WorldError::MissingCharacter(
                         *cid,
                         "Cannot move nonexistent character".to_string()))
                 }
                 if !OVERRIDE_STATUS.can_override(&world.status.get_component(cid)?.current) {
-                    println!("Validate result: queued");
                     return Ok(CharacterCommandState::Queued)
                 }
-                println!("Validate result: ready");
                 Ok(CharacterCommandState::Ready)
             },
             _ => Err(WorldError::InvalidCommandMapping)
