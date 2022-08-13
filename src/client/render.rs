@@ -4,7 +4,8 @@ use nalgebra::{Vector2, Vector4, Similarity3, Vector3, Rotation2};
 use crate::model::TICK_RATE;
 use crate::model::player::model::PlayerDataView;
 use crate::model::world::character::CharacterType;
-use crate::model::world::system::auto_attack::{AutoAttackFireEvent, AutoAttackPhase};
+use crate::model::world::component::ComponentStorageContainer;
+use crate::model::world::system::auto_attack::AutoAttackFireEvent;
 use crate::model::world::system::base::CharacterFlip;
 use crate::{model::world::character::CharacterID, graphics::{self, TextureOptions}};
 use super::camera::CameraMatrix;
@@ -36,25 +37,29 @@ struct StandaloneAnimation {
     flip: CharacterFlip,
 }
 
-pub fn regulate_extract_frame(timer: &mut f32, animation_fps: f32, frame_count: usize) -> usize {
+pub fn regulate_extract_frame(timer: &mut f32, animation_fps: f32, frame_start: usize, frame_count: usize) -> usize {
     *timer -= f32::floor(*timer * animation_fps / (frame_count as f32))
         * frame_count as f32 / animation_fps;
-    (*timer * animation_fps) as usize
+    frame_start + (*timer * animation_fps) as usize
 }
 
-pub fn extract_frame_or_die(timer: &mut f32, animation_fps: f32, frame_count: usize) -> Option<usize> {
+pub fn calc_animation_length(animation_fps: f32, frame_count: usize) -> f32 {
+    frame_count as f32 / animation_fps
+}
+
+pub fn extract_frame_or_die(timer: &mut f32, animation_fps: f32, frame_start: usize, frame_count: usize) -> Option<usize> {
     if *timer * animation_fps >= frame_count as f32 {
         return None;
     }
-    Some((*timer * animation_fps) as usize)
+    Some(frame_start + (*timer * animation_fps) as usize)
 }
 
-pub fn extract_frame(timer: f32, animation_fps: f32, frame_count: usize) -> Option<usize> {
+pub fn extract_frame(timer: f32, animation_fps: f32, frame_start: usize, frame_count: usize) -> Option<usize> {
     let frame = (timer * animation_fps) as usize;
-    if frame >= frame_count {
-        None
+    if frame < frame_count {
+        Some(frame_start + frame)
     } else {
-        Some(frame)
+        None
     }
 }
 
@@ -66,7 +71,7 @@ pub struct Render {
     texture_render: graphics::textured::Renderer,
     map_render: graphics::map::Renderer,
 
-    character_walk_textures: Vec<graphics::Texture>,
+    character_textures: Vec<graphics::Texture>,
     caster_minion_walk_textures: Vec<graphics::Texture>,
     click_animation_textures: Vec<graphics::Texture>,
     fireball_animation_textures: Vec<graphics::Texture>,
@@ -95,14 +100,17 @@ impl Render {
         let texture_render = graphics::textured::Renderer::new_square();
         let map_render = graphics::map::Renderer::new_square();
 
-        let character_walk_textures: Vec<graphics::Texture> = (1..=12).map(
-            |i| texture_library.make_texture(format!("walk_256/Layer {}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
+        let character_textures: Vec<graphics::Texture> =
+            std::iter::once("walk_256/Idle.png".to_string()).chain(
+            (1..=12).map(|i| format!("walk_256/Layer {}.png", i)).chain(
+            (1..=12).map(|i| format!("walk_256/Attack {}.png", i))))
+            .map(|f| texture_library.make_texture(f.as_str(), &[graphics::TextureOptions::Bilinear])
         ).collect();
         let caster_minion_walk_textures: Vec<graphics::Texture> = (1..=12).map(
             |i| texture_library.make_texture(format!("caster_minion_128/Frame {}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
         ).collect();
         let click_animation_textures: Vec<graphics::Texture> = (1..=27).map(
-            |i| texture_library.make_texture(format!("click_128/Frame {}.png", i).as_str(), &[])
+            |i| texture_library.make_texture(format!("click_128/{}.png", i).as_str(), &[])
         ).collect();
         let fireball_animation_textures: Vec<graphics::Texture> = (1..=7).map(
             |i| texture_library.make_texture(format!("fireball_128/Frame {}.png", i).as_str(), &[graphics::TextureOptions::Bilinear])
@@ -140,7 +148,7 @@ impl Render {
             simple_render,
             texture_render,
             map_render,
-            character_walk_textures,
+            character_textures,
             caster_minion_walk_textures,
             click_animation_textures,
             fireball_animation_textures,
@@ -225,7 +233,7 @@ impl Render {
         }();
         let render_click_frame = if let Some(destination) = render_click {
             self.click_animation_timer += delta_time;
-            let frame = regulate_extract_frame(&mut self.click_animation_timer, self.animation_fps, self.click_animation_textures.len());
+            let frame = regulate_extract_frame(&mut self.click_animation_timer, self.animation_fps, 0, self.click_animation_textures.len());
             renderables.push(Renderable::Click(Vector3::new(destination.x, destination.y, 0.0), frame));
             let scale = 0.5;
             let matrix = graphics::make_matrix(
@@ -248,7 +256,7 @@ impl Render {
             || -> Option<()> {
                 let frames = self.fireball_ball_grow_animation_textures.len();
                 let base = game.world.base.components.get(cid)?;
-                let animation_length = frames as f32 / self.animation_fps * base.attack_speed;
+                let animation_length = base.attack_speed / 2.0;
                 let execution = auto_attack.execution.as_ref()?;
                 let info = game.world.info.auto_attack.get(&base.ctype)?;
                 let position = base.position +
@@ -268,7 +276,10 @@ impl Render {
                 if self.standalone_animations.get(cid).is_some() {
                     return None;
                 }
-                if start_time <= timer && timer < fire_time && timer - start_time < animation_length {
+                let animation_length = base.attack_speed / 2.0;
+                let start_time = fire_time - animation_length * 0.75;
+                let end_time = fire_time + animation_length * 0.25;
+                if start_time <= timer && timer < end_time {
                     // start the particles
                     self.standalone_animations.insert(*cid, vec![StandaloneAnimation {
                         timer: timer - start_time,
@@ -288,7 +299,7 @@ impl Render {
                 match anim.typ {
                     StandaloneAnimationType::FireballCast => {
                         let textures = &self.fireball_flames_grow_animation_textures;
-                        if let Some(frame) = extract_frame_or_die(&mut anim.timer, self.animation_fps / anim.duration, textures.len()) {
+                        if let Some(frame) = extract_frame_or_die(&mut anim.timer, self.animation_fps / anim.duration, 0, textures.len()) {
                             renderables.push(Renderable::StandaloneAnimation(anim.position + Vector3::new(0.0, SLIGHT_DEPTH_SEPARATION, 0.0), frame, anim.flip));
                         } else {
                             dead_anim.push(*cid);
@@ -338,31 +349,62 @@ impl Render {
                                     let auto_attack = game.world.auto_attack.components.get(cid)?;
                                     let movement = game.world.movement.components.get(cid)?;
                                     let textures = match base.ctype {
-                                        CharacterType::IceWiz => &self.character_walk_textures,
+                                        CharacterType::IceWiz => &self.character_textures,
                                         CharacterType::CasterMinion => &self.caster_minion_walk_textures,
                                         // CharacterType::Projectile => &fireball_animation_textures,
                                         _ => return Some(())
                                     };
                                     let frame;
-                                    if auto_attack.execution.is_none() &&
-                                        (auto_attack.targeting.is_some() ||
-                                         movement.destination.is_some()) {
-                                        *animation_time += delta_time;
-                                        frame = regulate_extract_frame(animation_time, self.animation_fps, textures.len());
-                                    } else {
-                                        *animation_time = 0.0;
-                                        frame = 0;
+                                    let targeting_moving = if let Some(tgt) = &auto_attack.targeting {
+                                        let tgt_pos = game.world.base.get_component(&tgt.target).ok()?.position;
+                                        tgt_pos.metric_distance(&base.position) > base.range
+                                    } else { false };
+                                    match base.ctype {
+                                        CharacterType::IceWiz =>
+                                        if auto_attack.execution.is_none() &&
+                                            (targeting_moving ||
+                                             movement.destination.is_some()) {
+                                            *animation_time += delta_time;
+                                            frame = regulate_extract_frame(animation_time, self.animation_fps, 1, 12);
+                                        } else if let Some(execution) = &auto_attack.execution {
+                                            *animation_time = 0.0;
+                                            frame = extract_frame(
+                                                (game.world.tick - execution.time_start) as f32 / TICK_RATE,
+                                                12.0 / execution.starting_attack_speed, 13, 12)
+                                                .unwrap_or(13);
+                                            println!("{} frame", frame);
+                                        } else {
+                                            *animation_time = 0.0;
+                                            frame = 0;
+                                        },
+                                        CharacterType::CasterMinion => 
+                                        if auto_attack.execution.is_none() &&
+                                            (targeting_moving ||
+                                             movement.destination.is_some()) {
+                                            *animation_time += delta_time;
+                                            frame = regulate_extract_frame(animation_time, self.animation_fps, 0, 12);
+                                        } else {
+                                            *animation_time = 0.0;
+                                            frame = 0;
+                                        },
+                                        _ => return Some(())
                                     }
                                     let flip_dir: f32 = match base.flip {
                                         CharacterFlip::Left => -1.0,
                                         CharacterFlip::Right => 1.0
                                     }; let scale = match base.ctype {
-                                        CharacterType::IceWiz => 1.0,
+                                        CharacterType::IceWiz =>
+                                            if frame > 12 || frame == 0 { 0.9 } else { 1.0 },
                                         CharacterType::CasterMinion => 0.5,
                                         _ => return Some(())
                                     };
                                     let offset = match base.ctype {
-                                        CharacterType::IceWiz |
+                                        CharacterType::IceWiz => 
+                                            if frame > 12 || frame == 0 {
+                                                Vector2::new(0.0, -120.0 / 256.0 * scale)
+                                            } else {
+                                                Vector2::new(0.0, -100.0 / 256.0 * scale)
+                                            },
                                         CharacterType::CasterMinion => Vector2::new(0.0, -100.0 / 256.0 * scale),
                                         _ => return Some(())
                                     };
@@ -438,7 +480,7 @@ impl Render {
                                 };
                                 let textures = &self.fireball_animation_textures;
                                 *animation_time += delta_time;
-                                let frame = regulate_extract_frame(animation_time, self.animation_fps, textures.len());
+                                let frame = regulate_extract_frame(animation_time, self.animation_fps, 0, textures.len());
                                 let position = base.position;
                                 let projectile = game.world.projectile.components.get(cid)?;
                                 let target_position = game.world.base.components.get(&projectile.target)?.position;
@@ -501,7 +543,7 @@ impl Render {
                     );
                 },
                 Renderable::StandaloneAnimation(position, frame, flip) => {
-                    let scale = 0.5;
+                    let scale = 0.75;
                     let matrix = graphics::make_matrix(
                         Vector2::new(position.x, position.y + position.z),
                         Vector2::new(scale * flip.dir(), scale),

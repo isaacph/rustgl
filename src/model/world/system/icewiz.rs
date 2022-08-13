@@ -59,7 +59,7 @@ impl WorldSystem for IceWizSystem {
             speed: 1.0,
             attack_damage: 1.0,
             range: 1.0,
-            attack_speed: 1.0,
+            attack_speed: 2.0,
             flip: CharacterFlip::Right,
             targetable: true,
         });
@@ -70,11 +70,11 @@ impl WorldSystem for IceWizSystem {
         info.auto_attack.insert(CharacterType::IceWiz, AutoAttackInfo::init(
             CharacterType::IceWiz,
             1.0, // wind up duration
-            3.0, // casting duration
+            2.0, // casting duration
             1.0, // wind down duration
-            2.5, // fire time (after animation start)
+            3.0, // fire time (after animation start)
             1.2, // projectile speed
-            Vector3::new(0.2, 0.0, -0.4) // projectile offset
+            Vector3::new(0.2, 0.0, -0.35) // projectile offset
         )?);
         Ok(info)
     }
