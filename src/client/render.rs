@@ -4,7 +4,7 @@ use nalgebra::{Vector2, Vector4, Similarity3, Vector3, Rotation2};
 use crate::model::TICK_RATE;
 use crate::model::player::model::PlayerDataView;
 use crate::model::world::character::CharacterType;
-use crate::model::world::system::auto_attack::AutoAttackFireEvent;
+use crate::model::world::system::auto_attack::{AutoAttackFireEvent, AutoAttackPhase};
 use crate::model::world::system::base::CharacterFlip;
 use crate::{model::world::character::CharacterID, graphics::{self, TextureOptions}};
 use super::camera::CameraMatrix;
@@ -268,7 +268,7 @@ impl Render {
                 if self.standalone_animations.get(cid).is_some() {
                     return None;
                 }
-                if start_time <= timer {
+                if start_time <= timer && timer < fire_time && timer - start_time < animation_length {
                     // start the particles
                     self.standalone_animations.insert(*cid, vec![StandaloneAnimation {
                         timer: timer - start_time,

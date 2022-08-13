@@ -13,7 +13,7 @@ impl Component for CharacterHealth {
     fn update(&self, update: &ComponentUpdateData) -> Self {
         match *update {
             ComponentUpdateData::Health(CharacterHealthUpdate::New(x)) =>
-                Self { health: x, max_health: self.max_health },
+                Self { health: x, max_health: x },
             ComponentUpdateData::Health(CharacterHealthUpdate::Change(x)) =>
                 Self { health: self.health + x, max_health: self.max_health },
             _ => self.clone()
