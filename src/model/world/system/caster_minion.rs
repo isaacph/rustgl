@@ -1,7 +1,7 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, World, character::{CharacterID, CharacterType}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate};
+use crate::model::world::{component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, World, character::{CharacterID, CharacterType}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, CharacterCommandState};
 
 use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}, status::{StatusUpdate, idle_status}};
 
@@ -66,7 +66,7 @@ impl ComponentSystem for CasterMinionSystem {
     // fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
     //     Err(WorldError::InvalidCommandMapping)
     // }
-    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
     fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {

@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{component::{Component, ComponentUpdateData, GetComponentID, ComponentID}, WorldSystem, WorldError, WorldInfo, ComponentSystem, commands::{CharacterCommand, WorldCommand}, character::CharacterID, World, Update};
+use crate::model::world::{component::{Component, ComponentUpdateData, GetComponentID, ComponentID}, WorldSystem, WorldError, WorldInfo, ComponentSystem, commands::{CharacterCommand, WorldCommand}, character::CharacterID, World, Update, CharacterCommandState};
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -49,7 +49,7 @@ impl ComponentSystem for HealthSystem {
     fn get_component_id(&self) -> ComponentID {
         ComponentID::Health
     }
-    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
     fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {

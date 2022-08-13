@@ -1,7 +1,7 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, StatusPrio, StatusID, Status}}, commands::GetCommandID, util::{ItClosest, GroundPos, ItClosestRef}};
+use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, StatusPrio, StatusID, Status}, CharacterCommandState}, commands::GetCommandID, util::{ItClosest, GroundPos, ItClosestRef}};
 
 use super::base::{CharacterFlip, make_flip_update, make_move_update};
 
@@ -38,6 +38,11 @@ pub fn make_movement_component_update(cid: CharacterID, dest: Option<Vector2<f32
 pub struct MoveCharacter {
     pub destination: Vector2<f32>,
 }
+
+const OVERRIDE_STATUS: Status = Status {
+    prio: StatusPrio::AbilityOverride,
+    id: StatusID::Walk,
+};
 
 // impl WorldCommand for MoveCharacter {
 //     fn validate(&self, world: &World) -> Result<(), WorldError> {
@@ -195,7 +200,7 @@ impl ComponentSystem for MovementSystem {
         let status_updates = if movement_command.is_some() {
             vec![Update::Comp(ComponentUpdate {
                 cid: *cid,
-                data: CStatus(Try(StatusPrio::AbilityOverride, Status {
+                data: CStatus(Try(OVERRIDE_STATUS.prio, Status {
                     prio: StatusPrio::Ability,
                     id: StatusID::Walk,
                 }))
@@ -220,26 +225,24 @@ impl ComponentSystem for MovementSystem {
            status_updates.into_iter())).collect())
     }
 
-    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         match cmd {
             CharacterCommand::Movement(cmd) => {
                 if cmd.destination.x.is_nan() || cmd.destination.y.is_nan() {
                     return Err(WorldError::InvalidCommand);
                 }
+                println!("chrs: {:?}", world.characters);
                 if !world.characters.contains(cid) {
                     return Err(WorldError::MissingCharacter(
                         *cid,
                         "Cannot move nonexistent character".to_string()))
                 }
-                // let base = world.base.get_component(cid)?;
-                // if cmd.reset {
-                //     if let Some(auto_attack) = world.auto_attack.components.get(cid) {
-                //         if auto_attack.is_casting(base.ctype, &world.info) {
-                //             return Err(WorldError::IllegalInterrupt(*cid));
-                //         }
-                //     }
-                // }
-                Ok(())
+                if !OVERRIDE_STATUS.can_override(&world.status.get_component(cid)?.current) {
+                    println!("Validate result: queued");
+                    return Ok(CharacterCommandState::Queued)
+                }
+                println!("Validate result: ready");
+                Ok(CharacterCommandState::Ready)
             },
             _ => Err(WorldError::InvalidCommandMapping)
         }

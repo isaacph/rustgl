@@ -571,7 +571,6 @@ impl Game<'_> {
                                     if let Some(cid) = player.selected_char {
                                         game.destination = Some(game.mouse_pos_world);
                                         game.move_timer = 0.0;
-                                        game.chatbox.println("Sending request");
                                         game.connection.send(Protocol::UDP, &MoveCharacterRequest {
                                             id: cid,
                                             dest: game.mouse_pos_world,

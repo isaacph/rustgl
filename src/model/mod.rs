@@ -7,6 +7,7 @@ pub mod player;
 pub mod world;
 pub mod commands;
 pub mod util;
+pub mod action_queue;
 
 pub const TICK_RATE: f32 = 60.0;
 

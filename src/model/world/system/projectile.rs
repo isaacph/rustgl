@@ -1,7 +1,7 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand, Priority}, ComponentSystem, Update, WorldUpdate};
+use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand, Priority}, ComponentSystem, Update, WorldUpdate, CharacterCommandState};
 
 use super::base::{CharacterBase, CharacterFlip, make_move_update, make_flip_update, CharacterBaseUpdate};
 
@@ -182,10 +182,10 @@ impl ComponentSystem for ProjectileSystem {
     //     Err(WorldError::InvalidCommandMapping)
     // }
 
-    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
-    
+
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)

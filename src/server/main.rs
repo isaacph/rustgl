@@ -1,22 +1,24 @@
-use std::fs::File;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
+use crate::model::action_queue::ActionQueue;
 use crate::model::world::commands::{WorldCommand, RunWorldCommand};
 use crate::model::world::logging::Logger;
 use crate::model::{Subscription, PrintError, TICK_RATE};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
-use crate::model::world::{World, WorldError};
-use crate::model::world::character::CharacterIDGenerator;
+use crate::model::world::{World, WorldError, CharacterCommandState};
+use crate::model::world::character::{CharacterIDGenerator, CharacterID};
 use crate::networking::Protocol;
 use crate::networking::server::{Server as Connection, ServerUpdate};
-use crate::server::commands::{SendCommands, execute_server_command};
 use self::update_loop::UpdateLoop;
+
+use super::commands::{SendCommands, execute_server_command};
 
 pub mod update_loop {
     use std::time::{Duration, Instant};
-    use crate::model::{world::{World, commands::{FixWorld, UpdateCharacter}}, commands::MakeBytes, WorldTick};
+    use crate::model::{world::{World, commands::FixWorld}, commands::MakeBytes, WorldTick};
 
     pub struct UpdateLoop {
         last_update: Option<Instant>,
@@ -42,11 +44,8 @@ pub mod update_loop {
                 false => vec![],
                 true => {
                     self.last_update = Some(now);
-                    let x: Vec<UpdateCharacter> = world.characters.iter()
+                    let x: Vec<Box<[u8]>> = world.characters.iter()
                         .filter_map(|cid| world.make_cmd_update_character(*cid))
-                        .collect();
-                    //println!("Sending out FixWorld for tick {}, len: {:?}", tick, x);
-                    let x: Vec<Box<[u8]>> = x.into_iter()
                         .filter_map(|cmd| match
                                     (&FixWorld {
                                         update: cmd,
@@ -90,6 +89,7 @@ pub struct Server {
     pub connection: Connection,
     pub tick_ordering: u32,
     pub world_commands: Vec<WorldCommand>,
+    pub action_queues: HashMap<CharacterID, ActionQueue>,
 }
 
 
@@ -105,6 +105,7 @@ impl Server {
                 connection: Connection::init(ports)?,
                 tick_ordering: 0,
                 world_commands: vec![],
+                action_queues: Default::default(),
             }
         };
         let mut update_loop = UpdateLoop::init(&server.world);
@@ -191,7 +192,31 @@ impl Server {
                 server.broadcast_data(Subscription::World, Protocol::UDP, &update_data);
 
                 let mut t_o = server.tick_ordering;
-                for command in server.world_commands.clone() {
+                let mut commands = server.world_commands.clone();
+                server.world_commands.clear();
+
+                // add in player queued commands
+                let mut forget_queues = vec![];
+                for (cid, queue) in &mut server.action_queues {
+                    if server.world.characters.get(cid).is_none() {
+                        forget_queues.push(*cid);
+                    } else if let Some(action) = &queue.next_action {
+                        match server.world.validate_command(action) {
+                            Ok(Some(CharacterCommandState::Ready)) => {
+                                commands.push(action.clone());
+                                queue.next_action = None;
+                            },
+                            Ok(Some(CharacterCommandState::Queued)) => (),
+                            Ok(_) => queue.next_action = None,
+                            Err(err) => server.world.errors.push(err),
+                        }
+                    }
+                }
+                for cid in forget_queues {
+                    server.action_queues.remove(&cid);
+                }
+
+                for command in &commands {
                     server.broadcast(Subscription::World, Protocol::UDP, &RunWorldCommand {
                         command: command.clone(),
                         tick: server.world.tick,
@@ -203,8 +228,7 @@ impl Server {
                     });
                 }
                 server.tick_ordering = t_o;
-                server.world = server.world.update(&server.world_commands, delta_time);
-                server.world_commands.clear();
+                server.world = server.world.update(&commands, delta_time);
                 logger.log(&server.world);
                 for error in server.world.errors.drain(0..server.world.errors.len()) {
                     match error {
@@ -253,12 +277,21 @@ impl Server {
 
     pub fn run_world_command(&mut self, addr: Option<&SocketAddr>, command: WorldCommand) {
         let res = self.world.validate_command(&command);
-        if res.is_ok() {
-            self.world_commands.push(command);
+        if let Ok(res) = res {
+            match (&command, res) {
+                (WorldCommand::CharacterComponent(cid, _, _), Some(_)) => {
+                    let cid = *cid;
+                    self.action_queues
+                        .entry(cid)
+                        .or_insert(ActionQueue { next_action: None })
+                        .next_action = Some(command);
+                },
+                _ => self.world_commands.push(command)
+            }
         } else {
             match addr {
                 Some(addr) =>
-                    self.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Error running wcmd: {:?}", res))).print(),
+                    self.connection.send(Protocol::TCP, addr, &ChatMessage(format!("Error validating wcmd on server: {:?}", res))).print(),
                 None => println!("Error running wcmd locally: {:?}", res)
             }
         }

@@ -1,6 +1,6 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, system::status::{StatusUpdate, idle_status}};
+use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, system::status::{StatusUpdate, idle_status}, CharacterCommandState};
 use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -84,7 +84,7 @@ impl ComponentSystem for IceWizSystem {
     fn get_component_id(&self) -> ComponentID {
         ComponentID::IceWiz
     }
-    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
     // fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {

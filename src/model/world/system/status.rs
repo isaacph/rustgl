@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::model::{world::{ComponentID, ComponentSystem, character::CharacterID, World, WorldError, commands::{CharacterCommand, WorldCommand}, Update, component::{ComponentUpdateData, Component, GetComponentID, ComponentStorageContainer, ComponentUpdate}, WorldSystem, WorldInfo}, WorldTick};
+use crate::model::world::{ComponentID, ComponentSystem, character::CharacterID, World, WorldError, commands::{CharacterCommand, WorldCommand}, Update, component::{ComponentUpdateData, Component, GetComponentID, ComponentStorageContainer}, WorldSystem, WorldInfo, CharacterCommandState};
 use itertools::Itertools;
 use serde::{Serialize, Deserialize};
 
@@ -41,6 +41,13 @@ impl StatusPrio {
 pub struct Status {
     pub prio: StatusPrio,
     pub id: StatusID,
+}
+
+impl Status {
+    pub fn can_override(&self, other: &Status) -> bool {
+        self.prio.get_prio() > other.prio.get_prio() ||
+            self.prio.get_prio() == other.prio.get_prio() && self.id > other.id
+    }
 }
 
 impl Default for StatusComponent {
@@ -98,7 +105,7 @@ impl ComponentSystem for StatusSystem {
     fn get_component_id(&self) -> ComponentID {
         ComponentID::Status
     }
-    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         Err(WorldError::InvalidCommandMapping)
     }
 

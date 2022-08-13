@@ -130,9 +130,15 @@ pub trait WorldSystem {
     fn init_world_info(&self) -> Result<WorldInfo, WorldError>;
 }
 
+#[derive(Debug)]
+pub enum CharacterCommandState {
+    Ready,
+    Queued,
+}
+
 pub trait ComponentSystem: WorldSystem {
     fn get_component_id(&self) -> ComponentID;
-    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError>;
+    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<CharacterCommandState, WorldError>;
     // fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError>;
     fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError>;
     // fn validate_character_state(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError>;
@@ -296,13 +302,13 @@ impl World {
                     _ => None
                 })).collect();
         let mut update_errors = update_res.iter().filter_map(|res| res.clone().err()).collect_vec();
-        if update_res.len() > 0 {
-            update_errors.push(WorldError::Info(format!("Updates: {:?}", update_res)));
-        }
+        // if update_res.len() > 0 {
+        //     update_errors.push(WorldError::Info(format!("Updates: {:?}", update_res)));
+        // }
         let mut reduce_errors = vec![];
-        if !commands.is_empty() {
-            reduce_errors.push(WorldError::Info(format!("World commands: {:?}", commands)));
-        }
+        // if !commands.is_empty() {
+        //     reduce_errors.push(WorldError::Info(format!("World commands: {:?}", commands)));
+        // }
         let mut reduce_errors_2 = vec![];
         let mut reduce_errors_3 = vec![];
         let reduced: Vec<Update> = update_res.iter()
@@ -351,7 +357,7 @@ impl World {
                 }
             }.into_iter())
             .collect();
-        reduce_errors.push(WorldError::Info(format!("Reduced: {}", dbg_updates_sorted(&reduced))));
+        // reduce_errors.push(WorldError::Info(format!("Reduced: {}", dbg_updates_sorted(&reduced))));
         reduce_errors.extend(reduce_errors_2);
         reduce_errors.extend(reduce_errors_3);
         // let reduced: Vec<Update> = self.info.component_systems.iter()
@@ -404,18 +410,19 @@ impl World {
         world
     }
 
-    pub fn validate_command(&self, command: &WorldCommand) -> Result<(), WorldError> {
+    // character commands cannot return Ok(None) 
+    pub fn validate_command(&self, command: &WorldCommand) -> Result<Option<CharacterCommandState>, WorldError> {
         match command {
             WorldCommand::World(GlobalCommand::CreateCharacter(cid, typ)) => {
                 match (self.characters.contains(cid), typ) {
                     (true, _) => Err(WorldError::CharacterIDAlreadyExists(*cid)),
-                    (false, CharacterType::IceWiz) | (false, CharacterType::CasterMinion) => Ok(()),
+                    (false, CharacterType::IceWiz) | (false, CharacterType::CasterMinion) => Ok(None),
                     _ => Err(WorldError::NotImplemented),
                 }
             },
             WorldCommand::CharacterComponent(cid, comp_id, command) => match self.info.component_systems.get(comp_id) {
                 None => Err(WorldError::InvalidCommandMapping),
-                Some(system) => system.validate_character_command(self, cid, command)
+                Some(system) => Ok(Some(system.validate_character_command(self, cid, command)?))
             },
             WorldCommand::World(GlobalCommand::Clear) => Err(WorldError::NotImplemented),
         }

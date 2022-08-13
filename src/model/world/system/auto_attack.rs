@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::{CharacterCommand, WorldCommand}, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldInfo, WorldSystem, ComponentSystem, Update}, commands::GetCommandID, WorldTick, TICK_RATE};
+use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::{CharacterCommand, WorldCommand}, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldInfo, WorldSystem, ComponentSystem, Update, CharacterCommandState}, commands::GetCommandID, WorldTick, TICK_RATE};
 use self::fsm::Fsm;
 
 use super::{movement::walk_to, projectile::{self, ProjectileCreationInfo}, base::{CharacterFlip, make_flip_update}, status::{StatusID, StatusPrio, StatusUpdate, Status}};
@@ -128,6 +128,11 @@ pub struct AutoAttackCommand {
     pub projectile_gen_ids: CharacterIDRange,
 }
 
+const OVERRIDE_STATUS: Status = Status {
+    prio: StatusPrio::AbilityOverride,
+    id: StatusID::AutoAttack,
+};
+
 pub struct AutoAttackSystem;
 
 impl WorldSystem for AutoAttackSystem {
@@ -141,7 +146,7 @@ impl ComponentSystem for AutoAttackSystem {
         ComponentID::AutoAttack
     }
 
-    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<(), WorldError> {
+    fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         match cmd {
             CharacterCommand::AutoAttack(cmd) => {
                 if *cid == cmd.target {
@@ -156,7 +161,10 @@ impl ComponentSystem for AutoAttackSystem {
                 if !world.base.get_component(&cmd.target)?.targetable {
                     return Err(WorldError::InvalidCommand);
                 }
-                Ok(())
+                if !OVERRIDE_STATUS.can_override(&world.status.get_component(&cmd.target)?.current) {
+                    return Ok(CharacterCommandState::Queued)
+                }
+                Ok(CharacterCommandState::Ready)
             },
             _ => Err(WorldError::InvalidCommandMapping)
         }
@@ -354,7 +362,7 @@ impl ComponentSystem for AutoAttackSystem {
             }
         } else if command.is_some() {
             // new override status priority
-            Some(StatusUpdate::Try(StatusPrio::AbilityOverride, Status {
+            Some(StatusUpdate::Try(OVERRIDE_STATUS.prio, Status {
                 id: StatusID::AutoAttack,
                 prio: StatusPrio::Ability,
             }))
