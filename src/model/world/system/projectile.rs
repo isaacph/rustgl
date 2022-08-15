@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand, Priority}, ComponentSystem, Update, WorldUpdate, CharacterCommandState, WorldErrorI};
 
-use super::base::{CharacterBase, CharacterFlip, make_move_update, make_flip_update, CharacterBaseUpdate};
+use super::{base::{CharacterBase, CharacterFlip, make_move_update, make_flip_update, CharacterBaseUpdate}, health::make_health_update};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Projectile {
@@ -169,9 +169,12 @@ impl ComponentSystem for ProjectileSystem {
             // }
             Ok([
                Some(Update::World(WorldUpdate::RemoveCharacterID(*cid))),
+               Some(make_health_update(&target, -damage)),
                if health.health - damage <= 0.0 {
                    Some(Update::World(WorldUpdate::RemoveCharacterID(target)))
-               } else { None }
+               } else {
+                   None
+               }
             ].into_iter().flatten().collect())
         } else {
             Ok(fly_updates)

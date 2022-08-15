@@ -323,15 +323,15 @@ impl Game<'_> {
                         }
                     }
                     *world = world.update(&world_commands, 1.0 / TICK_RATE);
-                    logger.log(world);
+                    // logger.log(world);
                     for error in world.errors.drain(0..world.errors.len()) {
                         // client side errors usually will be a result of lag
-                        let WorldError(error) = error;
-                        match error {
-                            WorldErrorI::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
-                            // WorldErrorI::Info(st) => println!("Tick {}, {}", world.tick, st.as_str()),
-                            _ => println!("Client world error: {:?}", error),
-                        }
+                        // let WorldError(error) = error;
+                        // match error {
+                        //     WorldErrorI::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
+                        //     WorldErrorI::Info(st) => (), //println!("Tick {}, {}", world.tick, st.as_str()),
+                        //     _ => println!("Client world error: {:?}", error),
+                        // }
                     }
                 }
             }

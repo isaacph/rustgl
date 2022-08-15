@@ -162,7 +162,6 @@ impl ComponentSystem for AutoAttackSystem {
                     return Err(WorldErrorI::InvalidCommand.err());
                 }
                 let status = &world.status.get_component(cid)?.current;
-                println!("Validating AA command, status: {:?}", status);
                 if !OVERRIDE_STATUS.can_override(status) {
                     return Ok(CharacterCommandState::Queued)
                 }
@@ -525,7 +524,7 @@ impl ComponentSystem for AutoAttackSystem {
             Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack).err())
         } else {
             if !changes.is_empty() {
-                println!("AA changes: {:?}", changes);
+                // println!("AA changes: {:?}", changes);
             }
             Ok(changes)
         }

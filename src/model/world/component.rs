@@ -142,14 +142,18 @@ impl<T: Serialize + GetComponentID + DeserializeOwned + Component + Debug> Compo
             // println!("Requested updates to component: {:?}", updates);
         }
         // chain updates together for updates with same character ID
+        let comp_id = Self::ID;
         let updates = updates.iter()
             .map(|update| (update.cid, update))
             .into_group_map()
             .into_iter()
             .filter_map(|(cid, update)| {
                 let def = Default::default();
-                let start = self.components.get(&cid)
-                    .unwrap_or(&def);
+                let start = self.components.get(&cid);
+                if start.is_none() {
+                    // println!("Warning: component missing: {:?}", comp_id);
+                }
+                let start = start.unwrap_or(&def);
                 update
                 .into_iter()
                 .fold(None, |current, update| match current {

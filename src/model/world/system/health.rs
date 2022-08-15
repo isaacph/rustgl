@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{component::{Component, ComponentUpdateData, GetComponentID, ComponentID}, WorldSystem, WorldError, WorldInfo, ComponentSystem, commands::{CharacterCommand, WorldCommand}, character::CharacterID, World, Update, CharacterCommandState, WorldErrorI};
+use crate::model::world::{component::{Component, ComponentUpdateData, GetComponentID, ComponentID, ComponentUpdate}, WorldSystem, WorldError, WorldInfo, ComponentSystem, commands::{CharacterCommand, WorldCommand}, character::CharacterID, World, Update, CharacterCommandState, WorldErrorI};
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -12,11 +12,13 @@ pub struct CharacterHealth {
 impl Component for CharacterHealth {
     fn update(&self, update: &ComponentUpdateData) -> Self {
         match *update {
-            ComponentUpdateData::Health(CharacterHealthUpdate::New(x)) =>
-                Self { health: x, max_health: x },
-            ComponentUpdateData::Health(CharacterHealthUpdate::Change(x)) =>
-                Self { health: self.health + x, max_health: self.max_health },
-            _ => self.clone()
+            ComponentUpdateData::Health(CharacterHealthUpdate::New(x)) => {
+                println!("Health reinit");
+                Self { health: x, max_health: x }},
+            ComponentUpdateData::Health(CharacterHealthUpdate::Change(x)) => {
+                Self { health: self.health + x, max_health: self.max_health }
+            },
+            _ => *self
         }
     }
 }
@@ -43,6 +45,17 @@ impl WorldSystem for HealthSystem {
     fn init_world_info(&self) -> Result<WorldInfo, WorldError> {
         Ok(WorldInfo::new())
     }
+}
+
+pub fn make_health_update(cid: &CharacterID, health_change: f32) -> Update {
+    Update::Comp(
+        ComponentUpdate {
+            cid: *cid,
+            data: ComponentUpdateData::Health(
+                CharacterHealthUpdate::Change(health_change)
+            )
+        }
+    )
 }
 
 impl ComponentSystem for HealthSystem {

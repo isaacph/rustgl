@@ -427,7 +427,7 @@ impl Render {
                                     );
 
                                     if let Ok(status) = game.world.status.get_component(cid) {
-                                        println!("{:?} status {:?}", cid, status.current.id);
+                                        // println!("{:?} status {:?}", cid, status.current.id);
                                     }
 
                                     // render player name below player

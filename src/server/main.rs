@@ -203,11 +203,11 @@ impl Server {
                     } else if let Some(action) = &queue.next_action {
                         match server.world.validate_command(action) {
                             Ok(Some(CharacterCommandState::Ready)) => {
-                                println!("Command in queue ready: {:?}", action);
+                                // println!("Command in queue ready: {:?}", action);
                                 commands.push(action.clone());
                                 queue.next_action = None;
                             },
-                            Ok(Some(CharacterCommandState::Queued)) => println!("Command in queue: {:?}", action),
+                            Ok(Some(CharacterCommandState::Queued)) => (), // println!("Command in queue: {:?}", action),
                             Ok(_) => queue.next_action = None,
                             Err(err) => server.world.errors.push(err),
                         }
@@ -230,10 +230,10 @@ impl Server {
                 }
                 server.tick_ordering = t_o;
                 server.world = server.world.update(&commands, delta_time);
-                logger.log(&server.world);
+                // logger.log(&server.world);
                 for error in server.world.errors.drain(0..server.world.errors.len()) {
                     match error {
-                        WorldError(WorldErrorI::Info(st)) => println!("Tick {}, {}", server.world.tick, st),
+                        WorldError(WorldErrorI::Info(_st)) => (), //println!("Tick {}, {}", server.world.tick, st),
                         _ => println!("Server world error: {:?}", error),
                     }
                 }
