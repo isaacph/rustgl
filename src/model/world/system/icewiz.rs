@@ -1,7 +1,7 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
-use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, system::status::{StatusUpdate, idle_status}, CharacterCommandState};
-use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}};
+use crate::model::world::{World, character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, system::{status::{StatusUpdate, idle_status}, flash::FlashUpdate}, CharacterCommandState, WorldErrorI};
+use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}, flash::FlashInfo};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct IceWiz {
@@ -22,14 +22,14 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
     let id = *id;
     // start these two at base stats
     let mut base = *world.info.base.get(&typ)
-    .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Base))?;
+    .ok_or_else(|| WorldErrorI::MissingCharacterInfoComponent(typ, ComponentID::Base).err())?;
     base.position = Vector3::new(position.x, position.y, 0.0);
     println!("Running create for cid {:?}", id);
     Ok([
         ComponentUpdateData::Base(CharacterBaseUpdate::New(base)),
         ComponentUpdateData::Health(CharacterHealthUpdate::New(
             world.info.health.get(&typ)
-                .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Health))?
+                .ok_or_else(|| WorldErrorI::MissingCharacterInfoComponent(typ, ComponentID::Health).err())?
                 .health
         )),
         ComponentUpdateData::Movement(Movement {
@@ -37,7 +37,8 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
         }),
         ComponentUpdateData::AutoAttack(AutoAttackUpdate(AutoAttack::new())),
         ComponentUpdateData::IceWiz,
-        ComponentUpdateData::Status(StatusUpdate::New(idle_status()))
+        ComponentUpdateData::Status(StatusUpdate::New(idle_status())),
+        ComponentUpdateData::Flash(FlashUpdate::new())
     ].into_iter()
     .map(|cud| Update::Comp(ComponentUpdate {
         cid: id,
@@ -76,6 +77,15 @@ impl WorldSystem for IceWizSystem {
             1.2, // projectile speed
             Vector3::new(0.2, 0.0, -0.35) // projectile offset
         )?);
+        info.flash.insert(CharacterType::IceWiz, FlashInfo::init(
+            0.5, // duration
+            0.0, // cooldown
+            1.0, // wind up duration
+            2.0, // casting duration
+            1.0, // wind down duration
+            3.0, // fire time (after animation start)
+            2.0 // range
+        )?);
         Ok(info)
     }
 }
@@ -85,7 +95,7 @@ impl ComponentSystem for IceWizSystem {
         ComponentID::IceWiz
     }
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
-        Err(WorldError::InvalidCommandMapping)
+        Err(WorldErrorI::InvalidCommandMapping.err())
     }
     // fn run_character_command(&self, _: &mut World, _: &CharacterID, _: CharacterCommand) -> Result<(), WorldError> {
     //     Err(WorldError::InvalidCommandMapping)

@@ -98,7 +98,7 @@ impl<E: Clone + Copy + Eq, V: Clone + Copy + Eq> Fsm<E, V> {
     pub fn get_current_state(&self, total_duration: f32, time: f32) -> E {
         match self.states.iter().find(|state|
                 state.start_time * total_duration <= time &&
-                time <= state.end_time * total_duration
+                time < state.end_time * total_duration
         ) {
             Some(state) => state.typ,
             None => self.ending

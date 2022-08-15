@@ -1,7 +1,7 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, World, character::{CharacterID, CharacterType}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, CharacterCommandState};
+use crate::model::world::{component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, World, character::{CharacterID, CharacterType}, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand}, ComponentSystem, Update, WorldUpdate, CharacterCommandState, WorldErrorI};
 
 use super::{movement::Movement, auto_attack::{AutoAttack, AutoAttackInfo, AutoAttackUpdate}, base::{CharacterBase, CharacterFlip, CharacterBaseUpdate}, health::{CharacterHealth, CharacterHealthUpdate}, status::{StatusUpdate, idle_status}};
 
@@ -67,7 +67,7 @@ impl ComponentSystem for CasterMinionSystem {
     //     Err(WorldError::InvalidCommandMapping)
     // }
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
-        Err(WorldError::InvalidCommandMapping)
+        Err(WorldErrorI::InvalidCommandMapping.err())
     }
     fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
         Ok(vec![])
@@ -82,13 +82,13 @@ pub fn create(world: &World, id: &CharacterID, position: Vector2<f32>) -> Result
     let id = *id;
     // start these two at base stats
     let mut base = *world.info.base.get(&typ)
-    .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Base))?;
+    .ok_or_else(|| WorldErrorI::MissingCharacterInfoComponent(typ, ComponentID::Base).err())?;
     base.position = Vector3::new(position.x, position.y, 0.0);
     Ok([
         ComponentUpdateData::Base(CharacterBaseUpdate::New(base)),
         ComponentUpdateData::Health(CharacterHealthUpdate::New(
             world.info.health.get(&typ)
-                .ok_or(WorldError::MissingCharacterInfoComponent(typ, ComponentID::Health))?
+                .ok_or_else(|| WorldErrorI::MissingCharacterInfoComponent(typ, ComponentID::Health).err())?
                 .health
         )),
         ComponentUpdateData::Movement(Movement {

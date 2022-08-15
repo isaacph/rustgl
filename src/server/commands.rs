@@ -67,6 +67,7 @@ pub fn execute_server_command(command: &[u8], context: ((Protocol, &SocketAddr),
             // MoveCharacter => drun_w::<crate::model::world::system::movement::MoveCharacter>(data, context),
             MoveCharacterRequest => drun::<crate::model::world::system::movement::MoveCharacterRequest>(data, context),
             AutoAttackRequest => drun::<crate::model::world::system::auto_attack::AutoAttackRequest>(data, context),
+            FlashRequest => drun::<crate::model::world::system::flash::FlashRequest>(data, context),
             EnsureCharacter => drun::<crate::model::world::commands::EnsureCharacter>(data, context),
             ClearWorld => drun::<crate::model::world::commands::ClearWorld>(data, context),
             _ => {

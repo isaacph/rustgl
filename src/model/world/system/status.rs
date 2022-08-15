@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::model::world::{ComponentID, ComponentSystem, character::CharacterID, World, WorldError, commands::{CharacterCommand, WorldCommand}, Update, component::{ComponentUpdateData, Component, GetComponentID, ComponentStorageContainer}, WorldSystem, WorldInfo, CharacterCommandState};
+use crate::model::world::{ComponentID, ComponentSystem, character::CharacterID, World, WorldError, commands::{CharacterCommand, WorldCommand}, Update, component::{ComponentUpdateData, Component, GetComponentID, ComponentStorageContainer}, WorldSystem, WorldInfo, CharacterCommandState, WorldErrorI};
 use itertools::Itertools;
 use serde::{Serialize, Deserialize};
 
@@ -9,6 +9,7 @@ pub enum StatusID {
     Idle,
     Walk,
     AutoAttack,
+    Flash,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy)]
@@ -106,38 +107,36 @@ impl ComponentSystem for StatusSystem {
         ComponentID::Status
     }
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
-        Err(WorldError::InvalidCommandMapping)
+        Err(WorldErrorI::InvalidCommandMapping.err())
     }
 
-    fn update_character(&self, world: &World, _: &Vec<WorldCommand>, cid: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
         Ok(vec![])
     }
 
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
-            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
-                CStatus(New(_)) => true,
-                _ => false,
-            }).cloned().collect();
-            if new_changes.len() == 0 {
-                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Status))
+            let new_changes: Vec<ComponentUpdateData> = changes.iter()
+                .filter(|new| matches!(*new, CStatus(New(_)))).cloned().collect();
+            if new_changes.is_empty() {
+                return Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::Status).err())
             } else if new_changes.len() > 1 {
-                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::Status))
+                return Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::Status).err())
             } else {
                 return Ok(new_changes)
             }
         }
         use ComponentUpdateData::Status as CStatus;
         use StatusUpdate::*;
-        let cancel = changes.into_iter().filter_map(|data| match *data {
+        let cancel = changes.iter().filter_map(|data| match *data {
             CStatus(Cancel(cancel)) => Some(cancel),
             _ => None,
         })
         .filter(|id| *id != StatusID::Idle);
 
         // get prio changes
-        let prio_changes: HashMap<StatusID, StatusPrio> = changes.into_iter().filter_map(|x| match *x {
+        let prio_changes: HashMap<StatusID, StatusPrio> = changes.iter().filter_map(|x| match *x {
             CStatus(ChangePrio(id, new)) => Some((id, new)),
             _ => None
         })
@@ -150,7 +149,7 @@ impl ComponentSystem for StatusSystem {
         .collect();
 
         // get status change requests (called Try)
-        let mut iter = changes.into_iter()
+        let mut iter = changes.iter()
             .filter_map(|change| match change.clone() {
                 CStatus(Try(prio, change)) => Some((prio, change)),
                 _ => None
@@ -177,7 +176,7 @@ impl ComponentSystem for StatusSystem {
             .into_group_map()
             .into_iter()
             .flat_map(|(_, group)| group.into_iter()
-                .max_by_key(|(prio, status)| prio.get_prio())
+                .max_by_key(|(prio, _status)| prio.get_prio())
                 .into_iter())
             // sort by prio then id
             .sorted_unstable_by(|(a_prio, a), (b_prio, b)| a_prio.get_prio().cmp(&b_prio.get_prio()).reverse()

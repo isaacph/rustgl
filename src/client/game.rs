@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, FixWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest}, WorldError, logging::Logger,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, FixWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest, flash::FlashRequest}, WorldError, logging::Logger, WorldErrorI,
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerData, PlayerDataView}}, TICK_RATE, Tick}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -326,9 +326,10 @@ impl Game<'_> {
                     logger.log(world);
                     for error in world.errors.drain(0..world.errors.len()) {
                         // client side errors usually will be a result of lag
+                        let WorldError(error) = error;
                         match error {
-                            WorldError::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
-                            WorldError::Info(st) => println!("Tick {}, {}", world.tick, st.as_str()),
+                            WorldErrorI::DesyncError(_, _, _) => game.chatbox.println(format!("{:?}", error).as_str()),
+                            // WorldErrorI::Info(st) => println!("Tick {}, {}", world.tick, st.as_str()),
                             _ => println!("Client world error: {:?}", error),
                         }
                     }
@@ -603,6 +604,21 @@ impl Game<'_> {
                                                 dest: game.mouse_pos_world,
                                             }).ok();
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    (State::DEFAULT, glfw::WindowEvent::Key(glfw::Key::F, _, Action::Press, _)) => {
+                        if game.connection.is_connected() {
+                            if let Some(pid) = game.selected_player {
+                                if let Some(player) = game.players.get_player(&pid) {
+                                    if let Some(cid) = player.selected_char {
+                                        let pos = game.mouse_pos_world;
+                                        game.connection.send(Protocol::UDP, &FlashRequest {
+                                            user: cid,
+                                            target_pos: pos,
+                                        }).ok();
                                     }
                                 }
                             }

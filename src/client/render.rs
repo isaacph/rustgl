@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::f32::consts::PI;
 use std::ops::Bound::{Included, Unbounded};
 use nalgebra::{Vector2, Vector4, Similarity3, Vector3, Rotation2};
 use crate::model::TICK_RATE;
@@ -404,7 +405,11 @@ impl Render {
                                     let matrix = graphics::make_matrix(
                                         Vector2::new(base.position.x, base.position.y) + offset,
                                         Vector2::new(flip_dir * scale, scale),
-                                        0.0
+                                        if let Ok(flash) = game.world.flash.get_component(cid) {
+                                            if let Some(exec) = &flash.ability.execution {
+                                                ((game.world.tick - exec.time_start) as f32 / TICK_RATE) / exec.duration * PI * 2.0
+                                            } else { 0.0 }
+                                        } else { 0.0 }
                                     );
                                     let hovered = if let Some(hcid) = &game.hovered_character {
                                         *cid == *hcid
@@ -420,6 +425,10 @@ impl Render {
                                         &textures[frame],
                                         graphics::VertexRange::Full
                                     );
+
+                                    if let Ok(status) = game.world.status.get_component(cid) {
+                                        println!("{:?} status {:?}", cid, status.current.id);
+                                    }
 
                                     // render player name below player
                                     let above = match base.ctype {

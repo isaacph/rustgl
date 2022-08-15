@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::{Display, Debug}};
 use itertools::Itertools;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use super::{character::CharacterID, WorldError, system::{base::CharacterBaseUpdate, projectile::ProjectileUpdate, status::StatusUpdate, movement::Movement, auto_attack::AutoAttackUpdate}, system::health::CharacterHealthUpdate};
+use super::{character::CharacterID, WorldError, system::{base::CharacterBaseUpdate, projectile::ProjectileUpdate, status::StatusUpdate, movement::Movement, auto_attack::AutoAttackUpdate, flash::FlashUpdate}, system::health::CharacterHealthUpdate, WorldErrorI};
 use strum_macros::EnumIter;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter)]
@@ -16,6 +16,7 @@ pub enum ComponentID {
     AutoAttack,
     Projectile,
     Status,
+    Flash,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -26,6 +27,7 @@ pub enum ComponentUpdateData {
     Status(StatusUpdate),
     Movement(Movement),
     AutoAttack(AutoAttackUpdate),
+    Flash(FlashUpdate),
     CasterMinion,
     IceWiz,
 }
@@ -39,6 +41,7 @@ impl ComponentUpdateData {
             ComponentUpdateData::Status(_) => ComponentID::Status,
             ComponentUpdateData::Movement(_) => ComponentID::Movement,
             ComponentUpdateData::AutoAttack(_) => ComponentID::AutoAttack,
+            ComponentUpdateData::Flash(_) => ComponentID::Flash,
             ComponentUpdateData::CasterMinion => ComponentID::CasterMinion,
             ComponentUpdateData::IceWiz => ComponentID::IceWiz,
         }
@@ -180,13 +183,13 @@ impl<T> ComponentStorageContainer<T> for ComponentStorage<T>
     fn get_component_mut(&mut self, cid: &CharacterID) -> Result<&mut T, WorldError> {
         match self.components.get_mut(cid) {
             Some(comp) => Ok(comp),
-            None => Err(WorldError::MissingCharacterComponent(*cid, T::ID))
+            None => Err(WorldErrorI::MissingCharacterComponent(*cid, T::ID).err())
         }
     }
     fn get_component(&self, cid: &CharacterID) -> Result<&T, WorldError> {
         match self.components.get(cid) {
             Some(comp) => Ok(comp),
-            None => Err(WorldError::MissingCharacterComponent(*cid, T::ID))
+            None => Err(WorldErrorI::MissingCharacterComponent(*cid, T::ID).err())
         }
     }
 }

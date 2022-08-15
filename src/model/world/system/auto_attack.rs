@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::{CharacterCommand, WorldCommand}, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldInfo, WorldSystem, ComponentSystem, Update, CharacterCommandState}, commands::GetCommandID, WorldTick, TICK_RATE};
+use crate::model::{world::{World, character::{CharacterID, CharacterType, CharacterIDRange}, commands::{CharacterCommand, WorldCommand}, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldInfo, WorldSystem, ComponentSystem, Update, CharacterCommandState, WorldErrorI}, commands::GetCommandID, WorldTick, TICK_RATE};
 use self::fsm::Fsm;
 
 use super::{movement::walk_to, projectile::{self, ProjectileCreationInfo}, base::{CharacterFlip, make_flip_update}, status::{StatusID, StatusPrio, StatusUpdate, Status}};
@@ -98,7 +98,7 @@ impl AutoAttackInfo {
             ],
             AutoAttackPhase::Complete,
             &[(fire_time, AutoAttackFireEvent)])
-                .ok_or(WorldError::InvalidComponentInfo(ctype, ComponentID::AutoAttack))?,
+                .ok_or_else(|| WorldErrorI::InvalidComponentInfo(ctype, ComponentID::AutoAttack).err())?,
             projectile_offset,
             projectile_speed
         })
@@ -150,23 +150,25 @@ impl ComponentSystem for AutoAttackSystem {
         match cmd {
             CharacterCommand::AutoAttack(cmd) => {
                 if *cid == cmd.target {
-                    return Err(WorldError::InvalidCommand)
+                    return Err(WorldErrorI::InvalidCommand.err())
                 }
                 if !world.characters.contains(cid) {
-                    return Err(WorldError::MissingCharacter(*cid, "Nonexistent character cannot attack".to_string()))
+                    return Err(WorldErrorI::MissingCharacter(*cid, "Nonexistent character cannot attack".to_string()).err())
                 }
                 if !world.characters.contains(&cmd.target) {
-                    return Err(WorldError::MissingCharacter(cmd.target, "Cannot attack nonexistent character".to_string()))
+                    return Err(WorldErrorI::MissingCharacter(cmd.target, "Cannot attack nonexistent character".to_string()).err())
                 }
                 if !world.base.get_component(&cmd.target)?.targetable {
-                    return Err(WorldError::InvalidCommand);
+                    return Err(WorldErrorI::InvalidCommand.err());
                 }
-                if !OVERRIDE_STATUS.can_override(&world.status.get_component(&cmd.target)?.current) {
+                let status = &world.status.get_component(cid)?.current;
+                println!("Validating AA command, status: {:?}", status);
+                if !OVERRIDE_STATUS.can_override(status) {
                     return Ok(CharacterCommandState::Queued)
                 }
                 Ok(CharacterCommandState::Ready)
             },
-            _ => Err(WorldError::InvalidCommandMapping)
+            _ => Err(WorldErrorI::InvalidCommandMapping.err())
         }
     }
 
@@ -252,7 +254,7 @@ impl ComponentSystem for AutoAttackSystem {
             (base.ctype, base.attack_speed, base.range)
         };
         let attack_info = world.info.auto_attack.get(&ctype)
-            .ok_or(WorldError::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack))?.clone();
+            .ok_or_else(|| WorldErrorI::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack).err())?.clone();
         let auto_attack = world.auto_attack.get_component(cid)?;
         let (executing, casting, fire_attack_updates, cooldown_updates) = {
             let executing;
@@ -304,7 +306,7 @@ impl ComponentSystem for AutoAttackSystem {
 
         // movement
         let (arrived, movement_updates) = if !executing && is_status && auto_attack.targeting.is_some() {
-            let AutoAttackTargeting { target, ids: _ } = auto_attack.targeting.as_ref().ok_or(WorldError::BadLogic)?;
+            let AutoAttackTargeting { target, ids: _ } = auto_attack.targeting.as_ref().ok_or_else(|| WorldErrorI::BadLogic.err())?;
             let target_pos = world.base.get_component(target)?.position;
             let target_pos = Vector2::new(target_pos.x, target_pos.y);
             walk_to(world, cid, &target_pos, range, delta_time)?
@@ -314,7 +316,7 @@ impl ComponentSystem for AutoAttackSystem {
         let (stop_targeting, execution_update, new_proj_ids) = if executing && !is_status {
             (false, Some(None), None)
         } else if !executing && is_status && arrived && !on_cooldown && auto_attack.targeting.is_some() {
-            let targeting = auto_attack.targeting.as_ref().ok_or(WorldError::BadLogic)?;
+            let targeting = auto_attack.targeting.as_ref().ok_or_else(|| WorldErrorI::BadLogic.err())?;
             if let (Some(proj_id), new_range) = targeting.ids.split_id() {
                 // start execution
                 (false, Some(Some(AutoAttackExecution {
@@ -343,7 +345,7 @@ impl ComponentSystem for AutoAttackSystem {
         } else if !is_status && targeting || stop_targeting {
             Some(None)
         } else if let Some(new_ids) = new_proj_ids {
-            let mut update_targeting = auto_attack.targeting.clone().ok_or(WorldError::BadLogic)?;
+            let mut update_targeting = auto_attack.targeting.clone().ok_or_else(|| WorldErrorI::BadLogic.err())?;
             update_targeting.ids = new_ids;
             Some(Some(update_targeting))
         } else if let Some(t) = auto_attack.targeting.as_ref() {
@@ -402,9 +404,6 @@ impl ComponentSystem for AutoAttackSystem {
            .chain(update_status_updates)
            .chain(fire_attack_updates.into_iter())
            .collect_vec();
-        if !collected_updates.is_empty() {
-            // println!("AA Updates: {:?}", collected_updates);
-        }
         Ok(collected_updates)
     }
 
@@ -504,28 +503,30 @@ impl ComponentSystem for AutoAttackSystem {
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
-            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
-                ComponentUpdateData::AutoAttack(_) => true,
-                _ => false,
-            }).cloned().collect();
-            if new_changes.len() == 0 {
-                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::AutoAttack))
+            let new_changes: Vec<ComponentUpdateData> = changes.iter()
+                .filter(|new| matches!(*new, ComponentUpdateData::AutoAttack(_)))
+                .cloned().collect();
+            if new_changes.is_empty() {
+                return Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::AutoAttack).err())
             } else if new_changes.len() > 1 {
-                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack))
+                return Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack).err())
             } else {
                 return Ok(new_changes)
             }
         }
-        let changes: Vec<ComponentUpdateData> = changes.into_iter()
+        let changes: Vec<ComponentUpdateData> = changes.iter()
            .filter_map(|change| match change.clone() {
                ComponentUpdateData::AutoAttack(new_aa) => Some(new_aa),
                _ => None
            })
-           .map(|aa| ComponentUpdateData::AutoAttack(aa))
+           .map(ComponentUpdateData::AutoAttack)
            .collect();
         if changes.len() > 1 {
-            Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack))
+            Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack).err())
         } else {
+            if !changes.is_empty() {
+                println!("AA changes: {:?}", changes);
+            }
             Ok(changes)
         }
     }
@@ -578,10 +579,10 @@ fn auto_attack_fire(world: &World, cid: &CharacterID) -> Result<Vec<Update>, Wor
         (base.ctype, base.attack_damage)
     };
     let execution = world.auto_attack.get_component(cid)?.execution.as_ref()
-        .ok_or_else(|| WorldError::UnexpectedComponentState(
+        .ok_or_else(|| WorldErrorI::UnexpectedComponentState(
             *cid,
             ComponentID::AutoAttack,
-            "Tried to fire without currently executing auto attack".to_string()))?;
+            "Tried to fire without currently executing auto attack".to_string()).err())?;
     let gen_id = execution.projectile_gen_id;
     let origin = *cid;
     let target = execution.target;
@@ -600,7 +601,7 @@ fn auto_attack_fire(world: &World, cid: &CharacterID) -> Result<Vec<Update>, Wor
 
     // make auto attack info
     let aa_info = world.info.auto_attack.get(&ctype)
-        .ok_or(WorldError::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack))?;
+        .ok_or_else(|| WorldErrorI::MissingCharacterInfoComponent(ctype, ComponentID::AutoAttack).err())?;
     let info = ProjectileCreationInfo {
         starting_offset: aa_info.projectile_offset,
         speed: aa_info.projectile_speed,

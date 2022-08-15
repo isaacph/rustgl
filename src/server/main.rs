@@ -8,7 +8,7 @@ use crate::model::{Subscription, PrintError, TICK_RATE};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
 use crate::model::player::model::{PlayerManager, PlayerManagerUpdate, PlayerDataView};
-use crate::model::world::{World, WorldError, CharacterCommandState};
+use crate::model::world::{World, WorldError, CharacterCommandState, WorldErrorI};
 use crate::model::world::character::{CharacterIDGenerator, CharacterID};
 use crate::networking::Protocol;
 use crate::networking::server::{Server as Connection, ServerUpdate};
@@ -203,10 +203,11 @@ impl Server {
                     } else if let Some(action) = &queue.next_action {
                         match server.world.validate_command(action) {
                             Ok(Some(CharacterCommandState::Ready)) => {
+                                println!("Command in queue ready: {:?}", action);
                                 commands.push(action.clone());
                                 queue.next_action = None;
                             },
-                            Ok(Some(CharacterCommandState::Queued)) => (),
+                            Ok(Some(CharacterCommandState::Queued)) => println!("Command in queue: {:?}", action),
                             Ok(_) => queue.next_action = None,
                             Err(err) => server.world.errors.push(err),
                         }
@@ -232,7 +233,7 @@ impl Server {
                 logger.log(&server.world);
                 for error in server.world.errors.drain(0..server.world.errors.len()) {
                     match error {
-                        WorldError::Info(st) => println!("Tick {}, {}", server.world.tick, st),
+                        WorldError(WorldErrorI::Info(st)) => println!("Tick {}, {}", server.world.tick, st),
                         _ => println!("Server world error: {:?}", error),
                     }
                 }

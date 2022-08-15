@@ -43,7 +43,7 @@ use self::{
             BaseSystem
         },
         health::{CharacterHealth, HealthSystem},
-        status::{StatusSystem, StatusComponent},
+        status::{StatusSystem, StatusComponent}, flash::{Flash, FlashInfo, FlashAbilitySystem},
     }
 };
 
@@ -64,13 +64,14 @@ pub mod client;
 
 
 #[derive(Debug, Clone)]
-pub enum WorldError {
+pub enum WorldErrorI {
     MissingCharacter(CharacterID, String),
     MissingCharacterComponent(CharacterID, ComponentID),
     MissingCharacterComponentSystem(ComponentID),
     MissingCharacterCreator(CharacterType),
     InvalidCommandReplacement(CharacterID, CommandID),
     InvalidCommand,
+    InvalidCommandData(CharacterID, String),
     InvalidCommandMapping,
     OutOfRange(CharacterID), // character whose range we are out of
     UnexpectedComponentState(CharacterID, ComponentID, String),
@@ -89,6 +90,16 @@ pub enum WorldError {
     MultipleUpdateOverrides(CharacterID, ComponentID),
     NotImplemented,
     CharacterIDAlreadyExists(CharacterID),
+}
+
+#[derive(Debug, Clone)]
+pub struct WorldError(pub WorldErrorI);
+
+impl WorldErrorI {
+    pub fn err(self) -> WorldError {
+        // println!("World Error: {:?}", self);
+        WorldError(self)
+    }
 }
 
 pub trait CharacterCreator {
@@ -115,12 +126,15 @@ pub struct World {
     pub base: ComponentStorage<CharacterBase>,
     pub health: ComponentStorage<CharacterHealth>,
     pub movement: ComponentStorage<Movement>,
-    pub auto_attack: ComponentStorage<AutoAttack>,
     pub projectile: ComponentStorage<Projectile>,
     pub status: ComponentStorage<StatusComponent>,
 
     pub icewiz: ComponentStorage<IceWiz>,
     pub caster_minion: ComponentStorage<CasterMinion>,
+
+    // abilities
+    pub auto_attack: ComponentStorage<AutoAttack>,
+    pub flash: ComponentStorage<Flash>,
 
     // the tick local to the world, should be 100% in sync between client and server
     pub tick: WorldTick,
@@ -182,7 +196,10 @@ impl WorldUpdate {
 pub struct WorldInfo {
     pub base: HashMap<CharacterType, CharacterBase>,
     pub health: HashMap<CharacterType, CharacterHealth>,
+
+    // abilities
     pub auto_attack: HashMap<CharacterType, AutoAttackInfo>,
+    pub flash: HashMap<CharacterType, FlashInfo>,
 
     pub component_systems: HashMap<ComponentID, Box<dyn ComponentSystem>>,
 }
@@ -193,6 +210,7 @@ impl WorldInfo {
             base: HashMap::new(),
             health: HashMap::new(),
             auto_attack: HashMap::new(),
+            flash: HashMap::new(),
             component_systems: HashMap::new(),
         }
     }
@@ -202,6 +220,7 @@ impl WorldInfo {
             combo.base.extend(info.base.into_iter());
             combo.health.extend(info.health.into_iter());
             combo.auto_attack.extend(info.auto_attack.into_iter());
+            combo.flash.extend(info.flash.into_iter());
         }
         combo.component_systems = systems;
         combo
@@ -227,6 +246,7 @@ impl World {
             Box::new(BaseSystem) as Box<dyn ComponentSystem>,
             Box::new(StatusSystem) as Box<dyn ComponentSystem>,
             Box::new(HealthSystem) as Box<dyn ComponentSystem>,
+            Box::new(FlashAbilitySystem) as Box<dyn ComponentSystem>,
         ] {
             systems.insert(system.get_component_id(), system);
         }
@@ -253,6 +273,7 @@ impl World {
             caster_minion: ComponentStorage::new(),
             projectile: ComponentStorage::new(),
             status: ComponentStorage::new(),
+            flash: ComponentStorage::new(),
         }
     }
 
@@ -294,6 +315,7 @@ impl World {
                 }).collect())
                 .map_or_else(|err| vec![Err(err)], |res| res))
             .collect();
+        // println!("Updated");
         
         let world_updates: Vec<WorldUpdate> = update_res.iter()
             .flat_map(|res| res.clone().ok().into_iter()
@@ -302,9 +324,9 @@ impl World {
                     _ => None
                 })).collect();
         let mut update_errors = update_res.iter().filter_map(|res| res.clone().err()).collect_vec();
-        // if update_res.len() > 0 {
-        //     update_errors.push(WorldError::Info(format!("Updates: {:?}", update_res)));
-        // }
+        if !update_res.is_empty() {
+            update_errors.push(WorldErrorI::Info(format!("Updates: {:?}", update_res)).err());
+        }
         let mut reduce_errors = vec![];
         // if !commands.is_empty() {
         //     reduce_errors.push(WorldError::Info(format!("World commands: {:?}", commands)));
@@ -322,7 +344,7 @@ impl World {
             .into_iter()
             .flat_map(|(comp_id, updates)| match self.info.component_systems.get(&comp_id) {
                 None => {
-                    reduce_errors.push(WorldError::MissingCharacterComponentSystem(comp_id));
+                    reduce_errors.push(WorldErrorI::MissingCharacterInfoComponent(CharacterType::Unknown, comp_id).err());
                     vec![].into_iter()
                 },
                 Some(system) => updates
@@ -357,7 +379,8 @@ impl World {
                 }
             }.into_iter())
             .collect();
-        // reduce_errors.push(WorldError::Info(format!("Reduced: {}", dbg_updates_sorted(&reduced))));
+        // println!("Reduced");
+        reduce_errors.push(WorldErrorI::Info(format!("Reduced: {}", dbg_updates_sorted(&reduced))).err());
         reduce_errors.extend(reduce_errors_2);
         reduce_errors.extend(reduce_errors_3);
         // let reduced: Vec<Update> = self.info.component_systems.iter()
@@ -407,6 +430,7 @@ impl World {
                 .unwrap_or_default()).collect_vec();
         world.errors.extend(change_errors);
         world.tick += 1;
+        // println!("Changed");
         world
     }
 
@@ -415,16 +439,16 @@ impl World {
         match command {
             WorldCommand::World(GlobalCommand::CreateCharacter(cid, typ)) => {
                 match (self.characters.contains(cid), typ) {
-                    (true, _) => Err(WorldError::CharacterIDAlreadyExists(*cid)),
+                    (true, _) => Err(WorldErrorI::CharacterIDAlreadyExists(*cid).err()),
                     (false, CharacterType::IceWiz) | (false, CharacterType::CasterMinion) => Ok(None),
-                    _ => Err(WorldError::NotImplemented),
+                    _ => Err(WorldErrorI::NotImplemented.err()),
                 }
             },
             WorldCommand::CharacterComponent(cid, comp_id, command) => match self.info.component_systems.get(comp_id) {
-                None => Err(WorldError::InvalidCommandMapping),
+                None => Err(WorldErrorI::InvalidCommandMapping.err()),
                 Some(system) => Ok(Some(system.validate_character_command(self, cid, command)?))
             },
-            WorldCommand::World(GlobalCommand::Clear) => Err(WorldError::NotImplemented),
+            WorldCommand::World(GlobalCommand::Clear) => Err(WorldErrorI::NotImplemented.err()),
         }
     }
 
@@ -432,9 +456,9 @@ impl World {
         let mut updates = vec![];
         for command in commands {
             updates.extend(match command {
-                GlobalCommand::Clear => vec![Err(WorldError::NotImplemented)],
+                GlobalCommand::Clear => vec![Err(WorldErrorI::NotImplemented.err())],
                 GlobalCommand::CreateCharacter(id, typ) => match typ {
-                    CharacterType::Unknown | CharacterType::Projectile => Err(WorldError::NotImplemented),
+                    CharacterType::Unknown | CharacterType::Projectile => Err(WorldErrorI::NotImplemented.err()),
                     CharacterType::IceWiz => icewiz::create(self, &id, Vector2::default()),
                     CharacterType::CasterMinion => caster_minion::create(self, &id, Vector2::default()),
                 }
@@ -457,7 +481,7 @@ impl World {
                 let add = group.iter().any(|(_, u)| matches!(u, WorldUpdate::NewCharacterID(_)));
                 let remove = group.iter().any(|(_, u)| matches!(u, WorldUpdate::RemoveCharacterID(_)));
                 if add && remove {
-                    vec![Err(WorldError::SimultaneousAddRemoveCharacterID(id))]
+                    vec![Err(WorldErrorI::SimultaneousAddRemoveCharacterID(id).err())]
                 } else if add {
                     vec![Ok(WorldUpdate::NewCharacterID(id))]
                 } else {
@@ -510,6 +534,7 @@ impl World {
             ComponentID::Projectile => &self.projectile as &dyn ComponentStorageCommon,
             ComponentID::CasterMinion => &self.caster_minion as &dyn ComponentStorageCommon,
             ComponentID::Status => &self.status as &dyn ComponentStorageCommon,
+            ComponentID::Flash => &self.flash as &dyn ComponentStorageCommon,
         }
     }
 
@@ -523,6 +548,7 @@ impl World {
             ComponentID::Projectile => &mut self.projectile as &mut dyn ComponentStorageCommon,
             ComponentID::CasterMinion => &mut self.caster_minion as &mut dyn ComponentStorageCommon,
             ComponentID::Status => &mut self.status as &mut dyn ComponentStorageCommon,
+            ComponentID::Flash => &mut self.flash as &mut dyn ComponentStorageCommon,
         }
     }
 
@@ -560,7 +586,7 @@ impl World {
                 if let Some(current) = self.base.components.get(id) {
                     let diff = (current.position - des.position).magnitude();
                     if diff > 0.0 {
-                        self.errors.push(WorldError::DesyncError(*id, *cid, format!("pos diff: {}", diff)));
+                        self.errors.push(WorldErrorI::DesyncError(*id, *cid, format!("pos diff: {}", diff)).err());
                     }
                 }
                 self.base.get_storage_mut().insert(*id, des);
@@ -569,6 +595,7 @@ impl World {
             ComponentID::Health => insert(&mut self.health, id, cid, data),
             ComponentID::Movement => insert(&mut self.movement, id, cid, data),
             ComponentID::IceWiz => insert(&mut self.icewiz, id, cid, data),
+            ComponentID::Flash => insert(&mut self.flash, id, cid, data),
             ComponentID::AutoAttack => {
                 let des: AutoAttack = match bincode::deserialize(data.as_slice()) {
                     Err(e) => {

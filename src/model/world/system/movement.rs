@@ -1,7 +1,7 @@
 
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
-use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, StatusPrio, StatusID, Status}, CharacterCommandState}, commands::GetCommandID, util::{ItClosest, GroundPos, ItClosestRef}};
+use crate::model::{world::{character::CharacterID, commands::{CharacterCommand, Priority, WorldCommand}, World, WorldError, component::{ComponentID, GetComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, ComponentSystem, Update, system::status::{StatusUpdate, StatusPrio, StatusID, Status}, CharacterCommandState, WorldErrorI}, commands::GetCommandID, util::{ItClosest, GroundPos, ItClosestRef}};
 
 use super::base::{CharacterFlip, make_flip_update, make_move_update};
 
@@ -229,19 +229,19 @@ impl ComponentSystem for MovementSystem {
         match cmd {
             CharacterCommand::Movement(cmd) => {
                 if cmd.destination.x.is_nan() || cmd.destination.y.is_nan() {
-                    return Err(WorldError::InvalidCommand);
+                    return Err(WorldErrorI::InvalidCommand.err());
                 }
                 if !world.characters.contains(cid) {
-                    return Err(WorldError::MissingCharacter(
+                    return Err(WorldErrorI::MissingCharacter(
                         *cid,
-                        "Cannot move nonexistent character".to_string()))
+                        "Cannot move nonexistent character".to_string()).err())
                 }
                 if !OVERRIDE_STATUS.can_override(&world.status.get_component(cid)?.current) {
                     return Ok(CharacterCommandState::Queued)
                 }
                 Ok(CharacterCommandState::Ready)
             },
-            _ => Err(WorldError::InvalidCommandMapping)
+            _ => Err(WorldErrorI::InvalidCommandMapping.err())
         }
     }
 
@@ -265,14 +265,11 @@ impl ComponentSystem for MovementSystem {
         use ComponentUpdateData::Movement as CUD_M;
         if !world.characters.contains(cid) {
             // get status resets (called New)
-            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
-                CUD_M(_) => true,
-                _ => false,
-            }).cloned().collect();
-            if new_changes.len() == 0 {
-                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Movement))
+            let new_changes: Vec<ComponentUpdateData> = changes.iter().filter(|new| matches!(*new, CUD_M(_))).cloned().collect();
+            if new_changes.is_empty() {
+                return Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::Movement).err())
             } else if new_changes.len() > 1 {
-                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::Movement))
+                return Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::Movement).err())
             } else {
                 return Ok(new_changes)
             }
@@ -284,14 +281,11 @@ impl ComponentSystem for MovementSystem {
         // if a None is passed in, return None
         // else if a dest is passed in, return the closest
         // else return nothing
-        if changes.into_iter().any(|change| match *change {
-            CUD_M(Movement { destination: None }) => true,
-            _ => false,
-        }) {
+        if changes.iter().any(|change| matches!(*change, CUD_M(Movement { destination: None }))) {
             return Ok(vec![CUD_M(Movement { destination: None })]);
         }
         Ok(changes
-            .into_iter()
+            .iter()
             .filter_map(|change| match change {
                 CUD_M(Movement { destination: Some(dest) }) => Some(dest),
                 _ => None,

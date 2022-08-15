@@ -38,6 +38,7 @@ pub enum CommandID {
 
     // world commands (also on both, but focus run on world)
     AutoAttackRequest,
+    FlashRequest,
     ClearWorld,
     RunWorldCommand
 }

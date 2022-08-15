@@ -1,7 +1,7 @@
 use nalgebra::{Vector3, Vector2};
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand, Priority}, ComponentSystem, Update, WorldUpdate, CharacterCommandState};
+use crate::model::world::{character::{CharacterID, CharacterType}, component::{GetComponentID, ComponentID, ComponentStorageContainer, ComponentUpdateData, Component, ComponentUpdate}, World, WorldError, WorldInfo, WorldSystem, commands::{CharacterCommand, WorldCommand, Priority}, ComponentSystem, Update, WorldUpdate, CharacterCommandState, WorldErrorI};
 
 use super::base::{CharacterBase, CharacterFlip, make_move_update, make_flip_update, CharacterBaseUpdate};
 
@@ -149,7 +149,7 @@ impl ComponentSystem for ProjectileSystem {
     }
 
     fn update_character(&self, world: &World, _commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
-        let target = world.projectile.get_component(&cid)?.target;
+        let target = world.projectile.get_component(cid)?.target;
         if world.characters.get(&target).is_none() {
             return Ok(vec![Update::World(WorldUpdate::RemoveCharacterID(*cid))]);
             // return Err(WorldError::MissingCharacter(target, "Projectile target doesn't exist".to_string()))
@@ -157,8 +157,8 @@ impl ComponentSystem for ProjectileSystem {
         let base = world.base.get_component(&target)?;
         let dest = base.position + base.center_offset;
         let range = 0.0;
-        let damage = world.base.get_component(&cid)?.attack_damage;
-        let (arrived, fly_updates) = fly_to(world, &cid, &dest, range, delta_time)?;
+        let damage = world.base.get_component(cid)?.attack_damage;
+        let (arrived, fly_updates) = fly_to(world, cid, &dest, range, delta_time)?;
         if arrived {
             // world.erase_character(&cid)?;
             // do damage
@@ -172,7 +172,7 @@ impl ComponentSystem for ProjectileSystem {
                if health.health - damage <= 0.0 {
                    Some(Update::World(WorldUpdate::RemoveCharacterID(target)))
                } else { None }
-            ].into_iter().filter_map(|x| x).collect())
+            ].into_iter().flatten().collect())
         } else {
             Ok(fly_updates)
         }
@@ -183,26 +183,25 @@ impl ComponentSystem for ProjectileSystem {
     // }
 
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
-        Err(WorldError::InvalidCommandMapping)
+        Err(WorldErrorI::InvalidCommandMapping.err())
     }
 
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
-            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
-                ComponentUpdateData::Projectile(ProjectileUpdate(_)) => true,
-                _ => false,
-            }).cloned().collect();
-            if new_changes.len() == 0 {
-                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Status))
+            let new_changes: Vec<ComponentUpdateData> = changes.iter()
+                .filter(|new| matches!(*new, ComponentUpdateData::Projectile(ProjectileUpdate(_))))
+                .cloned().collect();
+            if new_changes.is_empty() {
+                return Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::Status).err())
             } else if new_changes.len() > 1 {
-                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::Status))
+                return Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::Status).err())
             } else {
                 return Ok(new_changes)
             }
         }
         if changes.len() > 1 {
-            Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Projectile))
+            Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::Projectile).err())
         } else {
             Ok(changes.clone())
         }

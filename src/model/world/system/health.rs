@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{component::{Component, ComponentUpdateData, GetComponentID, ComponentID}, WorldSystem, WorldError, WorldInfo, ComponentSystem, commands::{CharacterCommand, WorldCommand}, character::CharacterID, World, Update, CharacterCommandState};
+use crate::model::world::{component::{Component, ComponentUpdateData, GetComponentID, ComponentID}, WorldSystem, WorldError, WorldInfo, ComponentSystem, commands::{CharacterCommand, WorldCommand}, character::CharacterID, World, Update, CharacterCommandState, WorldErrorI};
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -50,7 +50,7 @@ impl ComponentSystem for HealthSystem {
         ComponentID::Health
     }
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
-        Err(WorldError::InvalidCommandMapping)
+        Err(WorldErrorI::InvalidCommandMapping.err())
     }
     fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
         Ok(vec![])
@@ -58,26 +58,24 @@ impl ComponentSystem for HealthSystem {
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
-            let new_changes: Vec<ComponentUpdateData> = changes.into_iter().filter(|new| match *new {
-                ComponentUpdateData::Health(CharacterHealthUpdate::New(_)) => true,
-                _ => false,
-            }).cloned().collect();
-            if new_changes.len() == 0 {
-                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::Status))
+            let new_changes: Vec<ComponentUpdateData> = changes.iter()
+                .filter(|new| matches!(*new, ComponentUpdateData::Health(CharacterHealthUpdate::New(_))))
+                .cloned().collect();
+            if new_changes.is_empty() {
+                return Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::Status).err())
             } else if new_changes.len() > 1 {
-                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::Status))
+                return Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::Status).err())
             } else {
                 return Ok(new_changes)
             }
         }
         let mut current = None;
         for change in changes {
-            match change.clone() {
-                ComponentUpdateData::Health(change) => match change {
+            if let ComponentUpdateData::Health(change) = change.clone() {
+                match change {
                     CharacterHealthUpdate::New(_health) => (), // ignore, only applies if cid is new
                     CharacterHealthUpdate::Change(delta) => current = Some(current.unwrap_or(0.0) + delta)
-                },
-                _ => (),
+                }
             }
         }
         Ok(current.into_iter()

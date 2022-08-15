@@ -1,7 +1,7 @@
 use nalgebra::{Vector2, Vector3};
 use serde::{Serialize, Deserialize};
 
-use crate::model::world::{character::{CharacterType, CharacterID}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, WorldError, ComponentSystem, World, commands::{CharacterCommand, WorldCommand, Priority}, Update, CharacterCommandState};
+use crate::model::world::{character::{CharacterType, CharacterID}, component::{GetComponentID, ComponentID, ComponentUpdateData, Component, ComponentUpdate}, WorldSystem, WorldInfo, WorldError, ComponentSystem, World, commands::{CharacterCommand, WorldCommand, Priority}, Update, CharacterCommandState, WorldErrorI};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CharacterFlip {
@@ -200,7 +200,7 @@ impl ComponentSystem for BaseSystem {
     }
 
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
-        Err(WorldError::InvalidCommandMapping)
+        Err(WorldErrorI::InvalidCommandMapping.err())
     }
 
     fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
@@ -212,9 +212,9 @@ impl ComponentSystem for BaseSystem {
                 .cloned()
                 .collect();
             if new_changes.is_empty() {
-                return Err(WorldError::InvalidReduceMapping(*cid, ComponentID::AutoAttack))
+                return Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::AutoAttack).err())
             } else if new_changes.len() > 1 {
-                return Err(WorldError::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack))
+                return Err(WorldErrorI::MultipleUpdateOverrides(*cid, ComponentID::AutoAttack).err())
             } else {
                 return Ok(new_changes)
             }

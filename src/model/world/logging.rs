@@ -1,6 +1,6 @@
 use std::{fs::{File, OpenOptions}, io::{self, Write}};
 
-use super::{World, WorldError};
+use super::{World, WorldError, WorldErrorI};
 
 
 pub struct Logger {
@@ -18,7 +18,7 @@ impl Logger {
     pub fn log(&mut self, world: &World) {
         for error in &world.errors {
             let data = match error {
-                WorldError::Info(s) => format!("Tick {}, {:?}", world.tick, s),
+                WorldError(WorldErrorI::Info(s)) => format!("Tick {}, {:?}", world.tick, s),
                 _ => format!("Tick {}, Error: {:?}", world.tick, error),
             };
             writeln!(self.file, "{}", data).map_err(|_| println!("Error writing to log")).ok();

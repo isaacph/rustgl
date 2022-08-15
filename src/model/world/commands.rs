@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::model::{commands::GetCommandID, WorldTick};
 
-use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, system::{movement::MoveCharacter, auto_attack::AutoAttackCommand}, WorldError};
+use super::{World, character::{CharacterID, CharacterType}, component::ComponentID, system::{movement::MoveCharacter, auto_attack::AutoAttackCommand, flash::FlashCommand}, WorldError};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum WorldCommand {
@@ -21,6 +21,7 @@ pub enum GlobalCommand {
 pub enum CharacterCommand {
     Movement(MoveCharacter),
     AutoAttack(AutoAttackCommand),
+    Flash(FlashCommand),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
