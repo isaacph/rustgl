@@ -43,7 +43,7 @@ use self::{
             BaseSystem
         },
         health::{CharacterHealth, HealthSystem},
-        status::{StatusSystem, StatusComponent}, flash::{Flash, FlashInfo, FlashAbilitySystem},
+        status::{StatusSystem, StatusComponent}, flash::{Flash, FlashInfo, FlashAbilitySystem}, collision::{Collision, CollisionSystem},
     }
 };
 
@@ -128,6 +128,7 @@ pub struct World {
     pub movement: ComponentStorage<Movement>,
     pub projectile: ComponentStorage<Projectile>,
     pub status: ComponentStorage<StatusComponent>,
+    pub collision: ComponentStorage<Collision>,
 
     pub icewiz: ComponentStorage<IceWiz>,
     pub caster_minion: ComponentStorage<CasterMinion>,
@@ -246,6 +247,7 @@ impl World {
             Box::new(BaseSystem) as Box<dyn ComponentSystem>,
             Box::new(StatusSystem) as Box<dyn ComponentSystem>,
             Box::new(HealthSystem) as Box<dyn ComponentSystem>,
+            Box::new(CollisionSystem::new()) as Box<dyn ComponentSystem>,
             Box::new(FlashAbilitySystem) as Box<dyn ComponentSystem>,
         ] {
             systems.insert(system.get_component_id(), system);
@@ -274,6 +276,7 @@ impl World {
             projectile: ComponentStorage::new(),
             status: ComponentStorage::new(),
             flash: ComponentStorage::new(),
+            collision: ComponentStorage::new(),
         }
     }
 
@@ -535,6 +538,7 @@ impl World {
             ComponentID::CasterMinion => &self.caster_minion as &dyn ComponentStorageCommon,
             ComponentID::Status => &self.status as &dyn ComponentStorageCommon,
             ComponentID::Flash => &self.flash as &dyn ComponentStorageCommon,
+            ComponentID::Collision => &self.collision as &dyn ComponentStorageCommon,
         }
     }
 
@@ -549,6 +553,7 @@ impl World {
             ComponentID::CasterMinion => &mut self.caster_minion as &mut dyn ComponentStorageCommon,
             ComponentID::Status => &mut self.status as &mut dyn ComponentStorageCommon,
             ComponentID::Flash => &mut self.flash as &mut dyn ComponentStorageCommon,
+            ComponentID::Collision => &mut self.collision as &mut dyn ComponentStorageCommon,
         }
     }
 
@@ -627,6 +632,7 @@ impl World {
             ComponentID::Projectile => insert(&mut self.projectile, id, cid, data),
             ComponentID::CasterMinion => insert(&mut self.caster_minion, id, cid, data),
             ComponentID::Status => insert(&mut self.status, id, cid, data),
+            ComponentID::Collision => insert(&mut self.status, id, cid, data),
             // _ => panic!("Deserialization not implemented for component id: {}", cid)
         }
     }

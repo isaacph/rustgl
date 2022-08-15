@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::{Display, Debug}};
 use itertools::Itertools;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use super::{character::CharacterID, WorldError, system::{base::CharacterBaseUpdate, projectile::ProjectileUpdate, status::StatusUpdate, movement::Movement, auto_attack::AutoAttackUpdate, flash::FlashUpdate}, system::health::CharacterHealthUpdate, WorldErrorI};
+use super::{character::CharacterID, WorldError, system::{base::CharacterBaseUpdate, projectile::ProjectileUpdate, status::StatusUpdate, movement::Movement, auto_attack::AutoAttackUpdate, flash::FlashUpdate}, system::{health::CharacterHealthUpdate, collision::CollisionUpdate}, WorldErrorI};
 use strum_macros::EnumIter;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter)]
@@ -17,6 +17,7 @@ pub enum ComponentID {
     Projectile,
     Status,
     Flash,
+    Collision,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -28,6 +29,7 @@ pub enum ComponentUpdateData {
     Movement(Movement),
     AutoAttack(AutoAttackUpdate),
     Flash(FlashUpdate),
+    Collision(CollisionUpdate),
     CasterMinion,
     IceWiz,
 }
@@ -44,6 +46,7 @@ impl ComponentUpdateData {
             ComponentUpdateData::Flash(_) => ComponentID::Flash,
             ComponentUpdateData::CasterMinion => ComponentID::CasterMinion,
             ComponentUpdateData::IceWiz => ComponentID::IceWiz,
+            ComponentUpdateData::Collision(_) => ComponentID::Collision,
         }
     }
 }
