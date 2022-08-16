@@ -155,9 +155,9 @@ pub trait ComponentSystem: WorldSystem {
     fn get_component_id(&self) -> ComponentID;
     fn validate_character_command(&self, world: &World, cid: &CharacterID, cmd: &CharacterCommand) -> Result<CharacterCommandState, WorldError>;
     // fn run_character_command(&self, world: &mut World, cid: &CharacterID, cmd: CharacterCommand) -> Result<(), WorldError>;
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError>;
+    fn update_character(&self, world: &World, commands: &[WorldCommand], cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError>;
     // fn validate_character_state(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<(), WorldError>;
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError>;
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &[ComponentUpdateData]) -> Result<Vec<ComponentUpdateData>, WorldError>;
 }
 
 #[derive(Clone, Debug)]
@@ -298,7 +298,7 @@ impl World {
                         WorldCommand::CharacterComponent(ccid, ccomp_id, _cmd) =>
                             *cid == *ccid && comp_id == *ccomp_id,
                         _ => false
-                    }).collect(),
+                    }).collect_vec(),
                     cid,
                     delta_time
                 ),
@@ -356,7 +356,7 @@ impl World {
                     .into_group_map()
                     .into_iter()
                     .flat_map(|(cid, updates)|
-                        match system.reduce_changes(&cid, self, &updates.into_iter().map(|update| update.data).collect()) {
+                        match system.reduce_changes(&cid, self, &updates.into_iter().map(|update| update.data).collect_vec()) {
                             Err(err) => {
                                 reduce_errors_3.push(err);
                                 vec![]
@@ -428,7 +428,7 @@ impl World {
                     .filter_map(|x| match x { Update::Comp(x) => Some(x), _ => None })
                     .filter(|update| update.data.component_id() == comp_id)
                     .cloned()
-                    .collect())
+                    .collect_vec())
                 .err()
                 .unwrap_or_default()).collect_vec();
         world.errors.extend(change_errors);

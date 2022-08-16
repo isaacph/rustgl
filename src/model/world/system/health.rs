@@ -65,10 +65,10 @@ impl ComponentSystem for HealthSystem {
     fn validate_character_command(&self, _: &World, _: &CharacterID, _: &CharacterCommand) -> Result<CharacterCommandState, WorldError> {
         Err(WorldErrorI::InvalidCommandMapping.err())
     }
-    fn update_character(&self, _: &World, _: &Vec<WorldCommand>, _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, _: &World, _: &[WorldCommand], _: &CharacterID, _: f32) -> Result<Vec<Update>, WorldError> {
         Ok(vec![])
     }
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &[ComponentUpdateData]) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
             let new_changes: Vec<ComponentUpdateData> = changes.iter()

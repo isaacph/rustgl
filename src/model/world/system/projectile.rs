@@ -148,7 +148,7 @@ impl ComponentSystem for ProjectileSystem {
         ComponentID::Projectile
     }
 
-    fn update_character(&self, world: &World, _commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, world: &World, _commands: &[WorldCommand], cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         let target = world.projectile.get_component(cid)?.target;
         if world.characters.get(&target).is_none() {
             return Ok(vec![Update::World(WorldUpdate::RemoveCharacterID(*cid))]);
@@ -189,7 +189,7 @@ impl ComponentSystem for ProjectileSystem {
         Err(WorldErrorI::InvalidCommandMapping.err())
     }
 
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &[ComponentUpdateData]) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
             let new_changes: Vec<ComponentUpdateData> = changes.iter()
@@ -206,7 +206,7 @@ impl ComponentSystem for ProjectileSystem {
         if changes.len() > 1 {
             Err(WorldErrorI::InvalidReduceMapping(*cid, ComponentID::Projectile).err())
         } else {
-            Ok(changes.clone())
+            Ok(changes.to_vec())
         }
     }
 }

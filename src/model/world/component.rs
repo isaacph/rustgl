@@ -78,7 +78,7 @@ pub trait ComponentStorageCommon {
     fn serialize(&self, cid: &CharacterID) -> Option<Vec<u8>>;
     fn deserialize_insert(&mut self, cid: &CharacterID, data: Vec<u8>);
     fn erase(&mut self, cid: &CharacterID);
-    fn update(&mut self, updates: &Vec<ComponentUpdate>) -> Result<(), Vec<WorldError>>;
+    fn update(&mut self, updates: &[ComponentUpdate]) -> Result<(), Vec<WorldError>>;
 }
 
 pub trait ComponentStorageContainer<T: Sized + Serialize>: ComponentStorageCommon {
@@ -137,7 +137,7 @@ impl<T: Serialize + GetComponentID + DeserializeOwned + Component + Debug> Compo
     fn erase(&mut self, cid: &CharacterID) {
         self.components.remove(cid);
     }
-    fn update(&mut self, updates: &Vec<ComponentUpdate>) -> Result<(), Vec<WorldError>> {
+    fn update(&mut self, updates: &[ComponentUpdate]) -> Result<(), Vec<WorldError>> {
         // let err: Vec<WorldError> = updates.iter()
         // .filter_map(|comp| self.get_component(&comp.cid).err())
         // .collect();
@@ -145,7 +145,7 @@ impl<T: Serialize + GetComponentID + DeserializeOwned + Component + Debug> Compo
             // println!("Requested updates to component: {:?}", updates);
         }
         // chain updates together for updates with same character ID
-        let comp_id = Self::ID;
+        // let comp_id = Self::ID;
         let updates = updates.iter()
             .map(|update| (update.cid, update))
             .into_group_map()

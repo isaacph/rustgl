@@ -230,7 +230,7 @@ impl Server {
                 }
                 server.tick_ordering = t_o;
                 server.world = server.world.update(&commands, delta_time);
-                // logger.log(&server.world);
+                logger.log(&server.world);
                 for error in server.world.errors.drain(0..server.world.errors.len()) {
                     match error {
                         WorldError(WorldErrorI::Info(_st)) => (), //println!("Tick {}, {}", server.world.tick, st),

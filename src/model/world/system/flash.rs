@@ -98,7 +98,7 @@ impl ComponentSystem for FlashAbilitySystem {
         }
     }
 
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, world: &World, commands: &[WorldCommand], cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         let ctype = world.base.get_component(cid)?.ctype;
         let info = world.info.flash.get(&ctype).ok_or_else(|| WorldErrorI::MissingCharacterInfoComponent(ctype, ComponentID::Flash).err())?;
         let flash = world.flash.get_component(cid)?;
@@ -129,7 +129,7 @@ impl ComponentSystem for FlashAbilitySystem {
            .collect_vec())
     }
 
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &[ComponentUpdateData]) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if world.characters.get(cid).is_none() || world.flash.get_component(cid).is_err() {
             return Ok(changes.iter()
                 .filter_map(|change| match change.clone() {

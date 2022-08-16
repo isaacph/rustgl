@@ -245,7 +245,7 @@ impl ComponentSystem for AutoAttackSystem {
     //   else if AA is in status queue and not executing or targeting
     //     queue cancel status
     // projectile update
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, world: &World, commands: &[WorldCommand], cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         let status = &world.status.get_component(cid)?.current;
         let is_status = status.id == StatusID::AutoAttack;
         let (ctype, attack_speed, range) = {
@@ -499,7 +499,7 @@ impl ComponentSystem for AutoAttackSystem {
     //     Ok(())
     // }
 
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &[ComponentUpdateData]) -> Result<Vec<ComponentUpdateData>, WorldError> {
         if !world.characters.contains(cid) {
             // get status resets (called New)
             let new_changes: Vec<ComponentUpdateData> = changes.iter()

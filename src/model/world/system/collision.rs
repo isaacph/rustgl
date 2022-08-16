@@ -37,8 +37,8 @@ impl Default for Collision {
 
 impl Component for Collision {
     fn update(&self, update: &ComponentUpdateData) -> Self {
-        match *update {
-            ComponentUpdateData::Collision(CollisionUpdate(col)) => col,
+        match update {
+            ComponentUpdateData::Collision(CollisionUpdate(col)) => col.clone(),
             _ => self.clone(),
         }
     }
@@ -82,11 +82,11 @@ impl ComponentSystem for CollisionSystem {
         Err(WorldErrorI::InvalidCommandMapping.err())
     }
 
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, world: &World, commands: &[WorldCommand], cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         Ok(vec![])
     }
 
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &[ComponentUpdateData]) -> Result<Vec<ComponentUpdateData>, WorldError> {
         Ok(vec![])
     }
 }

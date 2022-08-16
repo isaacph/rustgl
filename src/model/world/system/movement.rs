@@ -169,7 +169,7 @@ impl ComponentSystem for MovementSystem {
     //     queue remove destination
     //   else
     //     do nothing
-    fn update_character(&self, world: &World, commands: &Vec<WorldCommand>, cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
+    fn update_character(&self, world: &World, commands: &[WorldCommand], cid: &CharacterID, delta_time: f32) -> Result<Vec<Update>, WorldError> {
         use ComponentUpdateData::Status as CStatus;
         use StatusUpdate::{Cancel, Try};
         let pos = world.base.get_component(cid)?.position;
@@ -261,7 +261,7 @@ impl ComponentSystem for MovementSystem {
     //         _ => Err(WorldError::InvalidCommandMapping)
     //     }
     // }
-    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &Vec<ComponentUpdateData>) -> Result<Vec<ComponentUpdateData>, WorldError> {
+    fn reduce_changes(&self, cid: &CharacterID, world: &World, changes: &[ComponentUpdateData]) -> Result<Vec<ComponentUpdateData>, WorldError> {
         use ComponentUpdateData::Movement as CUD_M;
         if !world.characters.contains(cid) {
             // get status resets (called New)
