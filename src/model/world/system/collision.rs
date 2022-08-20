@@ -47,6 +47,14 @@ impl Component for Collision {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct CollisionUpdate(Collision);
 
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct CollisionInfo {
+    pub terrain: HashSet<Vector2<i32>>
+}
+
+impl CollisionInfo {
+}
+
 #[derive(Clone)]
 pub struct CollisionSystem {
     pub terrain: HashSet<Vector2<i32>>,

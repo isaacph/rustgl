@@ -280,12 +280,11 @@ impl World {
         }
     }
 
-    pub fn update(&self, commands: &Vec<WorldCommand>, delta_time: f32) -> Self {
+    pub fn update(&self, commands: &[WorldCommand], delta_time: f32) -> Self {
         // println!("Update world tick {}", self.tick);
         // if !commands.is_empty() {
         //     println!("World commands: {:?}", commands);
         // }
-        let commands = commands.clone();
         let info = self.info.clone();
         let mut sorted: Vec<CharacterID> = self.characters.clone().into_iter().collect();
         sorted.sort_by_key(|id| id.get_num());
@@ -294,11 +293,11 @@ impl World {
             .map(|comp_id| match info.component_systems.get(&comp_id) {
                 Some(system) => system.update_character(
                     self,
-                    &commands.clone().into_iter().filter(|cmd| match cmd {
+                    commands.iter().cloned().filter(|cmd| match cmd {
                         WorldCommand::CharacterComponent(ccid, ccomp_id, _cmd) =>
                             *cid == *ccid && comp_id == *ccomp_id,
                         _ => false
-                    }).collect_vec(),
+                    }).collect_vec().as_slice(),
                     cid,
                     delta_time
                 ),
