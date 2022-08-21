@@ -98,8 +98,12 @@ pub struct WorldError(pub WorldErrorI);
 impl WorldErrorI {
     pub fn err(self) -> WorldError {
         // println!("World Error: {:?}", self);
+        if !matches!(self, WorldErrorI::Info(_)) {
+            self.idk();
+        }
         WorldError(self)
     }
+    pub fn idk(&self) {}
 }
 
 pub trait CharacterCreator {

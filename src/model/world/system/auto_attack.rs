@@ -260,34 +260,38 @@ impl ComponentSystem for AutoAttackSystem {
             let (mut casting, mut fire_attack_updates) = (false, vec![]);
             let mut cooldown_updates = None;
             if let Some(execution) = &auto_attack.execution {
-                let timer = (world.tick - execution.time_start) as f32 * 1.0 / TICK_RATE;
-                let (changes, _changed) = attack_info.fsm.get_state_changes(
-                        attack_speed,
-                        timer,
-                        timer + delta_time);
-                changes.iter().fold(Ok(()), |status, change| match (status?, change) {
-                    ((), fsm::Changes::Event(_time_since, AutoAttackFireEvent)) => {
-                        fire_attack_updates = auto_attack_fire(world, cid)?;
-                        cooldown_updates = Some(
-                            world.tick +
-                            f32::ceil(
-                                (attack_speed - (world.tick - execution.time_start) as f32 / TICK_RATE)
-                                * TICK_RATE)
-                            as WorldTick);
-                        Ok(())
-                    },
-                    _ => Ok(()),
-                })?;
-                let state = attack_info.fsm.get_current_state(attack_speed, timer);
-                executing = state != AutoAttackPhase::Complete;
-                casting = state == AutoAttackPhase::Casting;
+                if world.characters.contains(&execution.target) {
+                    let timer = (world.tick - execution.time_start) as f32 * 1.0 / TICK_RATE;
+                    let (changes, _changed) = attack_info.fsm.get_state_changes(
+                            attack_speed,
+                            timer,
+                            timer + delta_time);
+                    changes.iter().fold(Ok(()), |status, change| match (status?, change) {
+                        ((), fsm::Changes::Event(_time_since, AutoAttackFireEvent)) => {
+                            fire_attack_updates = auto_attack_fire(world, cid)?;
+                            cooldown_updates = Some(
+                                world.tick +
+                                f32::ceil(
+                                    (attack_speed - (world.tick - execution.time_start) as f32 / TICK_RATE)
+                                    * TICK_RATE)
+                                as WorldTick);
+                            Ok(())
+                        },
+                        _ => Ok(()),
+                    })?;
+                    let state = attack_info.fsm.get_current_state(attack_speed, timer);
+                    executing = state != AutoAttackPhase::Complete;
+                    casting = state == AutoAttackPhase::Casting;
+                } else {
+                    executing = false;
+                }
             } else {
                 executing = false;
             }
 
             (executing, casting, fire_attack_updates, cooldown_updates)
         };
-        let targeting = auto_attack.targeting.is_some();
+        let targeting = auto_attack.targeting.as_ref().map_or(false, |targeting| world.characters.contains(&targeting.target));
         let on_cooldown = auto_attack.cooldown_timeout > world.tick;
         let command = commands.iter()
             .filter_map(|cmd| match cmd.clone() {
@@ -304,7 +308,7 @@ impl ComponentSystem for AutoAttackSystem {
             .deterministic_filter_cmd();
 
         // movement
-        let (arrived, movement_updates) = if !executing && is_status && auto_attack.targeting.is_some() {
+        let (arrived, movement_updates) = if !executing && is_status && targeting {
             let AutoAttackTargeting { target, ids: _ } = auto_attack.targeting.as_ref().ok_or_else(|| WorldErrorI::BadLogic.err())?;
             let target_pos = world.base.get_component(target)?.position;
             let target_pos = Vector2::new(target_pos.x, target_pos.y);
@@ -341,7 +345,7 @@ impl ComponentSystem for AutoAttackSystem {
                 target: cmd.target,
                 ids: cmd.projectile_gen_ids.clone()
             }))
-        } else if !is_status && targeting || stop_targeting {
+        } else if !is_status && targeting || stop_targeting || auto_attack.targeting.is_some() && !targeting {
             Some(None)
         } else if let Some(new_ids) = new_proj_ids {
             let mut update_targeting = auto_attack.targeting.clone().ok_or_else(|| WorldErrorI::BadLogic.err())?;
