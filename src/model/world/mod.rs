@@ -103,7 +103,10 @@ impl WorldErrorI {
         }
         WorldError(self)
     }
-    pub fn idk(&self) {}
+    pub fn idk(&self) {
+        #[cfg(feature = "errpanic")]
+        panic!("Error: {:?}", self);
+    }
 }
 
 pub trait CharacterCreator {

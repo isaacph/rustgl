@@ -31,3 +31,12 @@ optional = true
 [features]
 client = ["glfw", "ogl33", "image", "freetype-sys"]
 server = []
+errpanic = []
+
+[[client]]
+name = "client"
+required-features = ["client"]
+
+[[server]]
+name = "server"
+required-features = ["server"]

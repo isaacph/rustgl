@@ -1,6 +1,5 @@
 use serde::{Serialize, Deserialize};
-use crate::SocketAddr;
-use std::fmt::Display;
+use std::{fmt::Display, net::SocketAddr};
 
 pub mod commands;
 pub mod client;
