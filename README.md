@@ -3,7 +3,7 @@
 Experimental League of Legends clone written in Rust.
 
 Main goals:
-* Pure functional gameplay update step
+* Pure functional and deterministic gameplay update step
 * Perfect network synchronization (with good network conditions)
 * Low latency in handling user input
 
@@ -14,6 +14,9 @@ Current features (implemented with the above goals in mind):
     * Short-term and fast-paced information is sent through UDP for speed
     * Old UDP packets are discarded
     * TCP socket is the source of truth for whether you are connected
+* Client-side rollback netcode for catching late packets
+    * When a client receives a packet, it files the packet into the correct tick ID
+    * The client keeps a version of the world multiple ticks backwards so that late packets can be merged with the current world by rerunning previous frames/ticks
 * Simple player identification system
 * Auto attack command closely resembling League of Legends'
 * All user actions will cause changes to the world within 2 game ticks of reaching the server
