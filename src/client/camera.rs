@@ -14,7 +14,7 @@ pub struct CameraMatrix {
 
 impl CameraContext {// optimization for later: cache the projection matrix
     pub fn zoom_factor(&self) -> f32 { // will probably be > 1 unless zoom is really really big (like > min(width,height))
-        std::cmp::min(self.width, self.height) as f32 / self.zoom
+        std::cmp::min(self.width, self.height) as f32 / f32::max(0.001, self.zoom)
     }
 
     pub fn camera_center_offset(&self) -> Vector2<f32> {
@@ -25,12 +25,14 @@ impl CameraContext {// optimization for later: cache the projection matrix
     }
 
     pub fn matrix(&self) -> CameraMatrix {
+        let width = f32::max(1.0, self.width as f32);
+        let height = f32::max(1.0, self.height as f32);
         let zoom_factor = self.zoom_factor();
         let camera_center_offset = self.camera_center_offset();
         let proj = Orthographic3::<f32>::new(
             0.0,
-            self.width as f32,
-            self.height as f32,
+            width,
+            height,
             0.0,
             0.0,
             1.0).to_homogeneous();
