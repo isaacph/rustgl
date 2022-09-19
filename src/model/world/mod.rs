@@ -43,8 +43,8 @@ use self::{
             BaseSystem
         },
         health::{CharacterHealth, HealthSystem},
-        status::{StatusSystem, StatusComponent}, flash::{Flash, FlashInfo, FlashAbilitySystem}, collision::{Collision, CollisionSystem},
-    }
+        status::{StatusSystem, StatusComponent}, flash::{Flash, FlashInfo, FlashAbilitySystem}, collision::{Collision, CollisionSystem, CollisionInfo},
+    }, template::WorldTemplate
 };
 
 use super::{commands::CommandID, WorldTick};
@@ -55,6 +55,7 @@ pub mod component;
 pub mod system;
 pub mod commands;
 pub mod logging;
+pub mod template;
 
 #[cfg(feature = "server")]
 pub mod server;
@@ -133,12 +134,12 @@ pub struct World {
     pub base: ComponentStorage<CharacterBase>,
     pub health: ComponentStorage<CharacterHealth>,
     pub movement: ComponentStorage<Movement>,
-    pub projectile: ComponentStorage<Projectile>,
     pub status: ComponentStorage<StatusComponent>,
     pub collision: ComponentStorage<Collision>,
 
     pub icewiz: ComponentStorage<IceWiz>,
     pub caster_minion: ComponentStorage<CasterMinion>,
+    pub projectile: ComponentStorage<Projectile>,
 
     // abilities
     pub auto_attack: ComponentStorage<AutoAttack>,
@@ -229,8 +230,9 @@ impl WorldInfo {
             combo.health.extend(info.health.into_iter());
             combo.auto_attack.extend(info.auto_attack.into_iter());
             combo.flash.extend(info.flash.into_iter());
+            combo.component_systems.extend(info.component_systems.into_iter());
         }
-        combo.component_systems = systems;
+        combo.component_systems.extend(systems.into_iter());
         combo
     }
 }
@@ -242,7 +244,7 @@ pub enum CommandRunResult {
 }
 
 impl World {
-    pub fn new() -> World {
+    pub fn new(collision: CollisionInfo) -> World {
         // init each system
         let mut systems = HashMap::new();
         for system in [
@@ -254,7 +256,7 @@ impl World {
             Box::new(BaseSystem) as Box<dyn ComponentSystem>,
             Box::new(StatusSystem) as Box<dyn ComponentSystem>,
             Box::new(HealthSystem) as Box<dyn ComponentSystem>,
-            Box::new(CollisionSystem::new()) as Box<dyn ComponentSystem>,
+            Box::new(CollisionSystem::new(collision)) as Box<dyn ComponentSystem>,
             Box::new(FlashAbilitySystem) as Box<dyn ComponentSystem>,
         ] {
             systems.insert(system.get_component_id(), system);
@@ -285,6 +287,10 @@ impl World {
             flash: ComponentStorage::new(),
             collision: ComponentStorage::new(),
         }
+    }
+
+    pub fn from(template: &WorldTemplate) -> Self {
+        template.world.clone()
     }
 
     pub fn update(&self, commands: &[WorldCommand], delta_time: f32) -> Self {
@@ -766,12 +772,6 @@ impl World {
             }).flatten());
         }
         diff
-    }
-}
-
-impl Default for World {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

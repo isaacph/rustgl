@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{networking::Protocol, client::{game::{Game, TickCommand}, commands::ClientCommand}};
 
-use super::{commands::{ClearWorld, RunWorldCommand, FixWorld}, World};
+use super::{commands::{ClearWorld, RunWorldCommand, FixWorld}, World, system::collision::CollisionInfo};
 
 // impl<'a> ClientCommand<'a> for UpdateCharacter {
 //     fn run(self, (_, game): (Protocol, &mut Game)) {
@@ -12,7 +12,7 @@ use super::{commands::{ClearWorld, RunWorldCommand, FixWorld}, World};
 
 impl<'a> ClientCommand<'a> for ClearWorld {
     fn run(self, (_, game): (Protocol, &mut Game)) {
-        game.world = World::new();
+        game.world = World::new(CollisionInfo::test_collision());
         for cid in game.world.characters.clone() {
             game.world.erase_character(&cid).ok();
         }

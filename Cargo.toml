@@ -33,7 +33,7 @@ optional = true
 
 [features]
 client = ["glfw", "ogl33", "image", "freetype-sys"]
-server = []
+server = ["image"]
 errpanic = []
 
 [[client]]

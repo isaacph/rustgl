@@ -4,6 +4,8 @@ use std::time::Duration;
 use crate::model::action_queue::ActionQueue;
 use crate::model::world::commands::{WorldCommand, RunWorldCommand};
 use crate::model::world::logging::Logger;
+use crate::model::world::system::collision::CollisionInfo;
+use crate::model::world::template::WorldTemplate;
 use crate::model::{Subscription, PrintError, TICK_RATE};
 use crate::model::commands::{GetCommandID, MakeBytes};
 use crate::model::player::commands::{ChatMessage, PlayerDataPayload, IndicateClientPlayer};
@@ -90,15 +92,17 @@ pub struct Server {
     pub tick_ordering: u32,
     pub world_commands: Vec<WorldCommand>,
     pub action_queues: HashMap<CharacterID, ActionQueue>,
+    pub world_template: WorldTemplate,
 }
 
 
 impl Server {
     pub fn run(ports: (u16, u16)) -> Result<(), std::io::Error> {
         let mut server = {
-            let world = World::new();
+            let world = World::new(CollisionInfo::test_collision());
             Server {
                 stop: false,
+                world_template: WorldTemplate { world: world.clone() },
                 world,
                 character_id_gen: CharacterIDGenerator::new(),
                 player_manager: PlayerManager::new(),

@@ -4,6 +4,9 @@ use nalgebra::Vector2;
 use serde::{Serialize, Deserialize};
 
 use crate::model::world::{component::{GetComponentID, ComponentID, Component, ComponentUpdateData}, WorldSystem, WorldInfo, WorldError, ComponentSystem, World, character::CharacterID, commands::{CharacterCommand, WorldCommand}, CharacterCommandState, Update, WorldErrorI};
+use image::io::Reader as ImageReader;
+
+const COLLISION_TEST_TEXTURE_PATH: &str = "map/collision.png";
 
 #[derive(Eq, PartialEq, Hash, Serialize, Deserialize, Debug, Clone)]
 pub enum Layer {
@@ -53,25 +56,31 @@ pub struct CollisionInfo {
 }
 
 impl CollisionInfo {
+    pub fn test_collision() -> Self {
+        let mut terrain = HashSet::new();
+        let img = ImageReader::open(COLLISION_TEST_TEXTURE_PATH).unwrap().decode().unwrap().to_rgba8();
+        for j in 0..img.height() {
+            for i in 0..img.width() {
+                if img[(i, j)].0[3] > 0 {
+                    terrain.insert(Vector2::new(i as i32, j as i32));
+                }
+            }
+        }
+
+        Self { terrain }
+    }
 }
 
 #[derive(Clone)]
 pub struct CollisionSystem {
-    pub terrain: HashSet<Vector2<i32>>,
+    info: CollisionInfo,
 }
 
 impl CollisionSystem {
-    pub fn new() -> Self {
+    pub fn new(info: CollisionInfo) -> Self {
         Self {
-            terrain: Default::default()
+            info,
         }
-    }
-}
-
-impl Default for CollisionSystem {
-    fn default() -> Self {
-        // todo: grab some default terrain
-        Self::new()
     }
 }
 

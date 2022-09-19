@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::{model::{player::{server::PlayerCommand, model::{PlayerID, PlayerDataView}, commands::ChatMessage}, Subscription, PrintError}, server::{commands::{ProtocolSpec, SendCommands}, main::Server}, networking::Protocol};
-use super::{commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, GlobalCommand}, character::CharacterType, World};
+use super::{commands::{UpdateCharacter, GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, GlobalCommand}, character::CharacterType, World, system::collision::CollisionInfo};
 
 impl<'a> PlayerCommand<'a> for UpdateCharacter {
     const PROTOCOL: ProtocolSpec = ProtocolSpec::Both;
@@ -93,6 +93,6 @@ impl<'a> PlayerCommand<'a> for ClearWorld {
     fn run(self, _: &SocketAddr, _: &PlayerID, server: &mut Server) {
         server.broadcast(Subscription::World, Protocol::TCP, &self);
         
-        server.world = World::new();
+        server.world = World::from(&server.world_template);
     }
 }
