@@ -10,7 +10,7 @@ use crate::{
     client::{chatbox, commands::execute_client_command, camera::{CameraContext, CameraMatrix}},
     model::{world::{
         World,
-        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, FixWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest, flash::FlashRequest}, WorldError, logging::Logger, WorldErrorI,
+        character::{CharacterID, CharacterType}, commands::{GenerateCharacter, ListChar, EnsureCharacter, ClearWorld, WorldCommand, FixWorld}, system::{movement::MoveCharacterRequest, auto_attack::AutoAttackRequest, flash::FlashRequest, collision::CollisionInfo}, logging::Logger, template::WorldTemplate, 
     }, commands::core::GetAddress, Subscription, PrintError, player::{commands::{PlayerSubs, PlayerSubCommand, PlayerLogIn, PlayerLogOut, ChatMessage, GetPlayerData}, model::{PlayerID, PlayerData, PlayerDataView}}, TICK_RATE, Tick}, networking::{client::ClientUpdate, Protocol},
 };
 
@@ -36,6 +36,7 @@ pub struct Game<'a> {
     pub chatbox: chatbox::Chatbox<'a>,
     pub state: State,
     pub world: World,
+    pub world_template: WorldTemplate,
     pub connection: Connection,
     pub finding_addr: bool,
     pub finding_addr_timer: f32,
@@ -94,6 +95,7 @@ impl Game<'_> {
             .collect();
         let simple_render = graphics::simple::Renderer::new_square();
         let _texture_render = graphics::textured::Renderer::new_square();
+        let temp_world = World::new(CollisionInfo::test_collision());
         let mut game = {
             let ui_scale = 32.0;
             Game {
@@ -106,7 +108,8 @@ impl Game<'_> {
                     }
                 }, &simple_render, 7, 40, 800.0),
                 state: State::DEFAULT,
-                world: World::new(),
+                world: temp_world.clone(),
+                world_template: WorldTemplate { world: temp_world.clone() },
                 connection: Connection::init_disconnected(),
                 finding_addr: true,
                 finding_addr_timer: 0.0,
@@ -179,7 +182,7 @@ impl Game<'_> {
         };
 
         let target_history_distance = 3;
-        let init_world = World::new();
+        let init_world = World::from(&game.world_template);
         let mut history_world = init_world;
         let tick_count_history = 600;
         let mut last_display_tick_diff = 0;
