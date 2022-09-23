@@ -80,9 +80,9 @@ impl WorldSystem for IceWizSystem {
         info.flash.insert(CharacterType::IceWiz, FlashInfo::init(
             0.5, // duration
             0.0, // cooldown
-            1.0, // wind up duration
-            2.0, // casting duration
-            1.0, // wind down duration
+            0.0, // wind up duration
+            4.0, // casting duration
+            0.0, // wind down duration
             3.0, // fire time (after animation start)
             2.0 // range
         )?);
